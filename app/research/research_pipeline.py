@@ -115,12 +115,22 @@ class ResearchPipeline:
         decision_rationales = []
 
         for source in discovery_result.sources:
+            print(
+                "\nABSTRACT:"
+            )
+
+            print(
+                source.abstract[:300]
+            )
             evidence = (
                 self.extractor.extract(
                     source.abstract
                     or ""
                 )
             )
+            print("\nEVIDENCE:")
+
+            print(evidence)
 
             score = self.scorer.score(
                 source_id=source.id,

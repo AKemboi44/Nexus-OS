@@ -28,10 +28,29 @@ class EvidenceExtractor:
         text = abstract.lower()
 
         # Methodology detection
-
         if "survey" in text:
 
             methodology = "Survey"
+
+        elif "panel sample" in text:
+
+            methodology = "Panel Study"
+
+        elif "randomly assigned" in text:
+
+            methodology = "Randomized Study"
+
+        elif "we worked with" in text:
+
+            methodology = "Field Experiment"
+
+        elif "estimate" in text:
+
+            methodology = "Empirical Analysis"
+
+        elif "investigate" in text:
+
+            methodology = "Research Investigation"
 
         # Findings detection
 
@@ -40,6 +59,25 @@ class EvidenceExtractor:
             findings.append(
                 "Findings indicate increased access to financial services"
             )
+        if "we find" in text:
+            findings.append(
+                "Study reports significant findings"
+            )
+
+        if "evidence" in text:
+            findings.append(
+                "Evidence presented"
+            )
+
+        if "improve" in text:
+            findings.append(
+                "Positive impact reported"
+            )
+
+        if "impact" in text:
+            findings.append(
+                "Impact assessed"
+            )
 
         # Limitations detection
 
@@ -47,6 +85,11 @@ class EvidenceExtractor:
 
             limitations.append(
                 "Small sample size"
+            )
+
+        if "however" in text:
+            limitations.append(
+                "Potential limitations discussed"
             )
 
         # Future work detection

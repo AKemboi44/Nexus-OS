@@ -57,6 +57,10 @@ class OpenAlexDiscovery(DiscoveryProvider):
             )
         data = response.json()
 
+        print(
+            data["results"][0].keys()
+        )
+
         sources = [
             self._normalize_work(work)
             for work in data.get(
@@ -71,6 +75,41 @@ class OpenAlexDiscovery(DiscoveryProvider):
             sources=sources
         )
 
+    "# OpenALex returns inverted Abstract, therefore our summary output will always be empty"
+    "We are adding a helper function to convert openAlex abstract inverted index to normal text"
+
+    def _reconstruct_abstract(
+            self,
+            inverted_index
+    ):
+        """
+        Convert OpenAlex abstract_inverted_index
+        into normal text.
+        """
+
+        if not inverted_index:
+            return ""
+
+        words = []
+
+        max_position = max(
+            max(pos_list)
+            for pos_list in inverted_index.values()
+        )
+
+        words = [""] * (
+                max_position + 1
+        )
+
+        for word, positions in (
+                inverted_index.items()
+        ):
+
+            for position in positions:
+                words[position] = word
+
+        return " ".join(words)
+
     def _normalize_work(self, work):
         return Source(
             id=work.get("id", ""),
@@ -84,6 +123,10 @@ class OpenAlexDiscovery(DiscoveryProvider):
             ],
             year=work.get("publication_year"),
             url=work.get("id", ""),
-            abstract=None,
+            abstract=self._reconstruct_abstract(
+                work.get(
+                    "abstract_inverted_index"
+                )
+            ),
             source_type="academic"
         )

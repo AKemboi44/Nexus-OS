@@ -54,6 +54,25 @@ class SourceScorer:
         elif "marketing" in title_lower:
 
             authority = 1.0
+        elif "evidence" in title_lower:
+
+            authority = 7
+
+        elif "financial inclusion" in title_lower:
+
+            authority = 7
+
+        elif "loan repayment" in title_lower:
+
+            authority = 7
+
+        elif "mobile phone" in title_lower:
+
+            authority = 7
+
+        elif "mobile money" in title_lower:
+
+            authority = 7
 
 # Source recency scoring
         current_year = datetime.now().year
