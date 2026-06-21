@@ -13,6 +13,9 @@ def run():
     result = discovery.search(
         "mobile money repayment"
     )
+    # result = discovery.search(
+    #     "financial inclusion mobile money"
+    # )
 
     all_have_titles = all(
         source.title
@@ -32,20 +35,58 @@ def run():
             and all_have_titles
             and all_have_ids
     )
-    score = min(
-        len(result.sources) / 5,
-        1.0
-    )
 
+# Discovery coverage score
     coverage_score = min(
         len(result.sources) / 5,
         1.0
     )
 
+# Expected keywords for this benchmark
+    keywords = [
+        "mobile",
+        "money",
+        "financial",
+        "loan",
+        "repayment"
+    ]
+
+    matches =  0
+    for source in result.sources:
+        title = source.title.lower()
+        for keyword in keywords:
+            if keyword in title:
+                matches += 1
+
+# Discovery relevance score calculation
+    relevance_score = (
+        matches /
+        (
+            len(result.sources) * len(keywords)
+        )
+
+    )
+
+# combined discovery quality score calculation
+    score = (coverage_score + relevance_score)/ 2
+
     details = (
         f"{len(result.sources)} "
         "normalized sources returned"
     )
+
+    print(f"\n------Discovery Metrics------")
+
+    print(
+        f"Coverage Score: {coverage_score:.2f}"
+    )
+    print(
+        f"Relevance Score: {relevance_score:.2f}"
+    )
+    print(
+        f"Keyword Matcches: {matches}"
+    )
+    print("---------------------------------")
 
     return EvalResult(
         name = "openalex_connectivity",

@@ -2,8 +2,10 @@
   "query": "mobile money repayment",
 
   "expected_keywords": [
-    "mobile money",
-    "loan",
-    "repayment"
+    "mobile",
+    "money",
+    "financial",
+    "repayment",
+    "loan"
   ]
 }
