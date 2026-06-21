@@ -1,4 +1,4 @@
-from app.reports.dossier_generator import (
+from app import (
     DossierGenerator
 )
 

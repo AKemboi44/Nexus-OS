@@ -7,7 +7,7 @@ correctly classifies benchmark sources.
 
 import json
 
-from app.scoring.scorer import SourceScorer
+from app import SourceScorer
 
 from evals.eval_result import EvalResult
 

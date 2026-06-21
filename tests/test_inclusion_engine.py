@@ -1,4 +1,4 @@
-from app.scoring.inclusion_engine import InclusionEngine
+from app import InclusionEngine
 
 from models.source_score import SourceScore
 

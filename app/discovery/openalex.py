@@ -11,10 +11,17 @@ into Nexus OS Source objects.
 
 import requests
 
-from app.discovery.models import DiscoveryResult
-from models.source import Source
-from app.discovery.discovery_interface import DiscoveryProvider
 from config.settings import OPENALEX_API_KEY
+
+from app.discovery.discovery_interface import (
+    DiscoveryProvider
+)
+
+from app.discovery.models import (
+    DiscoveryResult)
+
+from models.source import Source
+
 
 
 #first version - proof connectivity;

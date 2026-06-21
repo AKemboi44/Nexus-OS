@@ -5,7 +5,7 @@ Evaluate Inclusion Engine.
 import json
 
 from evals.eval_result import EvalResult
-from app.scoring.inclusion_engine import InclusionEngine
+from app import InclusionEngine
 
 from models.source_score import SourceScore
 

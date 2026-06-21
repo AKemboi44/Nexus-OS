@@ -1,5 +1,5 @@
 from evals.eval_result import EvalResult
-from app.discovery.openalex import OpenAlexDiscovery
+from app import OpenAlexDiscovery
 
 # Evals checks if
       # Returned results i.e Can OpenAlex return results?

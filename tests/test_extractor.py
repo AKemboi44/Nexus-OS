@@ -1,4 +1,4 @@
-from app.extraction.extractor import EvidenceExtractor
+from app import EvidenceExtractor
 
 
 def test_extract_evidence():

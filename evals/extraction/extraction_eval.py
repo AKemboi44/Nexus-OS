@@ -1,7 +1,7 @@
 import json
 
 from evals.eval_result import EvalResult
-from app.extraction.extractor import (
+from app import (
     EvidenceExtractor
 )
 

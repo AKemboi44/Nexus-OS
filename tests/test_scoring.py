@@ -1,6 +1,6 @@
 # Test for the source scoring model
 
-from app.scoring.scorer import SourceScorer
+from app import SourceScorer
 
 
 def test_world_bank_report():
