@@ -1,4 +1,5 @@
 {
-  "methodology" : "RCT",
-  "findings" : [ ]
+
+  "title": "Mobile Money for Financial Inclusion",
+  "abstract": "This study uses survey data to investigate the impact of mobile money adoption on financial inclusion. Findings indicate increased access to financial services. Limitations include a small sample size. Future work should examine cross-country comparisons."
 }

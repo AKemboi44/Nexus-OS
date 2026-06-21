@@ -1,0 +1,13 @@
+[
+  {
+    "title": "World Bank Mobile Money Report",
+    "year": 2024,
+    "expected": "include"
+  },
+
+  {
+    "title": "Personal Blog About Mobile Money",
+    "year": 2014,
+    "expected": "exclude"
+  }
+]
