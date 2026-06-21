@@ -1,4 +1,4 @@
-# This extracts the evidence from a research source
+# This defines the data parameters of what extracts the evidence from a research source
 from pydantic import BaseModel, Field
 
 class Evidence (BaseModel):

@@ -1,16 +1,21 @@
 
-from datetime import datetime
-
 from pydantic import BaseModel
 
 
-# Model defining scores for different research sources
 class SourceScore(BaseModel):
+
     source_id: str
+
     relevance: float
+
     authority: float
+
     recency: float
-    methodology: str
+
+    methodology_score: float
+
     total_score: float
-    decisions: str
+
+    decision: str = ""
+
     rationale: list[str]

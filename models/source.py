@@ -1,4 +1,5 @@
 # models/source.py
+"defines the paramaters of the source"""
 from datetime import datetime
 
 from pydantic import BaseModel

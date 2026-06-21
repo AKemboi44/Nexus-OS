@@ -1,0 +1,11 @@
+{
+  "query": "mobile money repayment",
+
+  "included_sources": [
+    "World Bank Mobile Money Report"
+  ],
+
+  "excluded_sources": [
+    "Personal Blog About Mobile Money"
+  ]
+}

@@ -6,8 +6,32 @@
   },
 
   {
+    "title": "GSMA State of Mobile Money",
+    "year": 2023,
+    "expected": "include"
+  },
+
+  {
+    "title": "Mobile Money and Financial Inclusion in Kenya",
+    "year": 2022,
+    "expected": "include"
+  },
+
+  {
     "title": "Personal Blog About Mobile Money",
     "year": 2014,
+    "expected": "exclude"
+  },
+
+  {
+    "title": "My Thoughts on Digital Payments",
+    "year": 2012,
+    "expected": "exclude"
+  },
+
+  {
+    "title": "Marketing Brochure for Mobile Wallet App",
+    "year": 2025,
     "expected": "exclude"
   }
 ]

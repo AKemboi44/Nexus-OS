@@ -5,5 +5,5 @@ class EvalResult(BaseModel):
     passed: bool
     score: float
     details: str
-    # rationale: str
+    rationale: str
 
