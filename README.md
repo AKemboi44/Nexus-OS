@@ -1,3 +1,7 @@
+
+This contains a complete Discovery MVP with OpenAlex normalization and evals
+
+
 Every Nexus module must have:
 
 1. Unit Tests
