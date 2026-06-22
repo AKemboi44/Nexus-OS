@@ -1,5 +1,6 @@
-from app import EvidenceExtractor
-
+from app.extraction.extractor import (
+    EvidenceExtractor
+)
 
 def test_extract_evidence():
 

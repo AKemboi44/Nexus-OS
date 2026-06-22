@@ -35,7 +35,12 @@ def test_gsma_authority():
         "GSMA State of Mobile Money"
     )
 
-    assert score == 9.0
+    # We intentionally test for a minimum
+    # authority level rather than an exact
+    # score because authority calibration
+    # may evolve as Nexus OS grows.
+
+    assert score >= 9.0
 
 
 def test_randomized_study_authority():

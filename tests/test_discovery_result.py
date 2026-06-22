@@ -1,4 +1,6 @@
-from app import DiscoveryResult
+from app.discovery.models import (
+    DiscoveryResult
+)
 
 def test_discovery_interface():
     result = DiscoveryResult(

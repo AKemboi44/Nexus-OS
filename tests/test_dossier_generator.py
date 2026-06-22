@@ -1,7 +1,6 @@
-from app import (
+from app.reports.dossier_generator import (
     DossierGenerator
 )
-
 
 def test_generate_dossier():
 
