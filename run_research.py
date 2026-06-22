@@ -37,6 +37,12 @@ def main():
     for item in dossier.evidence_summary:
         print(f"- {item}")
 
+    print("\nThemes:")
+    for theme in dossier.themes:
+        print(
+            f"- {theme}"
+        )
+
     print("\nScoring Summary:")
     for item in dossier.scoring_summary:
         print(f"- {item}")

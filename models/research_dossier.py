@@ -14,6 +14,9 @@ class ResearchDossier(BaseModel):
 
     evidence_summary: list[str]
 
+    themes: list[str]
+
     scoring_summary: list[str]
 
     decision_rationales: list[str]
+

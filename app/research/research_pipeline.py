@@ -21,24 +21,24 @@ Scoring
     ↓
 Inclusion
     ↓
+Theme Detection
+    ↓
 Research Dossier
-
-This is the first orchestration layer.
 
 Design Notes
 ------------
 The pipeline intentionally acts as an orchestrator.
 
-It should coordinate work between subsystems
-rather than implementing business logic itself.
+It coordinates subsystem execution
+rather than implementing business logic.
 
 Future versions may add:
 
 - Research Memory
-- Theme Detection
 - Gap Analysis
-- Provenance Tracking
+- Provenance Reporting
 - Project Management
+- MCP Exposure Layer
 """
 
 # ---------------------------------
@@ -50,13 +50,12 @@ Future versions may add:
 # Later versions should replace this
 # with structured logging.
 #
-# Example:
+# Candidate options:
 # - logging
 # - structlog
 # - loguru
 
 DEBUG_MODE = True
-
 
 # ---------------------------------
 # Discovery
@@ -64,13 +63,11 @@ DEBUG_MODE = True
 
 from app.discovery.openalex import OpenAlexDiscovery
 
-
 # ---------------------------------
 # Extraction
 # ---------------------------------
 
 from app.extraction.extractor import EvidenceExtractor
-
 
 # ---------------------------------
 # Scoring
@@ -78,19 +75,37 @@ from app.extraction.extractor import EvidenceExtractor
 
 from app.scoring.scorer import SourceScorer
 
-
 # ---------------------------------
 # Inclusion
 # ---------------------------------
 
 from app.scoring.inclusion_engine import InclusionEngine
 
-
 # ---------------------------------
 # Reporting
 # ---------------------------------
 
 from app.reports.dossier_generator import DossierGenerator
+
+# ---------------------------------
+# Provenance
+# ---------------------------------
+
+from models.evidence_item import (
+    EvidenceItem
+)
+
+# ---------------------------------
+# Synthesis
+# ---------------------------------
+
+from app.synthesis.theme_engine import (
+    ThemeEngine
+)
+
+from app.synthesis.gap_engine import (
+    GapEngine
+)
 
 
 class ResearchPipeline:
@@ -116,6 +131,31 @@ class ResearchPipeline:
         self.inclusion = InclusionEngine()
 
         self.generator = DossierGenerator()
+
+        # Theme detection is the first
+        # synthesis capability in Nexus OS.
+        #
+        # Themes are generated only from
+        # trusted evidence that has passed
+        # the inclusion stage.
+        #
+        # This prevents low-quality sources
+        # from influencing synthesis results.
+
+        self.theme_engine = (
+            ThemeEngine()
+        )
+
+        # Gap detection identifies areas where
+        # the evidence base appears limited.
+        #
+        # This is the first capability that
+        # reasons about what is missing rather
+        # than what is present.
+
+        self.gap_engine = (
+            GapEngine()
+        )
 
     def run_research(
         self,
@@ -154,20 +194,33 @@ class ResearchPipeline:
         # ---------------------------------
         # Dossier Assembly Collections
         # ---------------------------------
-        #
-        # These structures accumulate outputs
-        # from the workflow and are later
-        # assembled into a ResearchDossier.
-        #
-        # Future versions may replace these
-        # with a dedicated DossierBuilder.
-        #
 
         included_sources = []
 
         excluded_sources = []
 
+        # Human-readable evidence findings
+        # currently shown in the dossier.
+
         evidence_findings = []
+
+        # ---------------------------------
+        # Provenance Collections
+        # ---------------------------------
+        #
+        # all_evidence_items
+        #     Preserves the full audit trail.
+        #
+        # included_evidence_items
+        #     Contains only trusted evidence
+        #     that passed inclusion.
+        #
+        # Theme detection operates only on
+        # included evidence.
+
+        all_evidence_items = []
+
+        included_evidence_items = []
 
         scoring_summary = []
 
@@ -206,6 +259,8 @@ class ResearchPipeline:
                 print("\nEVIDENCE:")
 
                 print(evidence)
+
+
 
             # ---------------------------------
             # Source Scoring
@@ -258,11 +313,58 @@ class ResearchPipeline:
             # often support the same conclusion.
             #
             # Future versions will preserve
-            # source-level provenance instead
-            # of collapsing findings.
-            #
+            # provenance inside the dossier.
 
             for finding in evidence.findings:
+
+                evidence_item = (
+                    EvidenceItem(
+                        source_id=source.id,
+
+                        source_title=
+                        source.title,
+
+                        methodology=
+                        evidence.methodology,
+
+                        finding=finding
+                    )
+                )
+
+                # Preserve complete audit trail.
+
+                all_evidence_items.append(
+                    evidence_item
+                )
+
+                # Only trusted evidence
+                # contributes to synthesis.
+
+                if (
+                    decision.decision
+                    ==
+                    "include"
+                ):
+
+                    included_evidence_items.append(
+                        evidence_item
+                    )
+
+                # Provenance debugging.
+
+                if DEBUG_MODE:
+
+                    print("\nPROVENANCE:")
+
+                    print(
+                        source.title
+                    )
+
+                    print(
+                        finding
+                    )
+
+                # Human-readable findings.
 
                 if (
                     finding
@@ -283,12 +385,93 @@ class ResearchPipeline:
             )
 
             # ---------------------------------
-            # Decision Rationale
+            # Decision Rationales
             # ---------------------------------
 
             decision_rationales.extend(
                 decision.rationale
             )
+
+        # ---------------------------------
+        # Theme Detection
+        # ---------------------------------
+
+        themes = (
+            self.theme_engine.detect_themes(
+                included_evidence_items
+            )
+        )
+
+        # ---------------------------------
+        # Gap Detection
+        # ---------------------------------
+
+        gaps = (
+            self.gap_engine.detect_gaps(
+                themes
+            )
+        )
+
+        gap_summary = [
+            gap.title
+            for gap in gaps
+        ]
+        if DEBUG_MODE:
+
+            print("\nGAPS DETECTED:")
+
+            for gap in gaps:
+                print(
+                    f"- {gap.title}"
+                )
+
+                print(
+                    f"  Reason: "
+                    f"{gap.rationale}"
+                )
+
+        # Theme summary is currently used
+        # only for diagnostics.
+        #
+        # Future versions will expose themes
+        # directly inside the ResearchDossier.
+
+        theme_summary = [
+            theme.name
+            for theme in themes
+        ]
+
+        if DEBUG_MODE:
+
+            print("\nTHEME SUMMARY:")
+
+            for theme in theme_summary:
+                print(
+                    f"- {theme}"
+                )
+
+      # To remove later: Theme detected is just for debug
+        if DEBUG_MODE:
+
+            print("\nTHEMES DETECTED:")
+
+            for theme in themes:
+
+                print(
+                    f"- {theme.name}"
+                )
+
+                print(
+                    "  Sources:"
+                )
+
+                for source in (
+                    theme.supporting_sources
+                ):
+
+                    print(
+                        f"    - {source}"
+                    )
 
         # ---------------------------------
         # Dossier Generation
@@ -306,6 +489,9 @@ class ResearchPipeline:
 
                 evidence_summary=
                 evidence_findings,
+
+                themes=
+                theme_summary,
 
                 scoring_summary=
                 scoring_summary,

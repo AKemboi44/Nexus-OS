@@ -12,6 +12,8 @@ def test_dossier_creation():
 
         evidence_summary=[],
 
+        themes=[],
+
         scoring_summary=[],
 
         decision_rationales=[]

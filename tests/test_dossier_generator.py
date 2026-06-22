@@ -21,6 +21,8 @@ def test_generate_dossier():
             "Mobile money improves access"
         ],
 
+        themes=[],
+
         scoring_summary=[
             "World Bank score: 7.75"
         ],
