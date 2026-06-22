@@ -7,7 +7,10 @@ correctly classifies benchmark sources.
 
 import json
 
-from app import SourceScorer
+from app.scoring.scorer import SourceScorer
+from app.scoring.inclusion_engine import (
+    InclusionEngine
+)
 
 from evals.eval_result import EvalResult
 
@@ -22,6 +25,9 @@ def run():
         benchmark = json.load(f)
 
     scorer = SourceScorer()
+    inclusion_engine = (
+        InclusionEngine()
+    )
 
     correct = 0
 
@@ -31,9 +37,19 @@ def run():
 
         score = scorer.score(
             source_id=item["title"],
+            query="mobile money loan repayment",
             title=item["title"],
-            year=item["year"]
+            year=item["year"],
+            methodology=None
         )
+
+        decision = (
+            inclusion_engine.decide(
+                score
+            )
+        )
+
+        actual = decision.decision
 
         print(
             f"{item['title']}"
@@ -44,7 +60,7 @@ def run():
         )
 
         print(
-            f"Actual: {score.decision}"
+            f"Actual: {actual}"
         )
 
         print(
@@ -53,7 +69,7 @@ def run():
 
         print("-" * 50)
 
-        if score.decision == item["expected"]:
+        if actual == item["expected"]:
 
             correct += 1
 

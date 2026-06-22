@@ -134,11 +134,10 @@ class ResearchPipeline:
 
             score = self.scorer.score(
                 source_id=source.id,
-
+                query=query,
                 title=source.title,
-
-                year=source.year
-                or 2000
+                year=source.year or 2000,
+                methodology=evidence.methodology
             )
 
             decision = (
@@ -160,9 +159,15 @@ class ResearchPipeline:
                 excluded_sources.append(
                     source.title
                 )
-            evidence_summary.extend(
-                evidence.findings
-            )
+            # We intentionally de-duplicate findings
+            # because multiple papers often support the same observation.
+            # Later versions will track source-level provenance instead of collapsing findings.
+            for finding in evidence.findings:
+
+                if finding not in evidence_summary:
+                    evidence_summary.append(
+                        finding
+                    )
 
             scoring_summary.append(
                 f"{source.title}: "
@@ -195,3 +200,13 @@ class ResearchPipeline:
         )
 
         return dossier
+
+    # TODO:
+    # Replace print statements with a structured
+    # logging framework once Nexus OS moves
+    # beyond local development.
+    #
+    # Candidate options:
+    # - logging (stdlib)
+    # - structlog
+    # - loguru

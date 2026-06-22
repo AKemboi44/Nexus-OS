@@ -33,5 +33,24 @@
     "title": "Marketing Brochure for Mobile Wallet App",
     "year": 2025,
     "expected": "exclude"
+  },
+
+  {
+  "title": "Randomized Evaluation of Mobile Money Adoption",
+  "year": 2023,
+  "expected": "include"
+  },
+
+  {
+  "title": "Systematic Review of Digital Financial Inclusion",
+  "year": 2022,
+  "expected": "include"
+  },
+
+  {
+  "title": "Top 10 Reasons I Love Mobile Wallets",
+  "year": 2024,
+  "expected": "exclude"
   }
+
 ]

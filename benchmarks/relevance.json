@@ -1,0 +1,19 @@
+[
+  {
+    "query": "mobile money loan repayment",
+    "title": "A Personal Touch: Text Messaging for Loan Repayment",
+    "expected": "high"
+  },
+
+  {
+    "query": "mobile money loan repayment",
+    "title": "Mobile phones for financial inclusion",
+    "expected": "high"
+  },
+
+  {
+    "query": "mobile money loan repayment",
+    "title": "Trends in Income Inequality",
+    "expected": "low"
+  }
+]

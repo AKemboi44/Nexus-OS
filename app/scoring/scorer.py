@@ -2,141 +2,162 @@
 Nexus OS Source Scoring Engine
 
 Version 1:
-Rule-based scoring.
+Rule-based Source scoring orchestration.
+
+This module coordinates scoring engines.It should not contain large amounts of scoring logic itself.
+
+The long-term goal is to delegate each scoring dimension to its own specialized engine.
 """
 
 from datetime import datetime
 
 from models.source_score import SourceScore
 
+from app.scoring.authority_engine import (
+    AuthorityEngine
+)
+
+from app.scoring.relevance_engine import (
+    RelevanceEngine
+)
+
+from app.scoring.methodology_engine import (
+    MethodologyEngine
+)
+
+from app.scoring.recency_engine import (
+    RecencyEngine
+)
+
+# Current scoring weights.
+# We keep them centralized because scoring calibration will evolve significantly as Nexus OS matures.
+
+AUTHORITY_WEIGHT = 0.25
+
+METHODOLOGY_WEIGHT = 0.25
+
+RELEVANCE_WEIGHT = 0.20
+
+RECENCY_WEIGHT = 0.30
+
 class SourceScorer:
+    def __init__(self):
+        """
+        Initialize scoring engines.
+
+        We keep engines separate so they can evolve independently.
+        """
+
+        self.authority_engine = (
+            AuthorityEngine()
+        )
+        # Relevance scoring depends on the research question being asked.
+        # Keeping it separate allows us to evolve from keyword matching to embeddings or rerankers later.
+        self.relevance_engine = (
+            RelevanceEngine()
+        )
+
+        # Methodology scoring allows Nexus OS to distinguish between stronger and weaker forms of evidence.
+        # This becomes increasingly important as we move toward evidence-based inclusion decisions.
+
+        self.methodology_engine = (
+            MethodologyEngine()
+        )
+
+        # Recency scoring is isolated so we can
+        # later introduce domain-specific freshness rules without modifying the scorer.
+
+        self.recency_engine = (
+            RecencyEngine()
+        )
 
     def score(
         self,
         source_id: str,
+        query: str,
         title: str,
-        year: int
+        year: int,
+        methodology: str | None
     ) -> SourceScore:
 
- # Source authority scoring
-        authority = 1.0
+# ---------------------------------
+# Source Authority Scoring
+# ---------------------------------
+# Authority scoring is delegated to the AuthorityEngine. This keeps scorer.py focused on orchestration rather than scoring implementation details.
 
-        title_lower = title.lower()
-
-        if "world bank" in title_lower:
-
-            authority = 10.0
-
-        elif "gsma" in title_lower:
-
-            authority = 9.0
-
-        elif "financial inclusion" in title_lower:
-
-            authority = 7.0
-
-        elif "research" in title_lower:
-
-            authority = 7.0
-
-        elif "study" in title_lower:
-
-            authority = 7.0
-
-        elif "blog" in title_lower:
-
-            authority = 1.0
-
-        elif "brochure" in title_lower:
-
-            authority = 1.0
-
-        elif "marketing" in title_lower:
-
-            authority = 1.0
-        elif "evidence" in title_lower:
-
-            authority = 7
-
-        elif "financial inclusion" in title_lower:
-
-            authority = 7
-
-        elif "loan repayment" in title_lower:
-
-            authority = 7
-
-        elif "mobile phone" in title_lower:
-
-            authority = 7
-
-        elif "mobile money" in title_lower:
-
-            authority = 7
-
-# Source recency scoring
-        current_year = datetime.now().year
-        age = current_year - year
-        if age <= 2:
-
-            recency = 10.0
-
-        elif age <= 5:
-
-            recency = 8.0
-
-        elif age <= 10:
-
-            recency = 5.0
-
-        else:
-
-            recency = 2.0
-
-        relevance = 5.0
-
-        methodology_score = 5.0
-
-# Total source score calculation
-        total_score = (
-                authority * 0.25
-                +
-                methodology_score * 0.25
-                +
-                relevance * 0.20
-                +
-                recency * 0.30
+        authority, authority_rationale = (
+            self.authority_engine.score(
+                title
+            )
         )
 
+        # Recency scoring evaluates how current the evidence is.
+        # This is intentionally separated from authority because an older source may still be highly trustworthy.
+
+        recency, recency_rationale = (
+            self.recency_engine.score(
+                year
+            )
+        )
+
+
+        # Relevance scoring evaluates how well
+        # a source answers the research question.
+        #
+        # This is intentionally separate from
+        # authority because a trustworthy source
+        # is not necessarily relevant.
+
+        relevance, relevance_rationale = (
+            self.relevance_engine.score(
+                query=query,
+                title=title
+            )
+        )
+
+
+        # Methodology scoring is delegated to a dedicated engine.
+        # This allows research quality assessment to evolve separately from authority and relevance.
+
+        methodology_score, methodology_rationale = (
+            self.methodology_engine.score(
+                methodology
+            )
+        )
+
+      # Total source score calculation
+
+
+        total_score = (
+                authority * AUTHORITY_WEIGHT
+                +
+                methodology_score * METHODOLOGY_WEIGHT
+                +
+                relevance * RELEVANCE_WEIGHT
+                +
+                recency * RECENCY_WEIGHT
+        )
+
+      # Rationale handling
+      # This preserves authority explanations, Making Nexus OS explainable
         rationale = []
 
-        if authority >= 8:
+        rationale.extend(
+            authority_rationale
+        )
 
-            rationale.append(
-                "Trusted institution"
-            )
+        rationale.extend(
+            methodology_rationale
+        )
 
-        elif authority >= 6:
+        rationale.extend(
+            recency_rationale
+        )
 
-            rationale.append(
-                "Research-oriented source"
-            )
 
-        else:
-
-            rationale.append(
-                "Low authority source"
-            )
-
-        if authority >= 8:
-            rationale.append(
-                "High authority source"
-            )
-
-        if recency >= 8:
-            rationale.append(
-                "Recent publication"
-            )
+        rationale.extend(
+            relevance_rationale
+        )
 
         return SourceScore(
             source_id=source_id,
