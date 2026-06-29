@@ -1,40 +1,27 @@
-"""
-Nexus OS v0.5.0 - Agent Layer
-Generated for clarity and high maintainability.
-"""
-import os
-import sys
+from .search_agent import PathfinderAgent
+from .synthesis_agent import ScribeAgent
+from .reviewer_agent import ReviewerAgent
 
-# Path resolution to project root
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+class NexusOrchestrator:
 
-from typing import List, Dict
-from .search_agent import SearchAgent
-from .synthesis_agent import SynthesisAgent
+    # The Orchestrator manages the handoff between Pathfinder, Scribe, and Reviewer.
+    # It ensures the research loop flows from Discovery to Grounding.
 
-class ResearchOrchestrator:
-    def __init__(self):
-        self.searcher = SearchAgent()
-        self.synthesizer = SynthesisAgent()
+    def __init__(self, pathfinder, scribe, reviewer):
+        self.pathfinder = pathfinder
+        self.scribe = scribe
+        self.reviewer = reviewer
 
-    def run_research_loop(self, query: str) -> Dict:
-        print(f"\n[Orchestrator] Starting multi-agent loop for: {query}")
-        
-        # Step 1: Search Phase (Pathfinder)
-        search_results = self.searcher.execute(query=query)
-        raw_data = search_results.get('output', [])
-        
-        # Step 2: Synthesis Phase (Scribe)
-        # Convert raw paper data into evidence blocks for the synthesizer
-        evidence_blocks = [
-            {'content': p.get('abstract', ''), 'citation': p.get('title', 'Unknown')} 
-            for p in raw_data if p.get('abstract')
-        ]
-        
-        synthesis_result = self.synthesizer.execute(topic=query, evidence=evidence_blocks)
-        
+    def run_research_loop(self, topic: str):
+        # Runs the complete v0.6.1 research lifecycle.
+        search_results = self.pathfinder.execute(query=topic)
+        sources = search_results["data"]
+        synthesis_results = self.scribe.execute(topic=topic, raw_data=sources)
+        insight = synthesis_results["insight"]
+        review = self.reviewer.execute(insight=insight.get('insight', ''), evidence_items=sources)
+
         return {
-            "query": query,
-            "sources_count": len(raw_data),
-            "final_insight": synthesis_result.get('output', {})
+            "topic": topic,
+            "insight": insight,
+            "review": review
         }

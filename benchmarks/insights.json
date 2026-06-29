@@ -1,0 +1,12 @@
+[
+    {
+        "theme": "Impact assessed",
+        "expected_insight": "Multiple trusted studies report measurable impacts from mobile money interventions.",
+        "supported_by": [
+            {
+                "evidence_id": "ev_1",
+                "citation": "Study A"
+            }
+        ]
+    }
+]

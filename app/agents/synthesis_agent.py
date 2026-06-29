@@ -1,26 +1,19 @@
 """
-Nexus OS v0.5.0 - Agent Layer
-Generated for clarity and high maintainability.
+Nexus OS v0.6.1 - Scribe
 """
-import os
-import sys
-
-# Path resolution to project root
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
 from .base_agent import BaseAgent
-from app.synthesis.insight_engine import InsightEngine
 
-class SynthesisAgent(BaseAgent):
-    def __init__(self):
+class ScribeAgent(BaseAgent):
+    """
+    The Scribe acts as the 'Synthesizer'. 
+    It transforms raw evidence blocks into structured research insights.
+    """
+    def __init__(self, engine):
         super().__init__(name="Scribe", role="Research Synthesizer")
-        self.engine = InsightEngine()
+        self.engine = engine
 
-    def execute(self, topic: str, evidence: list) -> dict:
-        self.announce(f"Synthesizing {len(evidence)} pieces of evidence for: {topic}")
-        insight = self.engine.generate_insight(topic, evidence)
-        
-        return {
-            "status": "completed",
-            "output": insight.to_dict()
-        }
+    def execute(self, topic: str, raw_data: list):
+        """Processes raw sources into a ResearchDossier-compatible insight."""
+        self.announce(f"Synthesizing {len(raw_data)} evidence blocks for: {topic}")
+        insight = self.engine.generate_insight(topic, raw_data)
+        return {"insight": insight.to_dict()}

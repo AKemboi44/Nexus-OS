@@ -1,0 +1,24 @@
+[
+    {
+        "id": "grounded_001",
+        "theme": "Mobile Money",
+        "evidence": [
+            {
+                "abstract": "Usage of mobile money increases savings by 10%."
+            }
+        ],
+        "insight": "Mobile money access leads to a 10% increase in local savings.",
+        "expected_label": "supported"
+    },
+    {
+        "id": "hallucination_001",
+        "theme": "Rural Tech",
+        "evidence": [
+            {
+                "abstract": "Farmers use basic SMS for weather alerts."
+            }
+        ],
+        "insight": "The study proves that 90% of farmers have transitioned to high-speed 5G smartphones.",
+        "expected_label": "hallucinated"
+    }
+]
