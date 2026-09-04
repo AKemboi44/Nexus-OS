@@ -1,4 +1,6 @@
-﻿.pytest_cache/
+﻿.env
+.venv/
 .idea/
-.env
 __pycache__/
+*.xlsx
+.pytest_cache/

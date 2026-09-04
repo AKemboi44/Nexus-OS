@@ -8,44 +8,38 @@ into InclusionDecision.
 from models.source_score import SourceScore
 from models.inclusion_decision import InclusionDecision
 
+from Nexus_os.models.inclusion_decision import InclusionDecision
+
+
 class InclusionEngine:
+    def __init__(self, threshold: float = 6.0):
+        self.threshold = threshold
 
-    def decide(
-            self,
-            score: SourceScore
-    ) -> InclusionDecision:
+    def process(self, source_score) -> InclusionDecision:
+        # Determine explicit inclusion choice
+        decision = "include" if source_score.total_score >= self.threshold else "exclude"
 
-        decision = (
-            "include"
-            if score.total_score >= 6
-            else "exclude"
-        )
-
-        confidence = min(
-            score.total_score / 10,
-            1.0
-        )
-
-        rationale = list(score.rationale)
-
+        # Calculate confidence metric from threshold distance
         if decision == "include":
-
-            rationale.append(
-                "Passed inclusion threshold"
-            )
-
+            margin = source_score.total_score - self.threshold
+            confidence = min(0.5 + (margin / 8.0), 1.0)
         else:
+            margin = self.threshold - source_score.total_score
+            confidence = min(0.5 + (margin / 6.0), 1.0)
 
-            rationale.append(
-                "Failed inclusion threshold"
-            )
+        # Compile a robust audit trail of rationale attributes
+        rationale = []
+        if source_score.authority >= 7:
+            rationale.append(f"High authority organization source (Score: {source_score.authority})")
+        else:
+            rationale.append(f"Informal or blog source context (Score: {source_score.authority})")
+
+        rationale.append(
+            f"Total quality score {source_score.total_score} evaluated against a system threshold of {self.threshold}.")
 
         return InclusionDecision(
-            source_id=score.source_id,
-
+            source_id=source_score.source_id,
             decision=decision,
-
-            confidence=confidence,
-
+            confidence=round(confidence, 2),
             rationale=rationale
         )

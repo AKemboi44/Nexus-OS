@@ -1,9 +1,3 @@
-
-# Defines research dossier data parameters
-
-from typing import List, Dict
-from pydantic import BaseModel
-
 from typing import List, Dict
 
 class ResearchDossier:
