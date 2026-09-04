@@ -115,15 +115,19 @@ class ResearchMemoryStore:
             print(f"[Research Memory Warning]: Failed to index insight parameters: {e}")
 
     def query_historical_insight(self, query: str) -> dict:
-        """Looks up existing semantic insights to completely shield against LLM API demand failures."""
+        """Looks up existing semantic insights strictly matching the target query name."""
         try:
             results = self.insight_collection.query(
                 query_texts=[query],
-                n_results=1
+                n_results=1,
+                where={"query": query}
             )
-            if results and results['documents'] and len(results['documents'][0]) > 0:
+
+            # Safe defensive nesting validation checks
+            if results and 'documents' in results and results['documents'] and len(results['documents'][0]) > 0:
                 import json
-                # Validate the closeness of the semantic match
+
+                # Unpack the first match out of the inner response lists safely
                 meta = results['metadatas'][0][0]
                 doc = results['documents'][0][0]
 
