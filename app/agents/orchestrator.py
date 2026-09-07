@@ -1,10 +1,11 @@
 from typing import List, Dict, Any
+import re
 from .pathfinder_agent import PathfinderAgent
 from .synthesis_agent import ScribeAgent
 from .reviewer_agent import ReviewerAgent
 from .squire_agent import SquireAgent
 from models.research_dossier import ResearchDossier
-from models.research_memory import ResearchMemoryStore  # <-- Import the Memory Core
+from models.research_memory import ResearchMemoryStore
 
 
 class NexusOrchestrator:
@@ -15,7 +16,6 @@ class NexusOrchestrator:
         self.squire = squire
         self.max_retries = max_retries
         self.grounding_threshold = 0.85
-        # Instantiate memory controller instance
         self.memory = ResearchMemoryStore()
 
     def run_research_loop(self, topic: str, custom_prompt: str = None, max_sources: int = 5):
@@ -25,12 +25,11 @@ class NexusOrchestrator:
         dossier = ResearchDossier(topic)
 
         # 1. Query local database memory registries
-        print("[Orchestrator \u2192 Phase 10]: Interrogating Insight Memory Registry...")
+        print("[Orchestrator ➔ Phase 10]: Interrogating Insight Memory Registry...")
         insight_cache = self.memory.query_historical_insight(topic)
 
         if insight_cache:
-            print(
-                f"[Research Insight Cache Hit]: Instantly retrieved fully validated Gemini 3.6 insights from local memory.")
+            print(f"[Research Insight Cache Hit]: Instantly retrieved validated insights.")
             dossier.themes = insight_cache["themes"]
             dossier.contradictions = insight_cache["contradictions"]
             dossier.research_gaps = insight_cache["research_gaps"]
@@ -38,18 +37,21 @@ class NexusOrchestrator:
 
             generated_insight = insight_cache["insight"]
             audit_file = self.squire.execute(dossier)
-            return {'topic': topic, 'insight': generated_insight, 'review': {'score': 1.0}, 'audit_file': audit_file}
+            return {
+                'topic': topic,
+                'insight': generated_insight,
+                'review': {'score': 1.0, 'relevance_signal': 1.0},
+                'audit_file': audit_file
+            }
 
-        print("[Orchestrator \u2192 Phase 10]: Interrogating Source Memory Bank...")
+        print("[Orchestrator ➔ Phase 10]: Interrogating Source Memory Bank...")
         cached_records = self.memory.query_historical_memories(topic, limit=max_sources)
 
         if cached_records and len(cached_records) >= max_sources:
-            print(f"[Research Memory Hit]: Found sufficient matching vectors ({len(cached_records)}) locally on disk!")
+            print(f"[Research Memory Hit]: Found sufficient matching vectors locally on disk!")
             dossier.included_sources = cached_records[:max_sources]
         else:
             print("[Research Memory Miss]: Routing to live OpenAlex API pipeline...")
-            # Route dynamic source count bounds to your live openalex API call string mapping
-            # This relies on your updated search implementation processing the 'per_page' or 'limit' keyword parameters!
             pathfinder_output = self.pathfinder.execute(query=topic, limit=max_sources)
 
             if isinstance(pathfinder_output, dict):
@@ -57,7 +59,7 @@ class NexusOrchestrator:
             elif hasattr(pathfinder_output, 'included_sources'):
                 dossier.included_sources = pathfinder_output.included_sources[:max_sources]
 
-        # ... (Keep your standard `while attempts <= self.max_retries` loop block exactly as it is) ...
+        # 2. Main Iterative Verification Loop
         attempts = 0
         final_review = None
         generated_insight = None
@@ -65,8 +67,12 @@ class NexusOrchestrator:
         while attempts <= self.max_retries:
             attempts += 1
             print(f'[Cycle] Synthesis Attempt {attempts}')
-            synth_result = self.scribe.execute(topic=topic, raw_data=dossier.included_sources)
+
+            # FIXED: Pass custom_prompt configurations down into your Scribe Agent execution layer
+            synth_result = self.scribe.execute(topic=topic, raw_data=dossier.included_sources,
+                                               custom_prompt=custom_prompt)
             generated_insight = synth_result
+
             review_output = self.reviewer.execute(insight=generated_insight['insight'],
                                                   evidence_items=dossier.included_sources)
             score = review_output.get('score', 0.0)
@@ -74,11 +80,10 @@ class NexusOrchestrator:
             if score >= self.grounding_threshold:
                 break
 
-        print("\n[Orchestrator \u2192 Phase 5]: Launching refined Dossier Generator Engine...")
+        print("\n[Orchestrator ➔ Phase 5]: Launching refined Dossier Generator Engine...")
         from app.reports.dossier_generator import DossierGenerator
         generator = DossierGenerator()
 
-        # Pass the dynamic prompt string parameter through to the generation step cleanly
         enriched_dossier = generator.generate_comprehensive_dossier(
             query=topic,
             included_sources=dossier.included_sources,
@@ -102,5 +107,28 @@ class NexusOrchestrator:
             dossier.themes.append(generated_insight['insight'])
 
         audit_file = self.squire.execute(dossier)
-        return {'topic': topic, 'insight': generated_insight, 'review': final_review, 'audit_file': audit_file}
 
+        # =========================================================================
+        # RELEVANCE TRACKING SIGNAL ENGINE: Measures literal document hit alignment
+        # =========================================================================
+        keywords = [w.lower() for w in topic.split() if len(w) > 3]
+        total_docs = len(dossier.included_sources)
+        matched_docs = 0
+
+        for src in dossier.included_sources:
+            src_text = ""
+            if isinstance(src, dict):
+                src_text = (src.get('title', '') + " " + src.get('abstract', '')).lower()
+            else:
+                src_text = (getattr(src, 'title', '') + " " + getattr(src, 'abstract', '')).lower()
+
+            if any(kw in src_text for kw in keywords):
+                matched_docs += 1
+
+        relevance_signal = round(matched_docs / total_docs, 2) if total_docs > 0 else 0.0
+
+        # Inject the calculated topical metric value into the finalized dictionary
+        final_review['relevance_signal'] = relevance_signal
+        # =========================================================================
+
+        return {'topic': topic, 'insight': generated_insight, 'review': final_review, 'audit_file': audit_file}
