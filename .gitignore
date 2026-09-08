@@ -4,3 +4,5 @@
 __pycache__/
 *.xlsx
 .pytest_cache/
+# Block local Chrome Extension Native Messaging host layouts from leak exposures
+native_host/
