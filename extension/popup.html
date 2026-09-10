@@ -35,6 +35,15 @@
     <input type="number" id="max_sources" value="5" min="1" max="25" style="width: 70px; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
   </div>
 
+    <div class="field">
+    <label for="domain">Research Domain Vertical</label>
+    <select id="domain" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background-color: white;">
+      <option value="scholarly">Academia & Scholarly Literature (OpenAlex)</option>
+      <option value="legal">Legal Jurisprudence & Case Precedents (CourtListener)</option>
+    </select>
+  </div>
+
+
   <button id="runBtn">Launch Pipeline Loop</button>
 
   <div id="status"></div>

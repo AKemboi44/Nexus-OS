@@ -1,47 +1,65 @@
 console.log("[Nexus Background]: Long-lived Service Worker active.");
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "trigger_nexus_scan") {
-        console.log("[Nexus Background]: Launching connection channel to Local Native Host Engine...");
+// Maintain an active pool tracking open extension popup window ports
+let activePopupPort = null;
 
-        const port = chrome.runtime.connectNative("com.nexus.research.core");
+chrome.runtime.onConnect.addListener((popupPort) => {
+    if (popupPort.name === "nexus_popup_channel") {
+        activePopupPort = popupPort;
+        console.log("[Nexus Background]: Long-lived UI Channel established safely.");
 
-        const mcpPayload = {
-            method: "tools/call",
-            params: {
-                arguments: {
-                    topic: request.topic,
-                    custom_prompt: request.custom_prompt || null,
-                    max_sources: parseInt(request.max_sources || 5)
-                }
-            },
-            id: Date.now()
-        };
+        activePopupPort.onMessage.addListener((request) => {
+            if (request.action === "trigger_nexus_scan") {
+                console.log("[Nexus Background]: Spawning Native messaging pipeline...");
 
-        port.postMessage(mcpPayload);
+                // Open the secure Windows Native Host Process thread loop handle connection
+                const nativePort = chrome.runtime.connectNative("com.nexus.research.core");
 
-        // Handle incoming data streams dynamically across multiple message frames
-        port.onMessage.addListener((response) => {
-            console.log("[Nexus Background]: Stream packet arrived from native host:", response);
+                // Pack parameters natively and post directly down to python stdin
+                const mcpPayload = {
+                    method: "tools/call",
+                    params: {
+                        arguments: {
+                            topic: request.topic,
+                            custom_prompt: request.custom_prompt || null,
+                            max_sources: parseInt(request.max_sources || 5),
+                            domain: request.domain || "scholarly"
+                        }
+                    },
+                    id: Date.now()
+                };
 
-            if (response.status === "processing") {
-                // Forward the intermediate loader text status back to popup.js to show active tracking logs
-                chrome.runtime.sendMessage({ action: "update_loader_status", message: response.message });
-            } else if (response.status === "success" || response.excel_report_saved_at) {
-                // Final data payload has arrived! Forward cleanly to popup UI and disconnect
-                sendResponse({ success: true, data: response });
-                port.disconnect();
+                nativePort.postMessage(mcpPayload);
+
+                // Seamlessly relay streaming frames up to the open popup overlay frame
+                nativePort.onMessage.addListener((response) => {
+                    console.log("[Nexus Background]: Inbound payload packet received from Python:", response);
+
+                    if (activePopupPort) {
+                        // Forward the raw packet object structure without splitting communication scopes
+                        activePopupPort.postMessage({ success: true, data: response });
+                    }
+
+                    if (response.status === "success" || response.excel_report_saved_at) {
+                        nativePort.disconnect();
+                    }
+                });
+
+                nativePort.onDisconnect.addListener(() => {
+                    const err = chrome.runtime.lastError;
+                    if (err) {
+                        console.warn("[Nexus Background Pipe Error]: Native line dropped:", err.message);
+                        if (activePopupPort) {
+                            activePopupPort.postMessage({ success: false, error: `Pipeline Severed: ${err.message}` });
+                        }
+                    }
+                });
             }
         });
 
-        port.onDisconnect.addListener(() => {
-            const err = chrome.runtime.lastError;
-            if (err) {
-                console.warn("[Nexus Background]: Native pipe disconnected:", err.message);
-                sendResponse({ success: false, error: `Native Pipeline Crash: ${err.message}` });
-            }
+        popupPort.onDisconnect.addListener(() => {
+            activePopupPort = null;
+            console.log("[Nexus Background]: UI Panel overlay dropped by user view action.");
         });
-
-        return true; // Keep response pipe open across long async calls
     }
 });
