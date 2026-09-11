@@ -1,2 +1,27 @@
-# Nexus-OS
-Implementation of an evidence based and evaluated research modules to support structured industry product discovery and academic postgraduate level research. It helps scores all the research sources for relevance and trust scores, creating a vital grounding to enhance quality discovery and evidence based decision-making
+
+This contains a complete Discovery MVP with OpenAlex normalization and evals
+
+
+Every Nexus module must have:
+
+1. Unit Tests
+2. Benchmark Data
+3. Evaluation Script
+
+No module moves to production
+without all three.
+
+**This is the flow:**
+Research Query
+        ↓
+OpenAlex
+        ↓
+Raw JSON
+        ↓
+Normalization
+        ↓
+Source
+        ↓
+DiscoveryResult
+        ↓
+Eval
