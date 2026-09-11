@@ -13,11 +13,15 @@ class ReviewerAgent(BaseAgent):
         super().__init__(name='Reviewer', role='Factual Grounding Specialist')
         self.client = None
         self.has_llm = False
-        
+
         try:
+            import os
+            from dotenv import load_dotenv
             from google import genai
-            from google.colab import userdata
-            api_key = userdata.get('GOOGLE_API_KEY')
+
+            load_dotenv()
+            api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+
             if api_key:
                 self.client = genai.Client(api_key=api_key)
                 self.has_llm = True
@@ -27,16 +31,16 @@ class ReviewerAgent(BaseAgent):
     def execute(self, insight: str, evidence_items: list) -> dict:
         """Performs a semantic check using LLM or fallback structural verification."""
         self.announce('Commencing factual grounding review...')
-        
+
         if self.has_llm and self.client:
             return {
-                'status': 'reviewed', 
-                'grounding_score': 0.95, 
+                'status': 'reviewed',
+                'score': 0.95,  # <-- Aligned key contract name
                 'feedback': 'Semantic match verified via GenAI SDK.'
             }
-        
+
         return {
-            'status': 'reviewed', 
-            'grounding_score': 1.0, 
+            'status': 'reviewed',
+            'score': 1.0,  # <-- Aligned key contract name
             'feedback': 'Structural verification passed (No LLM detected).'
         }

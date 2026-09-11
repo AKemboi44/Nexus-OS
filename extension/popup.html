@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 340px; font-family: system-ui, -apple-system, sans-serif; padding: 14px; margin: 0; background-color: #f9f9f9; color: #333; }
+    h3 { margin-top: 0; color: #111; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+    .field { margin-bottom: 12px; }
+    label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #555; }
+    input[type="text"], textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    textarea { resize: vertical; height: 70px; }
+    button { background-color: #007acc; color: white; border: none; padding: 10px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; width: 100%; font-size: 13px; margin-top: 8px; }
+    button:hover { background-color: #0062a3; }
+    #status { margin-top: 12px; font-size: 12px; white-space: pre-wrap; padding: 8px; border-radius: 4px; display: none; }
+    .success { background-color: #e6f4ea; color: #137333; border: 1px solid #dadce0; }
+    .error { background-color: #fce8e6; color: #c5221f; border: 1px solid #dadce0; }
+    .loading { background-color: #e8f0fe; color: #1a73e8; border: 1px solid #dadce0; }
+  </style>
+</head>
+<body>
+  <h3>Nexus OS Agent Sweep</h3>
+
+  <div class="field">
+    <label for="topic">Research Topic</label>
+    <input type="text" id="topic" placeholder="e.g. gRPC vs REST latency benchmarks">
+  </div>
+
+  <div class="field">
+    <label for="custom_prompt">Steering Directives (Optional)</label>
+    <textarea id="custom_prompt" placeholder="e.g. Focus strictly on throughput performance."></textarea>
+  </div>
+
+  <div class="field">
+    <label for="max_sources">Maximum Sources</label>
+    <input type="number" id="max_sources" value="5" min="1" max="25" style="width: 70px; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+  </div>
+
+    <div class="field">
+    <label for="domain">Research Domain Vertical</label>
+    <select id="domain" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background-color: white;">
+      <option value="scholarly">Academia & Scholarly Literature (OpenAlex)</option>
+      <option value="legal">Legal Jurisprudence & Case Precedents (CourtListener)</option>
+    </select>
+  </div>
+
+
+  <button id="runBtn">Launch Pipeline Loop</button>
+
+  <div id="status"></div>
+
+  <!-- COMPLIANT: External call only, placed at the absolute bottom -->
+  <script src="popup.js"></script>
+</body>
+</html>
