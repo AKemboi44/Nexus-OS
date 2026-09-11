@@ -1,0 +1,56 @@
+[
+  {
+    "title": "World Bank Mobile Money Report",
+    "year": 2024,
+    "expected": "include"
+  },
+
+  {
+    "title": "GSMA State of Mobile Money",
+    "year": 2023,
+    "expected": "include"
+  },
+
+  {
+    "title": "Mobile Money and Financial Inclusion in Kenya",
+    "year": 2022,
+    "expected": "include"
+  },
+
+  {
+    "title": "Personal Blog About Mobile Money",
+    "year": 2014,
+    "expected": "exclude"
+  },
+
+  {
+    "title": "My Thoughts on Digital Payments",
+    "year": 2012,
+    "expected": "exclude"
+  },
+
+  {
+    "title": "Marketing Brochure for Mobile Wallet App",
+    "year": 2025,
+    "expected": "exclude"
+  },
+
+  {
+  "title": "Randomized Evaluation of Mobile Money Adoption",
+  "year": 2023,
+  "expected": "include"
+  },
+
+  {
+  "title": "Systematic Review of Digital Financial Inclusion",
+  "year": 2022,
+  "expected": "include"
+  },
+
+  {
+  "title": "Top 10 Reasons I Love Mobile Wallets",
+  "year": 2024,
+  "expected": "exclude"
+  }
+
+]
