@@ -1,72 +1,40 @@
-# OpenAlex.py is responsible only for one thing as below
-# Query OpenAlex
-# ↓
-# Normalize to Source
-# ↓
-# Return DiscoveryResult
-"""
-Convert OpenAlex response
-into Nexus OS Source objects.
-"""
-
 import requests
-
 from config.settings import OPENALEX_API_KEY
-
-from app.discovery.discovery_interface import (
-    DiscoveryProvider
-)
-
-from app.discovery.models import (
-    DiscoveryResult)
-
+from app.discovery.discovery_interface import DiscoveryProvider
+from app.discovery.models import DiscoveryResult
 from models.source import Source
 
-
-
-#first version - proof connectivity;
-#later: Add normalization, ranking, Source conversion.
 
 class OpenAlexDiscovery(DiscoveryProvider):
 
     def search(self, query):
-        #1. Defining the enpoint url
         url = "https://api.openalex.org/works"
 
-
-        #2. Authentication and search parameter setup
+        # Authentication parameter cleanup for open academic polite pool routing
         params = {
-             "search":query,
-             "api_key": OPENALEX_API_KEY,
-             "per-page": 5
-         }
+            "search": query,
+            "per_page": 5
+        }
 
-        #3 adding a user-agent containing my email to get into the polite pool
+        # If you have an institutional key premium seat, append it defensively
+        if OPENALEX_API_KEY:
+            params["api_key"] = OPENALEX_API_KEY
+
         headers = {
-             "User-Agent": "mailto:akiptoo20@gmail.com"
-         }
+            "User-Agent": "mailto:akiptoo20@gmail.com"
+        }
 
-        #4. Fire the authentication request
         response = requests.get(url, params=params, headers=headers)
 
-         #5., Safety check status code before parsing'
-        if "text/html" in response.headers.get ("content-type", ""):
-            raise Exception (
-                f"Target URL is incorrect. Received a webpage instead of data. "
-                f"Status: {response.status_code}. Content Snippet: {response.text[:200]}"
-            )
-        data = response.json()
+        # Safety check status code before parsing
+        if response.status_code != 200:
+            raise Exception(f"OpenAlex request failed with status: {response.status_code}")
 
-        print(
-            data["results"][0].keys()
-        )
+        data = response.json()
 
         sources = [
             self._normalize_work(work)
-            for work in data.get(
-                "results",
-                []
-            )
+            for work in data.get("results", [])
         ]
 
         return DiscoveryResult(
@@ -75,40 +43,28 @@ class OpenAlexDiscovery(DiscoveryProvider):
             sources=sources
         )
 
-    "# OpenALex returns inverted Abstract, therefore our summary output will always be empty"
-    "We are adding a helper function to convert openAlex abstract inverted index to normal text"
-
-    def _reconstruct_abstract(
-            self,
-            inverted_index
-    ):
-        """
-        Convert OpenAlex abstract_inverted_index
-        into normal text.
-        """
-
+    def _reconstruct_abstract(self, inverted_index):
+        """Convert OpenAlex abstract_inverted_index into normal text."""
         if not inverted_index:
             return ""
 
+        if not isinstance(inverted_index, dict) or len(inverted_index) == 0:
+            return ""
+
         words = []
+        try:
+            max_position = max(
+                max(pos_list)
+                for pos_list in inverted_index.values()
+            )
+            words = [""] * (max_position + 1)
 
-        max_position = max(
-            max(pos_list)
-            for pos_list in inverted_index.values()
-        )
-
-        words = [""] * (
-                max_position + 1
-        )
-
-        for word, positions in (
-                inverted_index.items()
-        ):
-
-            for position in positions:
-                words[position] = word
-
-        return " ".join(words)
+            for word, positions in inverted_index.items():
+                for position in positions:
+                    words[position] = word
+            return " ".join(words)
+        except Exception:
+            return ""
 
     def _normalize_work(self, work):
         return Source(
@@ -116,17 +72,11 @@ class OpenAlexDiscovery(DiscoveryProvider):
             title=work.get("display_name", ""),
             authors=[
                 author["author"]["display_name"]
-                for author in work.get(
-                    "authorships",
-                    []
-                )
+                for author in work.get("authorships", [])
+                if "author" in author and "display_name" in author["author"]
             ],
             year=work.get("publication_year"),
             url=work.get("id", ""),
-            abstract=self._reconstruct_abstract(
-                work.get(
-                    "abstract_inverted_index"
-                )
-            ),
+            abstract=self._reconstruct_abstract(work.get("abstract_inverted_index")),
             source_type="academic"
         )

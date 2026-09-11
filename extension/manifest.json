@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Nexus OS Research Co-Pilot",
+  "version": "1.0.0",
+  "description": "Trigger local multi-agent academic research loops directly from your browser overlay.",
+  "permissions": [
+    "nativeMessaging",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
