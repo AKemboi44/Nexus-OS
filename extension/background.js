@@ -44,7 +44,7 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                                     const cleanJsonString = rawText.substring(firstBrace, lastBrace + 1);
                                     let parsedPayload = JSON.parse(cleanJsonString);
 
-                                    // Layer 1: Drill through standard JSON-RPC envelope structures
+                                    // Layer 1: Drill through standard JSON-RPC envelope structures explicitly via index [0]
                                     if (parsedPayload.result && parsedPayload.result.content) {
                                         const contentArray = parsedPayload.result.content;
                                         if (Array.isArray(contentArray) && contentArray[0] && contentArray[0].text) {
@@ -54,21 +54,12 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                                         }
                                     }
 
-                                    // Layer 2: Drill through explicit stringified synthesis models
+                                    // Layer 2: Ensure any outer string serialization layer is unrolled
                                     if (typeof parsedPayload === 'string') {
                                         parsedPayload = JSON.parse(parsedPayload);
                                     }
 
-                                    if (parsedPayload.synthesis && typeof parsedPayload.synthesis === 'string') {
-                                        try {
-                                            const innerSynthesis = JSON.parse(parsedPayload.synthesis);
-                                            unpackedData = { ...parsedPayload, ...innerSynthesis };
-                                        } catch (e) {
-                                            unpackedData = parsedPayload;
-                                        }
-                                    } else {
-                                        unpackedData = parsedPayload;
-                                    }
+                                    unpackedData = parsedPayload;
                                 } else {
                                     unpackedData.message = rawText;
                                 }
@@ -80,7 +71,7 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                             unpackedData = response;
                         }
 
-                        // Enforce final success status flags so popup.js triggers the dynamic display route
+                        // Force standard success flags so popup.js triggers the dynamic display route
                         if (!unpackedData.status) {
                             unpackedData.status = "success";
                         }
