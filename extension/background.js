@@ -32,25 +32,43 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                     console.log("[Nexus Background]: Inbound payload packet received from Python:", response);
 
                     if (activePopupPort) {
-                        let unpackedData = { status: "success" };
+                        let unpackedData = {};
 
                         if (response && response.result) {
                             try {
                                 const rawText = response.result;
-
-                                // FIXED: Find the first '{' and last '}' to strip away human logs out of stdout
                                 const firstBrace = rawText.indexOf('{');
                                 const lastBrace = rawText.lastIndexOf('}');
 
                                 if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
                                     const cleanJsonString = rawText.substring(firstBrace, lastBrace + 1);
-                                    const baseMcpResponse = JSON.parse(cleanJsonString);
+                                    let parsedPayload = JSON.parse(cleanJsonString);
 
-                                    // Drill down through the MCP text response nesting block layer
-                                    const textPayloadString = baseMcpResponse.result.content[0].text;
-                                    const finalDataModel = JSON.parse(textPayloadString);
+                                    // Layer 1: Drill through standard JSON-RPC envelope structures
+                                    if (parsedPayload.result && parsedPayload.result.content) {
+                                        const contentArray = parsedPayload.result.content;
+                                        if (Array.isArray(contentArray) && contentArray[0] && contentArray[0].text) {
+                                            parsedPayload = JSON.parse(contentArray[0].text);
+                                        } else if (contentArray.text) {
+                                            parsedPayload = JSON.parse(contentArray.text);
+                                        }
+                                    }
 
-                                    unpackedData = finalDataModel;
+                                    // Layer 2: Drill through explicit stringified synthesis models
+                                    if (typeof parsedPayload === 'string') {
+                                        parsedPayload = JSON.parse(parsedPayload);
+                                    }
+
+                                    if (parsedPayload.synthesis && typeof parsedPayload.synthesis === 'string') {
+                                        try {
+                                            const innerSynthesis = JSON.parse(parsedPayload.synthesis);
+                                            unpackedData = { ...parsedPayload, ...innerSynthesis };
+                                        } catch (e) {
+                                            unpackedData = parsedPayload;
+                                        }
+                                    } else {
+                                        unpackedData = parsedPayload;
+                                    }
                                 } else {
                                     unpackedData.message = rawText;
                                 }
@@ -62,7 +80,12 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                             unpackedData = response;
                         }
 
-                        // Send the clean, deeply-extracted dataset models straight up to popup.js
+                        // Enforce final success status flags so popup.js triggers the dynamic display route
+                        if (!unpackedData.status) {
+                            unpackedData.status = "success";
+                        }
+
+                        console.log("[Nexus Background]: Forwarding fully unrolled data back to popup:", unpackedData);
                         activePopupPort.postMessage({ success: true, data: unpackedData });
                     }
 
