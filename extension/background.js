@@ -1,6 +1,5 @@
 console.log("[Nexus Background]: Long-lived Service Worker active.");
 
-// Maintain an active pool tracking open extension popup window ports
 let activePopupPort = null;
 
 chrome.runtime.onConnect.addListener((popupPort) => {
@@ -12,10 +11,8 @@ chrome.runtime.onConnect.addListener((popupPort) => {
             if (request.action === "trigger_nexus_scan") {
                 console.log("[Nexus Background]: Spawning Native messaging pipeline...");
 
-                // Open the secure Windows Native Host Process thread loop handle connection
                 const nativePort = chrome.runtime.connectNative("com.nexus.research.core");
 
-                // Pack parameters natively and post directly down to python stdin
                 const mcpPayload = {
                     method: "tools/call",
                     params: {
@@ -31,28 +28,41 @@ chrome.runtime.onConnect.addListener((popupPort) => {
 
                 nativePort.postMessage(mcpPayload);
 
-                // Seamlessly relay streaming frames up to the open popup overlay frame
                 nativePort.onMessage.addListener((response) => {
                     console.log("[Nexus Background]: Inbound payload packet received from Python:", response);
 
                     if (activePopupPort) {
-                        // FIXED: Intercept, unpack, and align double-encapsulated JSON result frames
                         let unpackedData = { status: "success" };
 
                         if (response && response.result) {
                             try {
-                                // Parse the internal string returned by the subprocess communication loop
-                                const innerJson = JSON.parse(response.result);
-                                unpackedData = innerJson.result || innerJson;
+                                const rawText = response.result;
+
+                                // FIXED: Find the first '{' and last '}' to strip away human logs out of stdout
+                                const firstBrace = rawText.indexOf('{');
+                                const lastBrace = rawText.lastIndexOf('}');
+
+                                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                                    const cleanJsonString = rawText.substring(firstBrace, lastBrace + 1);
+                                    const baseMcpResponse = JSON.parse(cleanJsonString);
+
+                                    // Drill down through the MCP text response nesting block layer
+                                    const textPayloadString = baseMcpResponse.result.content[0].text;
+                                    const finalDataModel = JSON.parse(textPayloadString);
+
+                                    unpackedData = finalDataModel;
+                                } else {
+                                    unpackedData.message = rawText;
+                                }
                             } catch (e) {
-                                console.warn("[Nexus Background]: Result string was not valid JSON, forwarding raw object.");
+                                console.warn("[Nexus Background Parsing Exception]:", e);
                                 unpackedData.message = response.result;
                             }
                         } else if (response) {
                             unpackedData = response;
                         }
 
-                        // Forward the clean object structure straight up to the frontend UI
+                        // Send the clean, deeply-extracted dataset models straight up to popup.js
                         activePopupPort.postMessage({ success: true, data: unpackedData });
                     }
 
