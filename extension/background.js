@@ -36,8 +36,24 @@ chrome.runtime.onConnect.addListener((popupPort) => {
                     console.log("[Nexus Background]: Inbound payload packet received from Python:", response);
 
                     if (activePopupPort) {
-                        // Forward the raw packet object structure without splitting communication scopes
-                        activePopupPort.postMessage({ success: true, data: response });
+                        // FIXED: Intercept, unpack, and align double-encapsulated JSON result frames
+                        let unpackedData = { status: "success" };
+
+                        if (response && response.result) {
+                            try {
+                                // Parse the internal string returned by the subprocess communication loop
+                                const innerJson = JSON.parse(response.result);
+                                unpackedData = innerJson.result || innerJson;
+                            } catch (e) {
+                                console.warn("[Nexus Background]: Result string was not valid JSON, forwarding raw object.");
+                                unpackedData.message = response.result;
+                            }
+                        } else if (response) {
+                            unpackedData = response;
+                        }
+
+                        // Forward the clean object structure straight up to the frontend UI
+                        activePopupPort.postMessage({ success: true, data: unpackedData });
                     }
 
                     if (response.status === "success" || response.excel_report_saved_at) {
