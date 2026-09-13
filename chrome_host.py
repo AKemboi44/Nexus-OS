@@ -4,6 +4,10 @@ import struct
 import subprocess
 import os
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def read_message():
     try:
@@ -43,17 +47,29 @@ def main():
         topic = msg.get("topic", "ai token optimization techniques")
         max_sources = msg.get("max_sources", 5)
         domain = msg.get("domain", "scholarly")
+        action_type = msg.get("action", "trigger_nexus_scan")
+
+        # --- CRITICAL PRODUCTION ALIGNMENT: MATCH MCP SERVER STRING EXPECTATIONS ---
+
+        if action_type == "trigger_docx_generation":
+            arguments = {
+                "action": "trigger_docx_generation",  # Unified exact mapping string
+                "topic": str(topic),
+                "included_sources": msg.get("included_sources", []),
+                "uploaded_sources": msg.get("uploaded_sources", [])
+            }
+        else:
+            arguments = {
+                "topic": str(topic),
+                "max_sources": int(max_sources),
+                "domain": str(domain),
+                "uploaded_sources": msg.get("uploaded_sources", [])
+            }
 
         mcp_payload = json.dumps({
             "method": "tools/call",
             "id": 1,
-            "params": {
-                "arguments": {
-                    "topic": str(topic),
-                    "max_sources": int(max_sources),
-                    "domain": str(domain)
-                }
-            }
+            "params": {"arguments": arguments}
         })
 
         try:
@@ -64,58 +80,77 @@ def main():
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                encoding="utf-8",
+                errors="replace"
             )
             stdout_out, stderr_out = process.communicate(input=mcp_payload)
 
             final_data = {}
-            first_brace = stdout_out.find('{')
-            last_brace = stdout_out.rfind('}')
+            first_brace = stdout_out.find("{")
+            last_brace = stdout_out.rfind("}")
 
             if first_brace != -1 and last_brace != -1:
-                clean_json_str = stdout_out[first_brace:last_brace + 1]
-                outer_envelope = json.loads(clean_json_str)
-
+                outer_envelope = json.loads(stdout_out[first_brace:last_brace + 1])
                 content_list = outer_envelope.get("result", {}).get("content", [])
-                inner_text_str = ""
 
-                # FIXED: Extract dictionary key directly from array index 0 using safe index assignment brackets
-                if isinstance(content_list, list) and len(content_list) > 0:
-                    if isinstance(content_list[0], dict):
-                        inner_text_str = content_list[0].get("text", "")
+                if isinstance(content_list, list) and content_list:
+                    inner_text_str = content_list[0].get("text", "")
                 elif isinstance(content_list, dict):
                     inner_text_str = content_list.get("text", "")
+                else:
+                    inner_text_str = ""
 
                 if inner_text_str:
-                    try:
-                        final_data = json.loads(inner_text_str)
-                    except Exception:
-                        pass
+                    final_data = json.loads(inner_text_str)
 
-            # Production validation check and fallback synchronizer
-            if not isinstance(final_data, dict) or "included" not in final_data:
-                # Merge any partial data extracted into stable visual fallbacks
-                base_synthesis = final_data.get("synthesis") if isinstance(final_data, dict) else stdout_out
-                final_data = {
-                    "status": "success",
-                    "domain_executed": str(domain),
-                    "synthesis": str(base_synthesis),
-                    "grounding_fidelity_score": 0.95,
-                    "topical_relevance_signal": 1.00,
-                    "included": [
-                        {"title": "Cross-Engine Token Optimization Framework", "venue": "IEEE Transactions",
-                         "year": "2025", "citation_count": 42},
-                        {"title": "Multi-Engine High Recall Search Topologies", "venue": "ACM Queue", "year": "2026",
-                         "citation_count": 12}
-                    ],
-                    "excluded": [
-                        {"title": "Legacy Text Serializations (XML/JSON)", "provider_source": "Crossref",
-                         "exclusion_reason": "Below precision baseline floor."}
-                    ]
-                }
+            is_valid_dict = isinstance(final_data, dict)
+            is_scribe_success = (
+                    is_valid_dict
+                    and (final_data.get("action") == "docx_generation_complete" or "document_saved_at" in final_data)
+            )
+            is_search_success = is_valid_dict and "included" in final_data
 
-            send_message(final_data)
+            if is_scribe_success or is_search_success:
+                if is_search_success:
+                    final_data["action"] = "research_scan_complete"
+                send_message(final_data)
+                continue
 
+            # --- ROUTE PRODUCTION CIRCUITS: HARD-FI FALLBACK GUARD FOR CITATION WRITES ---
+            if action_type == "trigger_docx_generation":
+                try:
+                    # Import your exact class signature layout directly from disk workspace storage
+                    from app.agents.scribe_agent import ScribeResearchAgent
+                    scribe_worker = ScribeResearchAgent()
+
+                    # Fire the exact method signature name mapping array properties
+                    saved_absolute_path = scribe_worker.generate_apa_dossier_report(
+                        topic=str(topic),
+                        included_sources=msg.get("included_sources", [])
+                    )
+
+                    # Extract the absolute clean filename base string token dynamically
+                    extracted_filename = os.path.basename(saved_absolute_path)
+
+                    send_message({
+                        "status": "success",
+                        "action": "docx_generation_complete",
+                        "document_saved_at": extracted_filename
+                    })
+                except Exception as inner_scribe_err:
+                    send_message({
+                        "status": "error",
+                        "message": f"Direct Scribe compilation circuit failure: {str(inner_scribe_err)}"
+                    })
+                continue
+
+            send_message({
+                "status": "error",
+                "action": "research_scan_failed",
+                "message": "The research host returned no valid source-backed response.",
+                "details": stderr_out.strip() or stdout_out.strip()
+            })
         except Exception as e:
             send_message({"status": "error", "message": str(e)})
 

@@ -84,9 +84,9 @@ class SquireAgent(BaseAgent):
         # 3. Encapsulate workbook saving logic
         def write_excel_safely(path):
             with pd.ExcelWriter(path, engine='openpyxl') as writer:
+                df_themes.to_excel(writer, sheet_name='Core Themes', index=False)
                 df_summary.to_excel(writer, sheet_name='Executive Summary', index=False)
                 df_sources_audit.to_excel(writer, sheet_name='Ingested Sources Audit', index=False)
-                df_themes.to_excel(writer, sheet_name='Key Themes', index=False)
                 df_contradictions.to_excel(writer, sheet_name='Contradictions', index=False)
                 df_gaps.to_excel(writer, sheet_name='Research Gaps', index=False)
                 df_opportunities.to_excel(writer, sheet_name='Strategic Opportunities', index=False)

@@ -1,271 +1,188 @@
+# mcp_server.py - Production-Ready Native Messaging Controller
 import sys
 import json
 import os
 import struct
+import base64
+import tempfile
+from dotenv import load_dotenv
 
-# --- CRITICAL BUFFER SHIELD: Force UTF-8 standard stream tracking ---
-sys.stdout.reconfigure(encoding='utf-8')
-
-# Ensure local project architecture paths map cleanly
 project_root = os.getcwd()
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+load_dotenv(os.path.join(project_root, '.env'))
 
-def execute_mcp_research(topic: str, custom_prompt: str = None, max_sources: int = 5, domain: str = "scholarly") -> str:
-    """
-    Invokes the Nexus OS core agents over an MCP pipeline handle with strict stdout shielding.
-    Safely captures rogue text prints and redirects error diagnostics to stderr.
-    """
-    import io
-    from contextlib import redirect_stdout
-    from dotenv import load_dotenv
+from app.research.research_pipeline import ResearchPipeline
+from app.reports.dossier_generator import DossierGenerator
 
-    # Load local workspace environment file tokens securely
-    load_dotenv(os.path.join(project_root, '.env'))
 
-    # SECURITY SHIELD: Bind it to os.environ so the GenAI SDK captures it smoothly
-    if "GEMINI_API_KEY" in os.environ:
-        os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY")
-
-    rogue_print_buffer = io.StringIO()
-
+def execute_mcp_research(topic: str, max_sources: int = 5, domain: str = "scholarly",
+                         additional_sources=None):
     try:
-        from app.research.research_pipeline import ResearchPipeline
-        from app.synthesis.insight_engine import InsightEngine
-        from app.agents.pathfinder_agent import PathfinderAgent
-        from app.agents.synthesis_agent import ScribeAgent
-        from app.agents.reviewer_agent import ReviewerAgent
-        from app.agents.squire_agent import SquireAgent
-        from app.agents.orchestrator import NexusOrchestrator
-
-        # Wrap agent instantiation and execution loops to catch print leaks
-        with redirect_stdout(rogue_print_buffer):
-            search_engine = ResearchPipeline()
-            insight_engine = InsightEngine()
-
-            pathfinder = PathfinderAgent(search_engine)
-            scribe = ScribeAgent(insight_engine)
-            reviewer = ReviewerAgent()
-            squire = SquireAgent()
-
-            # The orchestrator handles the core data loops internally
-            orchestrator = NexusOrchestrator(pathfinder, scribe, reviewer, squire, max_retries=1)
-
-            results = orchestrator.run_research_loop(
-                topic=topic,
-                custom_prompt=custom_prompt,
-                max_sources=max_sources,
-                domain=domain
-            )
-
-        # Safely route any captured rogue agent text prints into stderr logs for debugging
-        agent_logs = rogue_print_buffer.getvalue()
-        if agent_logs:
-            print(f"[Captured Agent Output]:\n{agent_logs}", file=sys.stderr)
-            sys.stderr.flush()
-
-        insight_payload = results.get('insight', {})
-        if isinstance(insight_payload, dict):
-            inner_insight = insight_payload.get('insight', '')
-            insight_text = inner_insight.get('text') or inner_insight.get('summary') or str(
-                inner_insight) if isinstance(
-                inner_insight, dict) else str(inner_insight)
-        else:
-            insight_text = str(insight_payload)
-
-        review_data = results.get('review', {})
-        grounding_score = review_data.get('score', 0.0)
-        relevance_signal = review_data.get('relevance_signal', 0.0)
-
-        # Extraction vectors mapped natively out of orchestrator payload results array
-        apa_format = results.get("apa_format_citation", "Generated in report matrix.")
-        bluebook_format = results.get("bluebook_format_citation", "Generated in report matrix.")
-        chunks_pushed = results.get("pymupdf_fulltext_chunks_pushed", 0)
-
-        return json.dumps({
-            "status": "success",
-            "topic": topic,
-            "domain_executed": domain,
-            "synthesis": insight_text,
-            "grounding_fidelity_score": grounding_score,
-            "topical_relevance_signal": relevance_signal,
-            "pymupdf_fulltext_chunks_pushed": chunks_pushed,
-            "apa_format_citation": apa_format,
-            "bluebook_format_citation": bluebook_format,
-            "excel_report_saved_at": results.get('audit_file', 'N/A')
-        }, ensure_ascii=False)
-
+        pipeline = ResearchPipeline()
+        result_data = pipeline.run_research(
+            query=topic,
+            max_sources=max_sources,
+            additional_sources=additional_sources or []
+        )
+        return result_data
     except Exception as e:
-        error_logs = rogue_print_buffer.getvalue()
-        print(f"[Pipeline Exception Log]: {e}\nCaptured Output: {error_logs}", file=sys.stderr)
-        sys.stderr.flush()
-        return json.dumps({"status": "error", "message": f"{str(e)} | Logs: {error_logs}"})
-
-
-def read_message(is_chrome: bool):
-    """
-    Reads data inputs dynamically across both standard raw text string fields
-    and Chrome length-prefixed raw binary streams with strict tuple extraction.
-    """
-    if is_chrome:
-        try:
-            text_length_bytes = sys.stdin.buffer.read(4)
-            if not text_length_bytes or len(text_length_bytes) < 4:
-                return None
-
-            text_length = struct.unpack('=I', text_length_bytes)[0]
-            if text_length == 0:
-                return {}
-
-            raw_payload = sys.stdin.buffer.read(text_length)
-            if len(raw_payload) < text_length:
-                return None
-
-            return json.loads(raw_payload.decode('utf-8'))
-        except Exception as stream_err:
-            print(f"[Nexus Host Error] Stream read failure: {stream_err}", file=sys.stderr)
-            sys.stderr.flush()
-            return None
-    else:
-        line = sys.stdin.readline()
-        if not line:
-            return None
-        return json.loads(line)
-
-
-def write_response(response_dict, is_chrome: bool):
-    """
-    Ensures safe UTF-8 byte serialization, fallback serialization handling,
-    and strict native 4-byte length prefixing for Chrome Native Messaging.
-    """
-    try:
-        serialized_text = json.dumps(response_dict, ensure_ascii=False, default=str)
-    except Exception as json_err:
-        print(f"[Nexus Host Error] JSON serialization failed: {json_err}", file=sys.stderr)
-        serialized_text = json.dumps({
-            "status": "success",
-            "error_fallback": True,
-            "message": "Payload contained un-serializable objects.",
-            "excel_report_saved_at": response_dict.get("excel_report_saved_at", "N/A")
-        })
-
-    if is_chrome:
-        try:
-            encoded_payload = serialized_text.encode('utf-8')
-            sys.stdout.buffer.write(struct.pack('=I', len(encoded_payload)))
-            sys.stdout.buffer.write(encoded_payload)
-            sys.stdout.buffer.flush()
-        except Exception as stream_err:
-            print(f"[Nexus Host Error] Stream write failure: {stream_err}", file=sys.stderr)
-            sys.stderr.flush()
-    else:
-        print(serialized_text)
-        sys.stdout.flush()
+        return {"status": "error", "message": f"Pipeline failure: {str(e)}"}
 
 
 def main():
-    # Force strict binary standard stream configuration on Windows systems
+    is_cli = "--cli" in sys.argv
     if sys.platform == "win32":
         import msvcrt
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-    print("Nexus OS MCP Server Initialized. Connecting stdio channels...", file=sys.stderr)
-    sys.stderr.flush()
+    try:
+        if is_cli:
+            raw_message = sys.stdin.readline()
+            if not raw_message:
+                return
+            payload = json.loads(raw_message)
+        else:
+            raw_length = sys.stdin.buffer.read(4)
+            if not raw_length or len(raw_length) < 4:
+                return
+            text_length = struct.unpack('=I', raw_length)[0]
+            message_bytes = sys.stdin.buffer.read(text_length)
+            if not message_bytes:
+                return
+            payload = json.loads(message_bytes.decode('utf-8'))
 
-    is_chrome = True
-    if "--cli" in sys.argv:
-        is_chrome = False
+        if payload.get("method") == "tools/call":
+            payload = payload.get("params", {}).get("arguments", {})
+        action = payload.get("action")
+        topic = payload.get("topic", "AI Optimization Techniques")
+        included_sources = payload.get("included_sources", [])
+        uploaded_sources = payload.get("uploaded_sources", [])
 
-    while True:
-        try:
-            payload = read_message(is_chrome)
-            if payload is None:
-                break
-
-            if not isinstance(payload, dict):
-                continue
-
-            method = payload.get("method")
-            msg_id = payload.get("id")
-
-            # --- CHROME EXTENSION INBOUND FLOW CHANNELS ---
-            if is_chrome and (method == "tools/call" or method is None or "topic" in payload):
-                params = payload.get("params", {})
-                arguments = params.get("arguments", payload.get("arguments", payload))
-
-                topic = arguments.get("topic")
-                custom_prompt = arguments.get("custom_prompt", None)
-                max_sources = int(arguments.get("max_sources", 5))
-                domain_target = arguments.get("domain", "scholarly").lower()
-
-                if not topic:
-                    write_response({"status": "error", "message": "No research topic provided."}, is_chrome)
-                    continue
-
-                # Acknowledge receipt fast to unfreeze the frontend port container loading state
-                write_response({
-                    "status": "processing",
-                    "message": f"Successfully spawned Nexus Host. Executing autonomous [{domain_target}] research sweep..."
-                }, is_chrome)
-
-                execution_result_str = execute_mcp_research(topic, custom_prompt, max_sources, domain_target)
-
-                try:
-                    execution_json = json.loads(execution_result_str)
-                    write_response(execution_json, is_chrome)
-                except Exception:
-                    write_response({
-                        "status": "success",
-                        "synthesis": execution_result_str,
-                        "excel_report_saved_at": "Saved to workspace."
-                    }, is_chrome)
-                continue
-
-            # --- STANDARD CLAUDE CODE MCP HANDSHAKE LOGIC ---
-            if method == "tools/list":
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "tools": [{
-                            "name": "nexus_research",
-                            "description": "Triggers the autonomous multi-domain federated research core.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "topic": {"type": "string", "description": "The research question query target."},
-                                    "custom_prompt": {"type": "string",
-                                                      "description": "Directional instruction angle filters."},
-                                    "max_sources": {"type": "integer",
-                                                    "description": "Number of academic records to parse."},
-                                    "domain": {"type": "string",
-                                               "description": "scholarly vs legal domain tracking profile target."}},
-                                "required": ["topic"]}}]}}
-                write_response(response, is_chrome)
-                continue
-
-            if method == "tools/call":
-                arguments = payload.get("params", {}).get("arguments", {})
-                topic = arguments.get("topic")
-                custom_prompt = arguments.get("custom_prompt", None)
-                max_sources = int(arguments.get("max_sources", 5))
-                domain_target = arguments.get("domain", "scholarly").lower()
-                execution_result = execute_mcp_research(topic, custom_prompt, max_sources, domain_target)
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"content": [{"type": "text", "text": execution_result}]}
+        parsed_uploads = []
+        for upload in uploaded_sources:
+            try:
+                name = str(upload.get("name", "uploaded-document"))
+                raw_data = base64.b64decode(upload.get("data", ""), validate=True)
+                if not raw_data:
+                    raise ValueError("Upload is empty.")
+                text = ""
+                if name.lower().endswith(".pdf") or upload.get("type") == "application/pdf":
+                    import pymupdf
+                    with pymupdf.open(stream=raw_data, filetype="pdf") as pdf:
+                        text = "\n".join(page.get_text() for page in pdf).strip()
+                else:
+                    text = raw_data.decode("utf-8", errors="replace").strip()
+                source = {
+                    "uid": f"upload_{name}",
+                    "title": name,
+                    "authors": ["User Upload"],
+                    "venue": "User-provided source",
+                    "year": "n.d.",
+                    "citation_count": 0,
+                    "is_peer_reviewed": False,
+                    "abstract": text[:12000] or "No extractable text.",
+                    "url": f"file:///{name}",
+                    "domain": payload.get("domain", "scholarly"),
+                    "provider_source": "user_upload",
+                    "include": bool(text.strip())
                 }
-                write_response(response, is_chrome)
-                continue
+                parsed_uploads.append(source)
+            except Exception as upload_err:
+                parsed_uploads.append({
+                    "uid": f"upload_error_{upload.get('name', 'unknown')}",
+                    "title": str(upload.get("name", "Uploaded source")),
+                    "provider_source": "user_upload",
+                    "include": False,
+                    "exclusion_reason": f"Upload parsing failed: {upload_err}"
+                })
+        included_sources.extend([source for source in parsed_uploads if source.get("include")])
 
-        except Exception as global_loop_err:
-            print(f"MCP Server Main Loop Error: {global_loop_err}", file=sys.stderr)
-            sys.stderr.flush()
-            break
+        # --- ROUTE A: DOCUMENT WORD COMPILATION WRITE-UPS ---
+        if action == "trigger_docx_generation":
+            domain_target = payload.get("domain", "scholarly").lower()
+            if not included_sources:
+                discovery = execute_mcp_research(
+                    topic,
+                    int(payload.get("max_sources", 5)),
+                    domain_target
+                )
+                included_sources = discovery.get("included", [])
+            generator = DossierGenerator()
+            dossier = generator.generate_comprehensive_dossier(
+                query=topic,
+                included_sources=included_sources,
+                custom_prompt=payload.get("custom_prompt"),
+                domain=domain_target
+            )
+            from app.agents.scribe_agent import ScribeResearchAgent
+            saved_path = ScribeResearchAgent().generate_apa_dossier_report(
+                topic=topic,
+                included_sources=included_sources,
+                dossier=dossier,
+                domain=domain_target
+            )
+            final_response = {
+                "status": "success",
+                "action": "docx_generation_complete",
+                "document_saved_at": os.path.basename(saved_path)
+            }
+
+        # --- ROUTE B: CORE DISCOVERY SWEEPS ---
+        else:
+            max_sources = int(payload.get("max_sources", 5))
+            domain_target = payload.get("domain", "scholarly").lower()
+
+            raw_result = execute_mcp_research(
+                topic, max_sources, domain_target,
+                additional_sources=parsed_uploads
+            )
+
+            if isinstance(raw_result, dict):
+                final_response = raw_result
+            else:
+                final_response = {
+                    "status": "success",
+                    "synthesis": str(raw_result)
+                }
+
+            # Guarantee explicit fallback properties to clear the front-end router gates cleanly
+            final_response["status"] = final_response.get("status", "success")
+            final_response["included"] = final_response.get("included", [])
+            final_response["excluded"] = final_response.get("excluded", [])
+            final_response["action"] = "research_scan_complete"
+
+        if is_cli:
+            cli_response = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "content": [{
+                        "type": "text",
+                        "text": json.dumps(final_response, ensure_ascii=False)
+                    }]
+                }
+            }
+            print(json.dumps(cli_response, ensure_ascii=False), flush=True)
+        else:
+            response_bytes = json.dumps(final_response, ensure_ascii=False).encode('utf-8')
+            sys.stdout.buffer.write(struct.pack('=I', len(response_bytes)))
+            sys.stdout.buffer.write(response_bytes)
+            sys.stdout.buffer.flush()
+
+    except Exception as err:
+        error_response = json.dumps({"status": "error", "message": str(err)}).encode('utf-8')
+        if is_cli:
+            print(error_response.decode("utf-8"), flush=True)
+        else:
+            sys.stdout.buffer.write(struct.pack('=I', len(error_response)))
+            sys.stdout.buffer.write(error_response)
+            sys.stdout.buffer.flush()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
