@@ -74,17 +74,17 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Interactive Progression Architecture */
-    .progress-container { display: none; margin-top: 14px; padding: 14px; background: #f1f5f9; border-radius: 8px; border: 1px solid var(--border); }
-    .progress-bar-bg { width: 100%; height: 6px; background: #cbd5e1; border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+    /* Progress Tracker Core Visual Component styling */
+    .progress-container { display: none; margin-top: 14px; padding: 12px; background: #f1f5f9; border-radius: 8px; border: 1px solid var(--border); }
+    .progress-bar-bg { width: 100%; height: 6px; background: #cbd5e1; border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
     .progress-bar-fill { width: 0%; height: 100%; background: var(--primary); transition: width 0.4s ease; }
-    .step-item { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; }
+    .step-item { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; }
     .step-item.active { color: var(--primary); font-weight: 600; }
     .step-item.completed { color: var(--success); }
     .step-item.failed { color: var(--error); font-weight: 600; }
-    .time-note { font-size: 0.75rem; color: var(--warning); font-style: italic; margin-top: 8px; display: block; line-height: 1.3; }
+    .time-note { font-size: 0.75rem; color: var(--warning); font-style: italic; margin-top: 6px; display: block; }
 
-    /* Summary High-Level Metrics Table */
+    /* Summary High-Level Metrics Matrix */
     .summary-section { margin-top: 16px; display: none; }
     .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
     .stat-card { background: white; border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
@@ -123,7 +123,6 @@
   </div>
 
   <div class="card">
-    <!-- Catchy Rebranded Headers -->
     <h2>🚀 Nexus Research Agents</h2>
 
     <div class="form-group">
@@ -144,26 +143,23 @@
       </select>
     </div>
 
-    <!-- Catchy Rebranded Execution Button -->
     <button class="btn" id="runBtn">
       <div class="spinner" id="btnSpinner"></div>
       <span id="btnText">Launch Research Agents</span>
     </button>
 
-    <!-- Visual Checkpoint Slider with Interactive States & Advisory Notice -->
     <div class="progress-container" id="progressContainer">
       <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div>
       <div class="step-item" id="step1"><span class="step-icon">⚫</span> 1. Initializing global discovery loop...</div>
       <div class="step-item" id="step2"><span class="step-icon">⚫</span> 2. Fetching records from citation graphs...</div>
       <div class="step-item" id="step3"><span class="step-icon">⚫</span> 3. Running deduplication & filter logic...</div>
       <div class="step-item" id="step4"><span class="step-icon">⚫</span> 4. Synthesizing evidence via Insight Engine...</div>
-      <span class="time-note">⏳ Note: Deep cross-engine sweeps and synthesis generation take time. This can take up to 15-30 seconds depending on data density. Do not close the panel.</span>
+      <span class="time-note">⏳ Note: Deep cross-engine sweeps and synthesis generation take time. This can take up to 15-30 seconds.</span>
     </div>
 
     <div id="status"></div>
   </div>
 
-  <!-- High-Level Metric Summary Cards Section -->
   <div class="summary-section" id="summarySection">
     <label>📈 Knowledge Ingestion Summary</label>
     <div class="summary-grid">
@@ -181,7 +177,7 @@
         <thead>
           <tr>
             <th>Category</th>
-            <th>General Processing / Action Reason</th>
+            <th>General Processing Rule Description</th>
           </tr>
         </thead>
         <tbody>
