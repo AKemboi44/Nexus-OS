@@ -2,6 +2,7 @@
 import sys
 import os
 import re
+import time
 from typing import List, Dict, Any
 import pandas as pd
 
@@ -64,7 +65,11 @@ class ResearchPipeline:
                 else:
                     norm = self.crossref.normalize_schema(src)
 
-                title_key = norm.get("title", "").strip().lower()
+                title_value = norm.get("title", "")
+                if isinstance(title_value, list):
+                    title_value = " ".join(str(value) for value in title_value)
+                    norm["title"] = title_value
+                title_key = str(title_value).strip().lower()
                 if title_key in seen_titles:
                     norm["exclusion_reason"] = f"Duplicate footprint match ({origin.upper()})."
                     norm["provider_source"] = origin
@@ -74,9 +79,13 @@ class ResearchPipeline:
                 seen_titles.add(title_key)
                 if len(included_records) < max_sources:
                     norm["provider_source"] = origin
+                    norm["inclusion_reason"] = self._inclusion_reason(norm)
                     included_records.append(norm)
                 else:
-                    norm["exclusion_reason"] = "Query boundary quota fulfilled."
+                    norm["exclusion_reason"] = (
+                        f"Query quota exceeded after selecting the top {max_sources} "
+                        "unique candidates."
+                    )
                     norm["provider_source"] = origin
                     excluded_records.append(norm)
             except Exception as e:
@@ -86,10 +95,17 @@ class ResearchPipeline:
         return {"included": included_records, "excluded": excluded_records}
 
 
-    def run_research(self, query: str, max_sources: int = 5) -> Dict[str, Any]:
+    def run_research(self, query: str, max_sources: int = 5,
+                     additional_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         discovery_results = self._discover_sources_real(query, max_sources)
         included_papers = discovery_results["included"]
         excluded_papers = discovery_results["excluded"]
+        for source in additional_sources or []:
+            if source.get("include", True):
+                included_papers.append(source)
+            else:
+                excluded_papers.append(source)
+        included_papers = included_papers[:max_sources + len(additional_sources or [])]
 
         dossier = ResearchDossier(query=query)
         dossier.included_sources = [f"{p['title']} ({p['year']})" for p in included_papers]
@@ -102,7 +118,7 @@ class ResearchPipeline:
         else:
             synthesis_text = "### Multi-Engine Analysis\nNo relevant data points returned."
 
-        filename = f"research_audit_{clean_filename(query)}.xlsx"
+        filename = f"research_audit_{clean_filename(query)}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
         working_dir = r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os"
         absolute_xlsx_path = os.path.join(working_dir, filename)
 
@@ -114,7 +130,19 @@ class ResearchPipeline:
             if not df_exc.empty and "__provider_origin__" in df_exc.columns: df_exc = df_exc.drop(
                 columns=["__provider_origin__"])
 
+            core_themes = self._derive_core_themes(query, synthesis_text, included_papers)
+            summary = pd.DataFrame([
+                {"Metric": "Research topic", "Value": query},
+                {"Metric": "Domain", "Value": "scholarly"},
+                {"Metric": "Included sources", "Value": len(included_papers)},
+                {"Metric": "Excluded sources", "Value": len(excluded_papers)},
+                {"Metric": "Synthesis summary", "Value": str(synthesis_text)},
+            ])
             with pd.ExcelWriter(absolute_xlsx_path, engine='openpyxl') as writer:
+                pd.DataFrame({"Core Emerging Themes": core_themes}).to_excel(
+                    writer, sheet_name='Core Themes', index=False
+                )
+                summary.to_excel(writer, sheet_name='Executive Summary', index=False)
                 if not df_inc.empty:
                     df_inc.to_excel(writer, sheet_name='Included Evidence', index=False)
                 else:
@@ -147,6 +175,29 @@ class ResearchPipeline:
             "bluebook_format_citation": f"Synthesis, ({first_url}).",
             "included": included_papers, "excluded": excluded_papers[:5]
         }
+
+    @staticmethod
+    def _inclusion_reason(source: Dict[str, Any]) -> str:
+        if source.get("is_peer_reviewed"):
+            return "Selected within the source quota; peer-reviewed or journal-associated record."
+        if source.get("citation_count", 0) > 0:
+            return "Selected within the source quota; cited record with usable metadata."
+        return "Selected within the source quota as a unique relevant candidate."
+
+    @staticmethod
+    def _derive_core_themes(query: str, synthesis: str, sources: List[Dict[str, Any]]) -> List[str]:
+        title_terms = []
+        for source in sources:
+            title = str(source.get("title", "")).strip()
+            if title:
+                title_terms.append(title)
+        themes = [
+            f"Evidence concentration around {query}.",
+            f"Recurring concepts across selected studies: {'; '.join(title_terms[:5])}."
+        ]
+        if synthesis and "No relevant data points" not in synthesis:
+            themes.append("Cross-source synthesis: " + str(synthesis).replace("\n", " ")[:500])
+        return themes
 
 def clean_filename(query: str) -> str:
     clean = re.sub(r'[^a-zA-Z0-9]', '_', query.strip().lower())

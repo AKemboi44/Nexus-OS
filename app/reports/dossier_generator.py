@@ -12,10 +12,12 @@ class DossierGenerator:
         self.client = genai.Client(api_key=api_key) if api_key else None
 
     def generate_comprehensive_dossier(self, query: str, included_sources: list,
-                                       custom_prompt: str = None) -> ResearchDossier:
+                                       custom_prompt: str = None,
+                                       domain: str = "scholarly") -> ResearchDossier:
         """Assembles, analyzes, and synthesizes structured research dossiers using refined prompts."""
         dossier = ResearchDossier(query=query)
         dossier.included_sources = included_sources
+        dossier.abstract = ""
 
         if not included_sources:
             dossier.evidence_summary = ["No academic sources available for structural synthesis mapping."]
@@ -23,19 +25,31 @@ class DossierGenerator:
 
         source_context = ""
         for i, src in enumerate(included_sources, 1):
-            title = getattr(src, 'title', 'Unknown Title')
-            abstract = getattr(src, 'abstract', 'No Abstract Available')
-            year = getattr(src, 'year', 'N/A')
+            title = self._source_value(src, "title", "Unknown Title")
+            abstract = self._source_value(src, "abstract", "No Abstract Available")
+            year = self._source_value(src, "year", "N/A")
             source_context += f"\n[Source {i}] Title: {title} ({year})\nAbstract: {abstract}\n"
 
         if not self.client:
-            dossier.themes = ["Fallback Integration Trends"]
+            dossier.abstract = (
+                f"This evidence synthesis evaluates {query} using "
+                f"{len(included_sources)} selected {domain} source(s)."
+            )
+            dossier.themes = [
+                f"Evidence base: the selected literature addresses {query}."
+            ]
+            dossier.research_gaps = [
+                "The available source set does not fully resolve the methods, populations, or contexts that remain under-studied."
+            ]
+            dossier.opportunity_areas = [
+                "Future work can test the reported findings in broader settings with transparent, reproducible evaluation."
+            ]
             return dossier
 
         # Base system prompt template instructions
         base_prompt = (
             f"You are the Lead Scientific Synthesis Intelligence of Nexus OS.\n"
-            f"Perform an exhaustive, multi-dimensional academic evaluation for the query theme: '{query}'.\n"
+            f"Perform an exhaustive, multi-dimensional {domain} evaluation for the query theme: '{query}'.\n"
             f"Source Material for Extraction:\n{source_context}\n\n"
         )
 
@@ -44,7 +58,9 @@ class DossierGenerator:
             base_prompt += f"CRITICAL USER DIRECTION OVERRIDE:\n{custom_prompt}\n\n"
 
         base_prompt += (
-            f"Structure your synthesis response exactly across these four explicit markdown blocks. Do not add conversational text:\n\n"
+            f"Structure your synthesis response exactly across these five explicit markdown blocks. "
+            f"Use one concise, evidence-grounded bullet for each distinct theme. Do not add conversational text:\n\n"
+            f"### ABSTRACT\n- Write a concise abstract grounded only in the supplied sources.\n\n"
             f"### KEY THEMES\n- Identify overarching consensus vectors. Highlight country specific trends and regression types.\n\n"
             f"### CONTRADICTIONS\n- Extract empirical discrepancies or diverging operational conclusions among authors.\n\n"
             f"### RESEARCH GAPS\n- Pinpoint unaddressed methodologies or under-researched consumer demographic segments.\n\n"
@@ -75,6 +91,9 @@ class DossierGenerator:
             if "KEY THEMES" in line.upper():
                 current_section = "themes"
                 continue
+            elif "ABSTRACT" in line.upper():
+                current_section = "abstract"
+                continue
             elif "CONTRADICTIONS" in line.upper():
                 current_section = "contradictions"
                 continue
@@ -88,7 +107,9 @@ class DossierGenerator:
             # Populate lines clean of markdown list characters
             clean_line = line.lstrip('-*•1234567890. ')
             if clean_line and current_section:
-                if current_section == "themes":
+                if current_section == "abstract":
+                    dossier.abstract = f"{dossier.abstract} {clean_line}".strip()
+                elif current_section == "themes":
                     dossier.themes.append(clean_line)
                 elif current_section == "contradictions":
                     dossier.contradictions.append(clean_line)
@@ -96,3 +117,15 @@ class DossierGenerator:
                     dossier.research_gaps.append(clean_line)
                 elif current_section == "opportunities":
                     dossier.opportunity_areas.append(clean_line)
+
+    @staticmethod
+    def _source_value(source: Any, key: str, default: Any = "") -> Any:
+        if isinstance(source, dict):
+            value = source.get(key, default)
+        else:
+            value = getattr(source, key, default)
+        if isinstance(value, dict):
+            return " ".join(str(part) for part in value.keys())
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        return value if value not in (None, "") else default
