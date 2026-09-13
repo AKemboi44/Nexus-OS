@@ -1,16 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "Nexus OS Research Co-Pilot",
-  "version": "1.0.0",
-  "description": "Trigger local multi-agent academic research loops directly from your browser overlay.",
+  "name": "Nexus OS Research Sweep Suite",
+  "version": "1.0.1",
+  "description": "Autonomous cross-engine data synthesis assistant.",
   "permissions": [
+    "activeTab",
+    "storage",
     "nativeMessaging",
-    "activeTab"
+    "sidePanel"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_title": "Open Nexus OS Research Panel"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   }
 }

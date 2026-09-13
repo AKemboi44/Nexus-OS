@@ -1,54 +1,155 @@
+<!-- extension/popup.html -->
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    body { width: 340px; font-family: system-ui, -apple-system, sans-serif; padding: 14px; margin: 0; background-color: #f9f9f9; color: #333; }
-    h3 { margin-top: 0; color: #111; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
-    .field { margin-bottom: 12px; }
-    label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #555; }
-    input[type="text"], textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
-    textarea { resize: vertical; height: 70px; }
-    button { background-color: #007acc; color: white; border: none; padding: 10px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; width: 100%; font-size: 13px; margin-top: 8px; }
-    button:hover { background-color: #0062a3; }
-    #status { margin-top: 12px; font-size: 12px; white-space: pre-wrap; padding: 8px; border-radius: 4px; display: none; }
-    .success { background-color: #e6f4ea; color: #137333; border: 1px solid #dadce0; }
-    .error { background-color: #fce8e6; color: #c5221f; border: 1px solid #dadce0; }
-    .loading { background-color: #e8f0fe; color: #1a73e8; border: 1px solid #dadce0; }
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+    }
+    body {
+      width: 420px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+    h2 { font-size: 1.2rem; margin-top: 0; display: flex; align-items: center; gap: 8px; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+    input, select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      background: var(--bg);
+    }
+    input:focus, select:focus { outline: 2px solid var(--primary); }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:hover { background: var(--primary-hover); }
+    .btn:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    /* Loader Animation Framework */
+    .spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .preview-section { margin-top: 16px; }
+    .table-container { overflow-x: auto; margin-top: 8px; border-radius: 6px; border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left; }
+    th { background: #f1f5f9; padding: 8px; font-weight: 600; color: var(--text-muted); }
+    td { padding: 8px; border-top: 1px solid var(--border); background: white; }
+
+    .badge { padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+    .badge-inc { background: #d1fae5; color: var(--success); }
+    .badge-exc { background: #fee2e2; color: var(--error); }
+
+    #status { display: none; margin-top: 12px; padding: 12px; border-radius: 6px; font-size: 0.85rem; line-height: 1.4; }
+    .loading { background: #eff6ff; color: var(--primary); border: 1px solid #bfdbfe; }
+    .success { background: #ecfdf5; color: var(--success); border: 1px solid #a7f3d0; }
+    .error { background: #fef2f2; color: var(--error); border: 1px solid #fca5a5; }
+
+    .tier-banner {
+      font-size: 0.75rem; background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: white; padding: 6px 12px; border-radius: 6px; margin-bottom: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .upgrade-link { color: #fde047; text-decoration: none; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h3>Nexus OS Agent Sweep</h3>
 
-  <div class="field">
-    <label for="topic">Research Topic</label>
-    <input type="text" id="topic" placeholder="e.g. gRPC vs REST latency benchmarks">
+  <div class="tier-banner" id="tierBanner">
+    <span>💎 <strong>Nexus Freemium Tier</strong> (3/5 monthly scan tokens remaining)</span>
+    <a href="#" class="upgrade-link" id="upgradeBtn">Upgrade</a>
   </div>
 
-  <div class="field">
-    <label for="custom_prompt">Steering Directives (Optional)</label>
-    <textarea id="custom_prompt" placeholder="e.g. Focus strictly on throughput performance."></textarea>
+  <div class="card">
+    <h2>🚀 Nexus OS Production Core</h2>
+
+    <div class="form-group">
+      <label>Target Research Topic</label>
+      <input type="text" id="topic" value="ai token optimization techniques">
+    </div>
+
+    <div class="form-group">
+      <label>Max Sources</label>
+      <input type="number" id="max_sources" value="5" min="1" max="50">
+    </div>
+
+    <div class="form-group">
+      <label>Domain Area</label>
+      <select id="domain">
+        <option value="scholarly">Multi-Engine Scholarly Graph (Auto-Fallback)</option>
+        <option value="legal">Legal Precedents & Regulatory Frameworks</option>
+      </select>
+    </div>
+
+    <!-- Catchy rebranded action entry button point -->
+    <button class="btn" id="runBtn">
+      <div class="spinner" id="btnSpinner"></div>
+      <span id="btnText">Launch Research Agent</span>
+    </button>
+    <div id="status"></div>
   </div>
 
-  <div class="field">
-    <label for="max_sources">Maximum Sources</label>
-    <input type="number" id="max_sources" value="5" min="1" max="25" style="width: 70px; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+  <div class="preview-section" id="previewSection" style="display:none;">
+    <label>🎯 Real-Time Knowledge Graph Audit Preview</label>
+    <div class="table-container">
+      <table id="auditTable">
+        <thead>
+          <tr>
+            <th>Source Document Title</th>
+            <th>Status</th>
+            <th>Evaluation / Action Reason</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </div>
 
-    <div class="field">
-    <label for="domain">Research Domain Vertical</label>
-    <select id="domain" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background-color: white;">
-      <option value="scholarly">Academia & Scholarly Literature (OpenAlex)</option>
-      <option value="legal">Legal Jurisprudence & Case Precedents (CourtListener)</option>
-    </select>
-  </div>
-
-
-  <button id="runBtn">Launch Pipeline Loop</button>
-
-  <div id="status"></div>
-
-  <!-- COMPLIANT: External call only, placed at the absolute bottom -->
   <script src="popup.js"></script>
 </body>
 </html>
