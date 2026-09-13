@@ -7,7 +7,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnText = document.getElementById('btnText');
     const statusDiv = document.getElementById('status');
     const previewSection = document.getElementById('previewSection');
+    const summarySection = document.getElementById('summarySection');
     const auditTableBody = document.querySelector('#auditTable tbody');
+
+    // Summary references
+    const countInc = document.getElementById('countInc');
+    const countExc = document.getElementById('countExc');
 
     // Progress UI references
     const progressContainer = document.getElementById('progressContainer');
@@ -21,12 +26,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const backgroundChannel = chrome.runtime.connect({ name: "nexus_popup_channel" });
 
+    function markStep(stepElement, state) {
+        if (!stepElement) return;
+        const iconSpan = stepElement.querySelector('.step-icon');
+        if (state === 'active') {
+            stepElement.className = 'step-item active';
+            if (iconSpan) iconSpan.innerText = '🔵';
+        } else if (state === 'success') {
+            stepElement.className = 'step-item completed';
+            if (iconSpan) iconSpan.innerText = '✅';
+        } else if (state === 'fail') {
+            stepElement.className = 'step-item failed';
+            if (iconSpan) iconSpan.innerText = '❌';
+        }
+    }
+
     backgroundChannel.onMessage.addListener((response) => {
         if (!response || !response.success) {
             if (runButton) runButton.disabled = false;
             if (btnSpinner) btnSpinner.style.display = 'none';
-            if (btnText) btnText.innerText = 'Launch Research Agent';
+            if (btnText) btnText.innerText = 'Launch Research Agents';
             if (progressContainer) progressContainer.style.display = 'none';
+
+            // Mark trailing steps as failed on pipeline sever exceptions
+            [step1, step2, step3, step4].forEach(s => {
+                if (s && !s.classList.contains('completed')) markStep(s, 'fail');
+            });
 
             if (statusDiv) {
                 statusDiv.className = 'error';
@@ -39,21 +64,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = response.data;
 
         if (data.status === "processing") {
-            // Handled dynamically via the timeline ticks engine below
+            // Processing frames mapped cleanly through the automated timeline engine below
         } else if (data.status === "success" || data.excel_report_saved_at) {
-            // Force progress indicators to complete frames safely
             if (progressBar) progressBar.style.width = '100%';
-            [step1, step2, step3, step4].forEach(s => {
-                if (s) {
-                    s.className = 'step-item completed';
-                    s.innerHTML = s.innerHTML.replace(/⚫|🔵/, '✅');
-                }
-            });
+            [step1, step2, step3, step4].forEach(s => { if (s) markStep(s, 'success'); });
 
             setTimeout(() => {
                 if (runButton) runButton.disabled = false;
                 if (btnSpinner) btnSpinner.style.display = 'none';
-                if (btnText) btnText.innerText = 'Launch Research Agent';
+                if (btnText) btnText.innerText = 'Launch Research Agents';
                 if (progressContainer) progressContainer.style.display = 'none';
 
                 if (statusDiv) {
@@ -63,21 +82,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     const relevance = data.topical_relevance_signal !== undefined ? data.topical_relevance_signal : "N/A";
                     const chunksIngested = data.pymupdf_fulltext_chunks_pushed !== undefined ? data.pymupdf_fulltext_chunks_pushed : 0;
 
+                    // Rebranded string label update
                     statusDiv.innerText = `🎉 Scan Complete [${executedDomain.toUpperCase()}]!\n\n` +
                                          `Fidelity Score: ${fidelity}\n` +
                                          `Relevance Signal: ${relevance}\n` +
                                          `Evidence Ingested: ${chunksIngested} chunks\n\n` +
-                                         `Audit spreadsheet index saved directly to your repository root workspace folder.`;
+                                         `Research Audit spreadsheet index saved directly to your repository root workspace folder.`;
                     statusDiv.style.display = 'block';
                 }
 
                 if (auditTableBody) auditTableBody.innerHTML = "";
-                if (previewSection) previewSection.style.display = "block";
 
-                // Safe defensive drill down to capture nested data collections cleanly
                 const synthesisPayload = data.synthesis || {};
                 const includedPapers = data.included || synthesisPayload.included || [];
                 const excludedPapers = data.excluded || synthesisPayload.excluded || [];
+
+                // Populate Summary Stat Numbers Dynamically
+                if (countInc) countInc.innerText = includedPapers.length;
+                if (countExc) countExc.innerText = excludedPapers.length;
+                if (summarySection) summarySection.style.display = "block";
+                if (previewSection) previewSection.style.display = "block";
 
                 if (auditTableBody) {
                     if (Array.isArray(includedPapers) && includedPapers.length > 0) {
@@ -127,7 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Lock button, activate spinners, and hide legacy container fields safely
         runButton.disabled = true;
         if (btnSpinner) btnSpinner.style.display = 'block';
         if (btnText) btnText.innerText = 'Searching...';
@@ -138,36 +161,41 @@ document.addEventListener('DOMContentLoaded', () => {
             statusDiv.innerText = '';
         }
         if (previewSection) previewSection.style.display = "none";
+        if (summarySection) summarySection.style.display = "none";
 
-        // Reset Tracker States completely with safety checks
         if (progressContainer) progressContainer.style.display = 'block';
         if (progressBar) progressBar.style.width = '10%';
-        if (step1) { step1.className = 'step-item active'; step1.innerHTML = '🔵 1. Initializing global discovery loop...'; }
-        if (step2) { step2.className = 'step-item'; step2.innerHTML = '⚫ 2. Fetching records from OpenAlex, Crossref & Semantic Scholar...'; }
-        if (step3) { step3.className = 'step-item'; step3.innerHTML = '⚫ 3. Running deduplication & schema filtering logic...'; }
-        if (step4) { step4.className = 'step-item'; step4.innerHTML = '⚫ 4. Synthesizing evidence via Insight Engine...'; }
+
+        // Initialize Tracking States Cleanly
+        markStep(step1, 'active');
+        [step2, step3, step4].forEach(s => {
+            if (s) {
+                s.className = 'step-item';
+                s.querySelector('.step-icon').innerText = '⚫';
+            }
+        });
 
         setTimeout(() => {
             if (runButton.disabled) {
                 if (progressBar) progressBar.style.width = '35%';
-                if (step1) { step1.className = 'step-item completed'; step1.innerHTML = '✅ 1. Initializing global discovery loop...'; }
-                if (step2) { step2.className = 'step-item active'; step2.innerHTML = '🔵 2. Fetching records from OpenAlex, Crossref & Semantic Scholar...'; }
+                markStep(step1, 'success');
+                markStep(step2, 'active');
             }
         }, 2000);
 
         setTimeout(() => {
             if (runButton.disabled) {
                 if (progressBar) progressBar.style.width = '65%';
-                if (step2) { step2.className = 'step-item completed'; step2.innerHTML = '✅ 2. Fetching records from OpenAlex, Crossref & Semantic Scholar...'; }
-                if (step3) { step3.className = 'step-item active'; step3.innerHTML = '🔵 3. Running deduplication & schema filtering logic...'; }
+                markStep(step2, 'success');
+                markStep(step3, 'active');
             }
         }, 5500);
 
         setTimeout(() => {
             if (runButton.disabled) {
                 if (progressBar) progressBar.style.width = '85%';
-                if (step3) { step3.className = 'step-item completed'; step3.innerHTML = '✅ 3. Running deduplication & schema filtering logic...'; }
-                if (step4) { step4.className = 'step-item active'; step4.innerHTML = '🔵 4. Synthesizing evidence via Insight Engine...'; }
+                markStep(step3, 'success');
+                markStep(step4, 'active');
             }
         }, 9000);
 
