@@ -1,5 +1,5 @@
 """
-Nexus OS v0.6.1 - Reviewer
+Nexus Research AI v0.6.1 - Reviewer
 """
 from .base_agent import BaseAgent
 from typing import List, Dict

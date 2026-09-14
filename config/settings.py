@@ -1,5 +1,5 @@
 """
-Global Nexus OS configuration.
+Global Nexus Research AI configuration.
 
 This file loads all environment variables
 and exposes them to the application.

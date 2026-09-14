@@ -18,13 +18,14 @@ from app.reports.dossier_generator import DossierGenerator
 
 
 def execute_mcp_research(topic: str, max_sources: int = 5, domain: str = "scholarly",
-                         additional_sources=None):
+                         additional_sources=None, selected_inclusion_reasons=None):
     try:
         pipeline = ResearchPipeline()
         result_data = pipeline.run_research(
             query=topic,
             max_sources=max_sources,
-            additional_sources=additional_sources or []
+            additional_sources=additional_sources or [],
+            selected_inclusion_reasons=selected_inclusion_reasons
         )
         return result_data
     except Exception as e:
@@ -62,6 +63,9 @@ def main():
         topic = payload.get("topic", "AI Optimization Techniques")
         included_sources = payload.get("included_sources", [])
         uploaded_sources = payload.get("uploaded_sources", [])
+        selected_inclusion_reasons = payload.get("selected_inclusion_reasons", [])
+        report_type = payload.get("report_type", "proposal")
+        is_paid_user = bool(payload.get("is_paid_user", False))
 
         parsed_uploads = []
         for upload in uploaded_sources:
@@ -104,33 +108,47 @@ def main():
 
         # --- ROUTE A: DOCUMENT WORD COMPILATION WRITE-UPS ---
         if action == "trigger_docx_generation":
-            domain_target = payload.get("domain", "scholarly").lower()
-            if not included_sources:
-                discovery = execute_mcp_research(
-                    topic,
-                    int(payload.get("max_sources", 5)),
-                    domain_target
+            if report_type == "full_starter" and not is_paid_user:
+                final_response = {
+                    "status": "error",
+                    "action": "paid_report_required",
+                    "message": "The Full Research Starter Report is available to paid users."
+                }
+                report_type = None
+            else:
+                domain_target = payload.get("domain", "scholarly").lower()
+                if not included_sources:
+                    discovery = execute_mcp_research(
+                        topic,
+                        int(payload.get("max_sources", 5)),
+                        domain_target
+                    )
+                    included_sources = discovery.get("included", [])
+                generator = DossierGenerator()
+                dossier = generator.generate_comprehensive_dossier(
+                    query=topic,
+                    included_sources=included_sources,
+                    custom_prompt=payload.get("custom_prompt"),
+                    domain=domain_target
                 )
-                included_sources = discovery.get("included", [])
-            generator = DossierGenerator()
-            dossier = generator.generate_comprehensive_dossier(
-                query=topic,
-                included_sources=included_sources,
-                custom_prompt=payload.get("custom_prompt"),
-                domain=domain_target
-            )
-            from app.agents.scribe_agent import ScribeResearchAgent
-            saved_path = ScribeResearchAgent().generate_apa_dossier_report(
-                topic=topic,
-                included_sources=included_sources,
-                dossier=dossier,
-                domain=domain_target
-            )
-            final_response = {
-                "status": "success",
-                "action": "docx_generation_complete",
-                "document_saved_at": os.path.basename(saved_path)
-            }
+                from app.agents.scribe_agent import ScribeResearchAgent
+                scribe = ScribeResearchAgent()
+                if report_type == "full_starter":
+                    saved_path = scribe.generate_full_research_starter_report(
+                        topic=topic, included_sources=included_sources,
+                        dossier=dossier, domain=domain_target
+                    )
+                else:
+                    saved_path = scribe.generate_apa_dossier_report(
+                        topic=topic, included_sources=included_sources,
+                        dossier=dossier, domain=domain_target
+                    )
+                final_response = {
+                    "status": "success",
+                    "action": "docx_generation_complete",
+                    "document_saved_at": os.path.basename(saved_path),
+                    "report_type": report_type
+                }
 
         # --- ROUTE B: CORE DISCOVERY SWEEPS ---
         else:
@@ -139,7 +157,8 @@ def main():
 
             raw_result = execute_mcp_research(
                 topic, max_sources, domain_target,
-                additional_sources=parsed_uploads
+                additional_sources=parsed_uploads,
+                selected_inclusion_reasons=selected_inclusion_reasons
             )
 
             if isinstance(raw_result, dict):

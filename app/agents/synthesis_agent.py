@@ -1,5 +1,5 @@
 """
-Nexus OS v0.6.1 - Scribe
+Nexus Research AI v0.6.1 - Scribe
 """
 from .base_agent import BaseAgent
 

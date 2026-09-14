@@ -1,7 +1,7 @@
 """
 Scoring evaluation.
 
-Evaluates whether Nexus OS
+Evaluates whether Nexus Research AI
 correctly classifies benchmark sources.
 """
 

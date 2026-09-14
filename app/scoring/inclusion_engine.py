@@ -1,5 +1,5 @@
 """
-Nexus OS Inclusion Engine
+Nexus Research AI Inclusion Engine
 
 Converts SourceScore
 into InclusionDecision.

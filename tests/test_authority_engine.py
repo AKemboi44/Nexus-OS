@@ -38,7 +38,7 @@ def test_gsma_authority():
     # We intentionally test for a minimum
     # authority level rather than an exact
     # score because authority calibration
-    # may evolve as Nexus OS grows.
+    # may evolve as Nexus Research AI grows.
 
     assert score >= 9.0
 

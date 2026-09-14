@@ -16,7 +16,7 @@ Prefer explainable heuristics first. We will replace this later with:
 - Knowledge graphs
 - ML models
 
-without affecting the rest of Nexus OS.
+without affecting the rest of Nexus Research AI.
 """
 from app.scoring.research_signals import (
     RESEARCH_TERMS,

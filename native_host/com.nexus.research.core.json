@@ -1,7 +1,7 @@
 {
   "name": "com.nexus.research.core",
-  "description": "Nexus OS Local Agent Engine Integration Bridge Workspace Pipeline",
-  "path": "C:\\Users\\Abraham.Kemboi\\PycharmProjects\\Nexus-os\\native_host\\nexus_host.bat",
+  "description": "Nexus Research AI Native Messaging Host",
+  "path": "C:\\Users\\Abraham.Kemboi\\PycharmProjects\\Nexus-os\\chrome_host.exe",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://cgnachdfccocngempafblhkjckcpjood/"

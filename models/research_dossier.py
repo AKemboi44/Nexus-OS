@@ -10,6 +10,7 @@ class ResearchDossier:
         self.contradictions: List[str] = []  # Added for comprehensive Phase 5 analysis
         self.research_gaps: List[str] = []   # Added for explicit structural tracking
         self.opportunity_areas: List[str] = [] # Added for venture/monetization strategy mapping
+        self.problems_to_solve: List[str] = []
         self.scoring_summary: List[str] = []
         self.decision_rationales: List[str] = []
 

@@ -5,6 +5,8 @@ class CitationEngine:
     def generate_apa_7th(source: Dict[str, Any]) -> str:
         """Dynamically formats normalized source dictionaries into strict APA 7th Edition layouts."""
         authors_list = source.get("authors", [])
+        if isinstance(authors_list, str):
+            authors_list = [author.strip() for author in authors_list.split(",") if author.strip()]
         year = source.get("year", "n.d.")
         title = source.get("title", "Untitled Work")
         venue = source.get("venue", "Unknown Source")
@@ -21,7 +23,7 @@ class CitationEngine:
 
         if source.get("domain") == "legal":
             return f"{title}, {venue} ({author_str}, {year}). {url}".strip()
-        return f"{author_str} ({year}). *{title}*. {venue}. {url}".strip()
+        return f"{author_str} ({year}). {title}. {venue}.{f' {url}' if url else ''}".strip()
 
     @staticmethod
     def generate_bluebook(source: Dict[str, Any]) -> str:
