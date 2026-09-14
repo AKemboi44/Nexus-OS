@@ -16,7 +16,7 @@ Later versions may use:
 - semantic search
 - LLM scoring
 
-without changing the rest of Nexus OS.
+without changing the rest of Nexus Research AI.
 """
 
 

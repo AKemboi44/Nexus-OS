@@ -1,5 +1,5 @@
 """
-Nexus OS v0.6.1 - Pathfinder
+Nexus Research AI v0.6.1 - Pathfinder
 """
 from .base_agent import BaseAgent
 

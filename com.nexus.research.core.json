@@ -1,7 +1,7 @@
 {
   "name": "com.nexus.research.core",
-  "description": "Nexus OS Autonomous Core Agent Native Messaging Relay Bridge Host",
-  "path": "C:\\Users\\Abraham.Kemboi\\PycharmProjects\\Nexus-os\\dist\\chrome_host.exe",
+  "description": "Nexus Research AI Native Messaging Host",
+  "path": "C:\\Users\\Abraham.Kemboi\\PycharmProjects\\Nexus-os\\chrome_host.exe",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://cgnachdfccocngempafblhkjckcpjood/"

@@ -20,6 +20,14 @@ from .providers.crossref_provider import CrossrefProvider
 
 # app/research/research_pipeline.py - Block 2 of 3
 class ResearchPipeline:
+    DEFAULT_INCLUSION_REASONS = [
+        "Peer-reviewed or journal-associated source",
+        "Cited source with usable metadata",
+        "Unique source relevant to the requested topic",
+        "Recent publication within the research area",
+        "Accessible abstract or full-text evidence",
+    ]
+
     def __init__(self):
         self.insight_engine = InsightEngine()
         self.openalex = OpenAlexProvider()
@@ -34,7 +42,8 @@ class ResearchPipeline:
             processed = re.sub(r'(?i)xml', '(xml OR "extensible markup language")', processed)
         return processed
 
-    def _discover_sources_real(self, query: str, max_sources: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+    def _discover_sources_real(self, query: str, max_sources: int = 5,
+                               selected_reasons: List[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         expanded_query = self._pre_process_query(query)
         combined_raw_sources = []
         engines = [(self.openalex, "openalex"), (self.semantic_scholar, "semantic_scholar"), (self.crossref, "crossref")]
@@ -79,7 +88,9 @@ class ResearchPipeline:
                 seen_titles.add(title_key)
                 if len(included_records) < max_sources:
                     norm["provider_source"] = origin
-                    norm["inclusion_reason"] = self._inclusion_reason(norm)
+                    norm["inclusion_reason"] = self._inclusion_reason(
+                        norm, selected_reasons or self.DEFAULT_INCLUSION_REASONS[:3]
+                    )
                     included_records.append(norm)
                 else:
                     norm["exclusion_reason"] = (
@@ -96,8 +107,15 @@ class ResearchPipeline:
 
 
     def run_research(self, query: str, max_sources: int = 5,
-                     additional_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        discovery_results = self._discover_sources_real(query, max_sources)
+                     additional_sources: List[Dict[str, Any]] = None,
+                     selected_inclusion_reasons: List[str] = None) -> Dict[str, Any]:
+        selected_reasons = [
+            reason for reason in (selected_inclusion_reasons or [])
+            if reason in self.DEFAULT_INCLUSION_REASONS
+        ][:3]
+        if not selected_reasons:
+            selected_reasons = self.DEFAULT_INCLUSION_REASONS[:3]
+        discovery_results = self._discover_sources_real(query, max_sources, selected_reasons)
         included_papers = discovery_results["included"]
         excluded_papers = discovery_results["excluded"]
         for source in additional_sources or []:
@@ -136,6 +154,7 @@ class ResearchPipeline:
                 {"Metric": "Domain", "Value": "scholarly"},
                 {"Metric": "Included sources", "Value": len(included_papers)},
                 {"Metric": "Excluded sources", "Value": len(excluded_papers)},
+                {"Metric": "Inclusion reasons", "Value": "; ".join(selected_reasons)},
                 {"Metric": "Synthesis summary", "Value": str(synthesis_text)},
             ])
             with pd.ExcelWriter(absolute_xlsx_path, engine='openpyxl') as writer:
@@ -173,16 +192,25 @@ class ResearchPipeline:
             "excel_report_saved_at": str(absolute_xlsx_path),
             "apa_format_citation": f"A. Kemboi (2026). Synthesis. {first_url}",
             "bluebook_format_citation": f"Synthesis, ({first_url}).",
-            "included": included_papers, "excluded": excluded_papers[:5]
+            "discovery_report_name": os.path.basename(absolute_xlsx_path),
+            "discovery_report_directory": os.path.dirname(absolute_xlsx_path),
+            "inclusion_reasons": selected_reasons,
+            "included": included_papers, "excluded": excluded_papers
         }
 
     @staticmethod
-    def _inclusion_reason(source: Dict[str, Any]) -> str:
-        if source.get("is_peer_reviewed"):
-            return "Selected within the source quota; peer-reviewed or journal-associated record."
-        if source.get("citation_count", 0) > 0:
-            return "Selected within the source quota; cited record with usable metadata."
-        return "Selected within the source quota as a unique relevant candidate."
+    def _inclusion_reason(source: Dict[str, Any], selected_reasons: List[str]) -> str:
+        if selected_reasons[0] == "Peer-reviewed or journal-associated source" and source.get("is_peer_reviewed"):
+            return selected_reasons[0]
+        if selected_reasons[0] == "Cited source with usable metadata" and source.get("citation_count", 0) > 0:
+            return selected_reasons[0]
+        if selected_reasons[0] == "Accessible abstract or full-text evidence" and source.get("abstract"):
+            return selected_reasons[0]
+        if len(selected_reasons) > 1 and selected_reasons[1] == "Cited source with usable metadata" and source.get("citation_count", 0) > 0:
+            return selected_reasons[1]
+        if len(selected_reasons) > 1 and selected_reasons[1] == "Peer-reviewed or journal-associated source" and source.get("is_peer_reviewed"):
+            return selected_reasons[1]
+        return selected_reasons[-1]
 
     @staticmethod
     def _derive_core_themes(query: str, synthesis: str, sources: List[Dict[str, Any]]) -> List[str]:

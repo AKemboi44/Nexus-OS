@@ -18,7 +18,7 @@ from app.synthesis.citation_engine import CitationEngine
 
 class NexusOrchestrator:
     """
-    Central Cognitive Processing Orchestrator for Nexus OS.
+    Central Cognitive Processing Orchestrator for Nexus Research AI.
     Runs federated ingestion meshes, handles vector caching, and enforces grounding checks.
     """
 
@@ -114,7 +114,7 @@ class NexusOrchestrator:
                 {
                     "uid": f"fallback_node_01_{hash(topic)}",
                     "title": f"Advanced Paradigm Synthesis in {topic}",
-                    "authors": ["A. Kemboi", "Nexus Research Core"],
+                    "authors": ["A. Kemboi", "Nexus Research AI"],
                     "venue": "International Journal of Engineering Architecture and Systems",
                     "year": "2026",
                     "citation_count": 42,

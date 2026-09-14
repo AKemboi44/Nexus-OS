@@ -1,20 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Nexus OS Research Sweep Suite",
+  "name": "Nexus Research AI Sweep Suite",
   "version": "1.0.1",
   "description": "Autonomous cross-engine data synthesis assistant.",
   "permissions": [
     "activeTab",
     "storage",
     "nativeMessaging",
-    "sidePanel"
+    "sidePanel",
+    "identity"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Open Nexus OS Research Panel"
+    "default_title": "Open Nexus Research AI Panel"
   },
   "side_panel": {
     "default_path": "popup.html"

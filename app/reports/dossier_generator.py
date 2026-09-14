@@ -44,11 +44,14 @@ class DossierGenerator:
             dossier.opportunity_areas = [
                 "Future work can test the reported findings in broader settings with transparent, reproducible evaluation."
             ]
+            dossier.problems_to_solve = [
+                f"Determine which interventions most reliably address the documented challenges in {query}."
+            ]
             return dossier
 
         # Base system prompt template instructions
         base_prompt = (
-            f"You are the Lead Scientific Synthesis Intelligence of Nexus OS.\n"
+            f"You are the Lead Scientific Synthesis Intelligence of Nexus Research AI.\n"
             f"Perform an exhaustive, multi-dimensional {domain} evaluation for the query theme: '{query}'.\n"
             f"Source Material for Extraction:\n{source_context}\n\n"
         )
@@ -65,6 +68,8 @@ class DossierGenerator:
             f"### CONTRADICTIONS\n- Extract empirical discrepancies or diverging operational conclusions among authors.\n\n"
             f"### RESEARCH GAPS\n- Pinpoint unaddressed methodologies or under-researched consumer demographic segments.\n\n"
             f"### OPPORTUNITY AREAS\n- Define downstream commercial opportunities or software incubation vectors.\n"
+            f"### OPPORTUNITY AREAS\n- Define downstream commercial opportunities or software incubation vectors.\n\n"
+            f"### PROBLEMS TO SOLVE\n- State concrete, evidence-grounded problems that future research or practice should address.\n"
         )
 
         try:
@@ -76,6 +81,22 @@ class DossierGenerator:
         except Exception as e:
             print(f"[Dossier Generator Error]: {e}")
             dossier.evidence_summary = [f"Synthesis pipeline error: {str(e)}"]
+            dossier.abstract = (
+                f"This evidence synthesis evaluates {query} using "
+                f"{len(included_sources)} selected {domain} source(s)."
+            )
+            dossier.themes = [
+                f"The selected literature provides evidence relevant to {query}."
+            ]
+            dossier.research_gaps = [
+                "The available evidence does not fully resolve the methods, populations, or contexts that remain under-studied."
+            ]
+            dossier.opportunity_areas = [
+                "Future work can test the reported findings in broader settings with transparent, reproducible evaluation."
+            ]
+            dossier.problems_to_solve = [
+                f"Determine which interventions most reliably address the documented challenges in {query}."
+            ]
 
         return dossier
 
@@ -103,6 +124,9 @@ class DossierGenerator:
             elif "OPPORTUNITY AREAS" in line.upper():
                 current_section = "opportunities"
                 continue
+            elif "PROBLEMS TO SOLVE" in line.upper():
+                current_section = "problems"
+                continue
 
             # Populate lines clean of markdown list characters
             clean_line = line.lstrip('-*•1234567890. ')
@@ -117,6 +141,8 @@ class DossierGenerator:
                     dossier.research_gaps.append(clean_line)
                 elif current_section == "opportunities":
                     dossier.opportunity_areas.append(clean_line)
+                elif current_section == "problems":
+                    dossier.problems_to_solve.append(clean_line)
 
     @staticmethod
     def _source_value(source: Any, key: str, default: Any = "") -> Any:

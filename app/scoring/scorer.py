@@ -1,5 +1,5 @@
 """
-Nexus OS Source Scoring Engine
+Nexus Research AI Source Scoring Engine
 
 Version 1:
 Rule-based Source scoring orchestration.
@@ -30,7 +30,7 @@ from app.scoring.recency_engine import (
 )
 
 # Current scoring weights.
-# We keep them centralized because scoring calibration will evolve significantly as Nexus OS matures.
+# We keep them centralized because scoring calibration will evolve significantly as Nexus Research AI matures.
 
 AUTHORITY_WEIGHT = 0.25
 
@@ -57,7 +57,7 @@ class SourceScorer:
             RelevanceEngine()
         )
 
-        # Methodology scoring allows Nexus OS to distinguish between stronger and weaker forms of evidence.
+        # Methodology scoring allows Nexus Research AI to distinguish between stronger and weaker forms of evidence.
         # This becomes increasingly important as we move toward evidence-based inclusion decisions.
 
         self.methodology_engine = (
@@ -139,7 +139,7 @@ class SourceScorer:
         )
 
       # Rationale handling
-      # This preserves authority explanations, Making Nexus OS explainable
+      # This preserves authority explanations, making Nexus Research AI explainable
         rationale = []
 
         rationale.extend(

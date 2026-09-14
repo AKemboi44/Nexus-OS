@@ -16,13 +16,20 @@
       --error: #ef4444;
       --warning: #f59e0b;
     }
+    *,
+    *::before,
+    *::after { box-sizing: border-box; }
+    html { width: 100%; min-width: 0; }
     body {
-      width: 420px;
+      width: 100%;
+      min-width: 280px;
+      max-width: 100%;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       margin: 0;
       padding: 12px;
+      overflow-x: hidden;
     }
     .card {
       background: var(--card);
@@ -31,6 +38,108 @@
       padding: 14px;
       box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
       margin-bottom: 12px;
+    }
+    body.auth-locked .auth-preview-surface {
+      filter: grayscale(0.35);
+      opacity: 0.42;
+      pointer-events: none;
+      user-select: none;
+    }
+    .auth-gate {
+      position: relative;
+      z-index: 5;
+      max-width: 520px;
+      margin: 0 auto 14px;
+      border: 1px solid #c4b5fd;
+      background: linear-gradient(145deg, #ffffff 0%, #f5f3ff 100%);
+    }
+    .auth-gate[hidden] { display: none; }
+    .auth-hero {
+      margin: -14px -14px 14px;
+      padding: 18px 14px 16px;
+      color: white;
+      background: linear-gradient(135deg, #1d4ed8, #6366f1 55%, #9333ea);
+    }
+    .auth-hero h1 { margin: 0; font-size: 1.2rem; }
+    .auth-kicker {
+      margin: 0 0 6px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+    .auth-subtitle {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.4;
+      margin: 0 0 13px;
+    }
+    .auth-hero .auth-subtitle { color: #e0e7ff; margin: 6px 0 0; }
+    .auth-divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      margin: 12px 0;
+    }
+    .auth-divider::before,
+    .auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+    .google-btn {
+      background: white;
+      color: var(--text);
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 5px rgba(15,23,42,0.06);
+    }
+    .google-btn:hover { background: #f8fafc; }
+    .auth-terms {
+      display: flex;
+      gap: 7px;
+      align-items: flex-start;
+      margin: 11px 0;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      line-height: 1.35;
+    }
+    .auth-terms input { width: auto; margin-top: 2px; }
+    .auth-terms a { color: var(--primary); }
+    .auth-terms button {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--primary);
+      text-decoration: underline;
+      cursor: pointer;
+      font: inherit;
+    }
+    .auth-terms-screen {
+      display: none;
+      max-width: 520px;
+      margin: 0 auto 14px;
+    }
+    .auth-terms-screen h2 { color: var(--text); margin-bottom: 8px; }
+    .auth-terms-screen h3 { color: var(--text); font-size: 0.86rem; margin: 14px 0 4px; }
+    .auth-terms-screen p,
+    .auth-terms-screen li { color: var(--text-muted); font-size: 0.76rem; line-height: 1.45; }
+    .auth-terms-screen ul { padding-left: 18px; }
+    .auth-status {
+      display: none;
+      padding: 9px;
+      border-radius: 7px;
+      font-size: 0.74rem;
+      line-height: 1.35;
+      margin-top: 10px;
+    }
+    .signed-in-badge {
+      display: none;
+      margin: 0 0 10px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #047857;
+      font-size: 0.72rem;
     }
     h2 { font-size: 1.1rem; margin-top: 0; display: flex; align-items: center; gap: 6px; }
     .form-group { margin-bottom: 10px; }
@@ -46,7 +155,7 @@
     }
 
     /* Three-Tab Ribbon Layout Header Styles */
-    .tabs-nav { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 12px; }
+    .tabs-nav { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 12px; }
     .tab-btn {
       flex: 1;
       padding: 10px 4px;
@@ -60,6 +169,7 @@
       text-align: center;
       transition: all 0.2s;
       margin-bottom: -2px;
+      min-width: 0;
     }
     .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
     .tab-content { display: none; }
@@ -112,7 +222,7 @@
     .stat-label { font-size: 0.7rem; color: var(--text-muted); font-weight: 600; }
 
     .table-container { overflow-x: auto; margin-top: 6px; border-radius: 6px; border: 1px solid var(--border); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+    table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 0.76rem; }
     th { background: #f1f5f9; padding: 8px; font-weight: 600; color: var(--text-muted); }
     td { padding: 8px; border-top: 1px solid var(--border); background: white; }
 
@@ -127,13 +237,312 @@
       font-size: 0.72rem; background: linear-gradient(135deg, #6366f1, #a855f7);
       color: white; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px;
       display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer;
+    }
+    #inclusionReasons label { font-weight: 400; color: var(--text); margin: 4px 0; }
+    #inclusionReasons input { width: auto; margin-right: 6px; }
+    .report-path { word-break: break-all; color: var(--primary); font-family: monospace; }
+    .access-card { font-size: 0.74rem; line-height: 1.35; }
+    .access-card-title { display: block; font-size: 0.9rem; margin-bottom: 9px; }
+    .access-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .access-tile {
+      border: 1px solid var(--border); border-radius: 8px; padding: 9px;
+      background: #f8fafc; min-height: 66px;
+      box-shadow: 0 2px 5px rgba(15,23,42,0.06);
+    }
+    .access-tile strong { display: block; color: var(--text); margin-bottom: 4px; }
+    .access-tile span { color: var(--text-muted); }
+    .access-points { margin: 0; padding-left: 16px; color: var(--text-muted); }
+    .access-points li { margin: 3px 0; }
+    .access-tile.free {
+      background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+      border-color: #6ee7b7;
+    }
+    .access-tile.upgrade {
+      background: linear-gradient(135deg, #eef2ff, #ddd6fe);
+      border-color: #a78bfa;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .access-tile.upgrade:hover,
+    .access-tile.upgrade:focus-visible { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(79,70,229,0.18); outline: 2px solid #818cf8; outline-offset: 2px; }
+    .access-tile.note {
+      grid-column: 1 / -1;
+      background: linear-gradient(135deg, #fffbeb, #fef3c7);
+      border-color: #fbbf24;
+    }
+    .access-tile.support {
+      grid-column: 1 / -1;
+      background: linear-gradient(135deg, #eff6ff, #dbeafe);
+      border-color: #60a5fa;
+    }
+    .upgrade-flow {
+      display: none; border: 1px solid #c4b5fd; overflow: hidden;
+      background: linear-gradient(145deg, #ffffff 0%, #f5f3ff 100%);
+    }
+    .upgrade-hero {
+      margin: -14px -14px 14px; padding: 18px 14px 16px;
+      color: white; background: linear-gradient(135deg, #4338ca, #7c3aed 55%, #a855f7);
+    }
+    .upgrade-kicker { margin: 0 0 6px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
+    .upgrade-flow h2 { margin: 0; font-size: 1.18rem; }
+    .upgrade-flow .flow-subtitle { color: var(--text-muted); margin: 0 0 14px; line-height: 1.45; }
+    .upgrade-hero .flow-subtitle { color: #ede9fe; margin: 6px 0 0; }
+    .upgrade-plan {
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      padding: 10px 11px; border: 1px solid #ddd6fe; border-radius: 9px;
+      background: rgba(255,255,255,0.8); margin-bottom: 12px;
+    }
+    .upgrade-plan strong { display: block; color: #312e81; }
+    .upgrade-plan span { color: var(--text-muted); font-size: 0.72rem; }
+    .upgrade-badge { padding: 4px 7px; border-radius: 999px; background: #ede9fe; color: #6d28d9; font-size: 0.65rem; font-weight: 700; white-space: nowrap; }
+    .plan-options { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
+    .plan-option {
+      padding: 11px; border: 1px solid #c4b5fd; border-radius: 10px;
+      background: rgba(255,255,255,0.84); text-align: left; cursor: pointer;
+      color: var(--text);
+    }
+    .plan-option.selected { border: 2px solid #6366f1; background: #eef2ff; box-shadow: 0 4px 12px rgba(79,70,229,0.14); }
+    .plan-option.ultimate { border-color: #f59e0b; background: linear-gradient(145deg, #fff7ed, #fffbeb); }
+    .plan-option.ultimate.selected { border-color: #d97706; }
+    .plan-option strong { display: block; margin-bottom: 4px; color: #312e81; }
+    .plan-option.ultimate strong { color: #92400e; }
+    .plan-option span { display: block; color: var(--text-muted); font-size: 0.7rem; line-height: 1.35; }
+    .plan-option .plan-action { display: block; margin-top: 8px; color: var(--primary); font-size: 0.68rem; font-weight: 700; }
+    .plan-price { display: block; margin-top: 7px; color: #1e1b4b; font-size: 0.95rem; font-weight: 800; }
+    .plan-price small { color: var(--text-muted); font-size: 0.65rem; font-weight: 500; }
+    .upgrade-benefits { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+    .upgrade-benefit { padding: 10px; border-radius: 9px; background: white; border: 1px solid #e2e8f0; }
+    .upgrade-benefit strong { display: block; margin-bottom: 4px; font-size: 0.76rem; }
+    .upgrade-benefit span { color: var(--text-muted); font-size: 0.7rem; line-height: 1.35; }
+    .upgrade-details-list { margin: 0 0 14px; padding-left: 19px; }
+    .upgrade-details-list li { margin: 6px 0; }
+    .checkout-summary {
+      padding: 11px; border: 1px solid #ddd6fe; border-radius: 9px;
+      background: #faf5ff; margin-bottom: 12px;
+    }
+    .checkout-summary-row { display: flex; justify-content: space-between; gap: 12px; margin: 5px 0; font-size: 0.76rem; }
+    .checkout-summary-row span { color: var(--text-muted); }
+    .checkout-security { display: flex; gap: 7px; align-items: flex-start; padding: 9px; border-radius: 8px; background: #f0fdf4; color: #166534; font-size: 0.7rem; line-height: 1.35; }
+    .terms-check { display: flex; gap: 7px; align-items: flex-start; margin: 12px 0; font-size: 0.72rem; line-height: 1.35; color: var(--text-muted); }
+    .terms-check input { width: auto; margin-top: 2px; }
+    .terms-link { color: var(--primary); text-decoration: underline; cursor: pointer; }
+    .terms-screen { font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
+    .terms-screen h3 { color: var(--text); font-size: 0.86rem; margin: 13px 0 4px; }
+    .terms-screen ul { padding-left: 18px; margin-top: 5px; }
+    .checkout-methods { display: grid; gap: 8px; margin: 12px 0; }
+    .checkout-method {
+      width: 100%; border: 1px solid #2563eb; border-radius: 8px; padding: 10px;
+      background: #2563eb; color: white; text-align: left; cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .checkout-method.locked {
+      background: #e2e8f0; border-color: #94a3b8; color: #64748b; cursor: not-allowed;
+    }
+    .flow-back {
+      border: 0; background: transparent; color: var(--primary);
+      cursor: pointer; padding: 4px 0; font-size: 0.76rem;
+    }
+    .locked-source-action {
+      width: 100%; margin-top: 8px; padding: 7px; border: 1px dashed #94a3b8;
+      border-radius: 6px; background: #f1f5f9; color: #64748b; cursor: pointer;
+      font-size: 0.72rem;
+    }
+    @media (max-width: 420px) {
+      body { padding: 8px; }
+      .card { padding: 11px; border-radius: 10px; }
+      .tabs-nav { gap: 0; }
+      .tab-btn { flex: 1 1 100%; text-align: left; padding: 8px 10px; }
+      .summary-grid,
+      .access-grid { grid-template-columns: 1fr; }
+      .access-tile.note,
+      .access-tile.support { grid-column: auto; }
+      .upgrade-benefits { grid-template-columns: 1fr; }
+      .plan-options { grid-template-columns: 1fr; }
+      .step-item { align-items: flex-start; }
+      .step-icon { flex: 0 0 auto; }
+    }
+    @media (min-width: 700px) {
+      body { padding: 18px; }
+      .card { padding: 16px; }
     }
   </style>
 </head>
 <body>
 
-  <div class="tier-banner" id="tierBanner">
-    <span>💎 <strong>Nexus Freemium Tier</strong> (3/5 monthly checks left)</span>
+  <section class="card auth-gate" id="authGate" aria-labelledby="authTitle">
+    <div class="auth-hero">
+      <p class="auth-kicker">Welcome to Nexus Research AI</p>
+      <h1 id="authTitle">Create your research workspace</h1>
+      <p class="auth-subtitle">Sign up to run evidence scans, save audit history, and unlock your research reports.</p>
+    </div>
+    <p class="auth-subtitle">You can preview the workspace below. Sign up when you are ready to start researching.</p>
+    <form id="signupForm" novalidate>
+      <div class="form-group">
+        <label for="signupEmail">Email address</label>
+        <input id="signupEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+      </div>
+      <div class="form-group">
+        <label for="signupPassword">Password</label>
+        <input id="signupPassword" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required>
+      </div>
+      <label class="auth-terms">
+        <input id="signupTerms" type="checkbox" required>
+        <span>I agree to the <button id="openSignupTermsBtn" type="button">Terms and Conditions</button>.</span>
+      </label>
+      <button class="btn" id="emailSignupBtn" type="submit">Create account with email</button>
+    </form>
+    <div class="auth-divider">or</div>
+    <button class="btn google-btn" id="googleSignupBtn" type="button">Continue with Google</button>
+    <div class="auth-status" id="authStatus" role="status" aria-live="polite"></div>
+    <p class="auth-subtitle" style="margin:11px 0 0;">Review the terms before creating your account.</p>
+  </section>
+  <section class="card auth-terms-screen" id="signupTermsScreen" aria-labelledby="signupTermsTitle">
+    <button class="flow-back" id="backToSignupBtn" type="button">← Back to signup</button>
+    <h2 id="signupTermsTitle">Nexus Research AI Terms and Conditions</h2>
+    <p>These terms explain how the research workspace, accounts, subscriptions, payments, and generated outputs are handled.</p>
+    <h3>1. Account registration</h3>
+    <p>You must provide accurate account information and keep your sign-in details secure. Each account is intended for the person or organization that created it.</p>
+    <h3>2. Research workspace</h3>
+    <p>Nexus Research AI provides evidence discovery, source auditing, synthesis, and report-generation tools. You are responsible for reviewing sources and deciding how to use generated material.</p>
+    <h3>3. Payments and subscriptions</h3>
+    <p>Paid plans are billed at the price shown at checkout and renew according to the selected payment provider's schedule. Payment credentials are handled by the provider and are not stored in the extension.</p>
+    <h3>4. Refunds and cancellation</h3>
+    <p>Refund requests should normally be submitted within seven days of a charge. Completed scans, generated reports, and used subscription time may be excluded. Approved refunds are returned through the original payment method. Future renewals may be cancelled through the payment provider.</p>
+    <h3>5. Research-output policy</h3>
+    <p>Research outputs are decision-support aids. They are not guarantees of truth, safety, publication acceptance, legal compliance, or professional advice. Verify sources, interpretations, and conclusions independently.</p>
+    <h3>6. Acceptable use</h3>
+    <p>Do not use the service for unlawful activity, abuse of third-party systems, unauthorized access, or attempts to bypass usage, payment, or security controls.</p>
+    <h3>7. Changes</h3>
+    <p>We may update these terms as the service develops. Material changes will be communicated through the product or the account contact information where appropriate.</p>
+    <button class="btn" id="returnToSignupBtn" type="button" style="margin-top:12px;">Return to signup</button>
+  </section>
+  <div class="signed-in-badge" id="signedInBadge"></div>
+
+  <div class="auth-preview-surface" id="authPreviewSurface">
+  <div class="tier-banner" id="tierBanner" role="button" tabindex="0" aria-label="Open upgrade details">
+    <span>💎 <strong>Nexus Research AI Freemium Tier</strong> (3/5 monthly checks left)</span>
+  </div>
+  <div class="card access-card" id="accessCard">
+    <strong class="access-card-title">Researcher access</strong>
+    <div class="access-grid">
+      <div class="access-tile free">
+        <strong>Free</strong>
+        <ul class="access-points">
+          <li>5 scans/month</li>
+          <li>Source audit</li>
+          <li>Starter synthesis</li>
+        </ul>
+      </div>
+      <div class="access-tile upgrade" id="upgradeTile" role="button" tabindex="0" aria-label="Open upgrade details">
+        <strong>Upgrade</strong>
+        <ul class="access-points">
+          <li>More scans</li>
+          <li>Extended exports</li>
+        </ul>
+      </div>
+      <div class="access-tile note">
+        <strong>Important</strong>
+        <ul class="access-points">
+          <li>Scores are research signals</li>
+          <li>Not guarantees of truth or safety</li>
+          <li>Verify sources before relying on results</li>
+        </ul>
+      </div>
+      <div class="access-tile support">
+        <strong>Support Nexus Research AI</strong>
+        <ul class="access-points">
+          <li>Sponsor the project</li>
+          <li>Donate through the payment page</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card upgrade-flow" id="upgradeFlow">
+        <div id="upgradeDetailsScreen">
+        <button class="flow-back" id="closeUpgradeBtn" type="button">← Back to research</button>
+        <div class="upgrade-hero">
+          <p class="upgrade-kicker">Nexus Research AI Pro</p>
+          <h2>Upgrade your research workspace</h2>
+          <p class="flow-subtitle">Move from quick evidence scans to deeper, publication-ready research preparation.</p>
+        </div>
+        <div class="plan-options" role="radiogroup" aria-label="Choose an upgrade plan">
+          <button class="plan-option selected" id="proPlanOption" type="button" data-plan="pro" aria-pressed="true">
+            <strong>Research Pro</strong>
+            <span>Up to 100 sources per scan with full starter reports.</span>
+            <span class="plan-price">$19 <small>/ month</small></span>
+            <span class="plan-action">Selected plan</span>
+          </button>
+          <button class="plan-option ultimate" id="ultimatePlanOption" type="button" data-plan="ultimate" aria-pressed="false">
+            <strong>Research Ultimate</strong>
+            <span>More than 100 sources plus up to 3 research domains.</span>
+            <span class="plan-price">$49 <small>/ month</small></span>
+            <span class="plan-action">Choose Ultimate</span>
+          </button>
+        </div>
+        <div class="upgrade-benefits">
+          <div class="upgrade-benefit"><strong>📚 Deeper discovery</strong><span>Review up to 100 sources in one scan.</span></div>
+          <div class="upgrade-benefit"><strong>🧭 Broader control</strong><span>Use all inclusion criteria and legal research access.</span></div>
+          <div class="upgrade-benefit"><strong>📝 Full starter reports</strong><span>Generate the complete researcher starter document.</span></div>
+          <div class="upgrade-benefit"><strong>📤 Extended exports</strong><span>Work with larger audits and evidence reviews.</span></div>
+          <div class="upgrade-benefit"><strong>✨ Better quality proposal</strong><span>Turn audited evidence into a clearer, stronger research proposal.</span></div>
+          <div class="upgrade-benefit"><strong>📖 Full cited research paper draft</strong><span>Generate a structured draft with integrated citations and references.</span></div>
+        </div>
+        <button class="btn" id="continueToCheckoutBtn" type="button">Continue to secure checkout</button>
+        <p class="flow-subtitle" style="font-size:0.68rem; margin:9px 0 0; text-align:center;">You will choose a payment method on the next screen.</p>
+      </div>
+      <div id="checkoutScreen" style="display:none;">
+        <button class="flow-back" id="backToUpgradeDetailsBtn" type="button">← Review upgrade details</button>
+        <div class="upgrade-hero">
+          <p class="upgrade-kicker">Secure checkout</p>
+          <h2>Choose a payment method</h2>
+          <p class="flow-subtitle">Complete your Research Pro upgrade in the next step.</p>
+        </div>
+        <div class="checkout-summary">
+          <div class="checkout-summary-row"><span>Plan</span><strong id="checkoutPlanName">Research Pro</strong></div>
+          <div class="checkout-summary-row"><span>Price</span><strong id="checkoutPlanPrice">$19 / month</strong></div>
+          <div class="checkout-summary-row"><span>Source capacity</span><strong id="checkoutSourceCapacity">Up to 100</strong></div>
+          <div class="checkout-summary-row"><span>Domain support</span><strong id="checkoutDomainCapacity">1 domain</strong></div>
+          <div class="checkout-summary-row"><span>Reports</span><strong>Full starter reports</strong></div>
+        </div>
+        <p class="flow-subtitle">Select a payment method to continue. Payment details are handled in the secure checkout flow.</p>
+        <div class="checkout-methods">
+          <button class="checkout-method" id="paypalUpgradeBtn" type="button">PayPal <span>• Available</span></button>
+          <button class="checkout-method locked" id="mpesaUpgradeBtn" type="button">M-PESA <span>• Coming soon</span></button>
+        </div>
+        <label class="terms-check">
+          <input type="checkbox" id="termsAgreement">
+          <span>I agree to the <button class="terms-link" id="termsLinkBtn" type="button">Terms, payment, and refund policy</button>.</span>
+        </label>
+        <button class="locked-source-action" id="largeSourceInterestBtn" type="button">
+          Need 200 to 1,000 sources? Tell us
+        </button>
+        <div class="checkout-security">🔒 <span>Payment credentials are not stored in this extension. Checkout will be handled by the payment provider.</span></div>
+        <div id="checkoutStatus" style="display:none; margin-top:10px; font-size:0.78rem;"></div>
+      </div>
+      <div id="termsScreen" style="display:none;">
+        <button class="flow-back" id="backToCheckoutBtn" type="button">← Back to checkout</button>
+        <div class="upgrade-hero">
+          <p class="upgrade-kicker">Nexus Research AI terms</p>
+          <h2>Payment and refund policy</h2>
+          <p class="flow-subtitle">Please review these terms before starting checkout.</p>
+        </div>
+        <div class="terms-screen">
+          <h3>Plans and billing</h3>
+          <p>Research Pro is $19 per month. Research Ultimate is $49 per month. The selected plan renews monthly until cancelled through the payment provider.</p>
+          <h3>Payment processing</h3>
+          <p>Payments are processed by the selected provider. Nexus Research AI does not store card or wallet credentials in the extension.</p>
+          <h3>Refunds</h3>
+          <p>Refund requests should be submitted within 7 days of a charge. Completed scans, generated reports, and used subscription time may be excluded from a refund. Any approved refund is returned through the original payment method.</p>
+          <h3>Research outputs</h3>
+          <p>Reports are research aids, not guarantees of accuracy, safety, publication acceptance, or professional advice. Verify sources and conclusions independently.</p>
+          <h3>Changes and cancellation</h3>
+          <p>You may cancel future renewals through the payment provider. Changes to plans or pricing will be communicated before they take effect where required.</p>
+        </div>
+        <button class="btn" id="acceptTermsBtn" type="button" style="margin-top:12px;">Accept and return to checkout</button>
+      </div>
+      <button class="flow-back" id="returnToResearchBtn" type="button" style="margin-top:12px;">↩ Return to research workspace</button>
   </div>
 
   <div class="tabs-nav">
@@ -152,17 +561,37 @@
       </div>
       <div class="form-group">
         <label>Max Sources</label>
-        <input type="number" id="max_sources" value="5" min="1" max="50">
+        <select id="max_sources">
+          <option value="5">5 sources</option>
+          <option value="10">10 sources</option>
+          <option value="20">20 sources</option>
+          <option value="50">50 sources</option>
+          <option value="100" class="paid-only-source-option">100 sources (Paid)</option>
+          <option value="200" class="premium-source-option">200 sources (upgrade)</option>
+          <option value="500" class="premium-source-option">500 sources (upgrade)</option>
+          <option value="1000" class="premium-source-option">1,000 sources (upgrade)</option>
+        </select>
       </div>
       <div class="form-group">
         <label>Domain Area</label>
         <select id="domain">
           <option value="scholarly">Multi-Engine Scholarly Graph (Auto-Fallback)</option>
+          <option value="legal" class="paid-only-domain-option" disabled>Legal Research Graph (Paid)</option>
         </select>
       </div>
       <div class="form-group">
         <label for="sourceUploads">Additional PDF or text sources</label>
         <input type="file" id="sourceUploads" accept=".pdf,.txt,.md,.csv" multiple>
+      </div>
+      <div class="form-group">
+        <label id="inclusionReasonsLabel">Inclusion reasons (select up to 3; defaults apply if none selected)</label>
+        <div id="inclusionReasons">
+          <label><input type="checkbox" value="Peer-reviewed or journal-associated source"> Peer-reviewed or journal-associated</label>
+          <label><input type="checkbox" value="Cited source with usable metadata"> Cited with usable metadata</label>
+          <label><input type="checkbox" value="Unique source relevant to the requested topic"> Unique and topic-relevant</label>
+          <label><input type="checkbox" value="Recent publication within the research area"> Recent publication</label>
+          <label><input type="checkbox" value="Accessible abstract or full-text evidence"> Accessible abstract/full text</label>
+        </div>
       </div>
       <button class="btn" id="runBtn">
         <div class="spinner" id="btnSpinner"></div>
@@ -177,6 +606,12 @@
         <div class="step-item" id="step4"><span class="step-icon">⚫</span> 4. Synthesizing evidence via Insight Engine...</div>
       </div>
       <div id="status"></div>
+      <button class="btn retry-btn" id="retryBtn" style="display:none; margin-top:8px; background:#475569;">
+        Retry with the same context
+      </button>
+      <button class="btn" id="cancelScanBtn" type="button" style="display:none; margin-top:8px; background:#64748b;">
+        Stop research scan
+      </button>
     </div>
   </div>
 
@@ -196,6 +631,16 @@
     </div>
     <div class="preview-section" id="previewSection">
       <label>🎯 Real-Time Knowledge Graph Audit Preview</label>
+      <div id="reportMetadata" class="card" style="font-size:0.75rem; display:none;"></div>
+      <div id="auditFilters" class="card" style="font-size:0.75rem; display:none;">
+        <strong>Source view</strong>
+        <select id="auditFilter" aria-label="Filter audit sources">
+          <option value="all">All sources</option>
+          <option value="passed">Passed only</option>
+          <option value="skipped">Skipped only</option>
+        </select>
+        <span id="auditCompactNote" style="display:block; margin-top:6px; color:var(--text-muted);"></span>
+      </div>
       <div class="table-container">
         <table id="auditTable">
           <thead>
@@ -233,8 +678,18 @@
       </p>
 
       <button class="btn" id="draftDocBtn" style="background:linear-gradient(135deg, #2563eb, #1d4ed8);">
-        <div class="spinner" id="scribeSpinner" style="display:none;"></div>
-        <span id="draftBtnText">Generate Cited Research Document</span>
+        <div class="spinner" id="proposalSpinner" style="display:none;"></div>
+        <span id="draftBtnText">Generate Pre-Research Proposal</span>
+      </button>
+      <button class="btn" id="fullDraftDocBtn" style="margin-top:8px; background:linear-gradient(135deg, #7c3aed, #4f46e5);">
+        <div class="spinner" id="fullPaperSpinner" style="display:none;"></div>
+        <span id="fullDraftBtnText">Generate Full Research Paper</span>
+      </button>
+      <button class="btn" id="cancelReportBtn" type="button" style="display:none; margin-top:8px; background:#64748b;">
+        Stop report generation
+      </button>
+      <button class="btn" id="retryReportBtn" type="button" style="display:none; margin-top:8px; background:#475569;">
+        Retry report generation
       </button>
 
       <div class="progress-container" id="scribeProgressContainer" style="margin-top:12px;">
@@ -248,8 +703,9 @@
     </div>
 
     <div class="card" id="synthesisFallbackCard" style="text-align:center; padding:30px; color:var(--text-muted);">
-      <span>🔒 Synthesis compilation features locked. Please complete an initial paper gathering task inside the <strong>Research Hub</strong> to authorize generation.</span>
+      <span>🔒 Complete an initial paper gathering task in the <strong>Research Hub</strong> to unlock report generation.</span>
     </div>
+  </div>
   </div>
 
   <script src="popup.js"></script>

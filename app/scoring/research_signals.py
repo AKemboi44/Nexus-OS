@@ -3,13 +3,13 @@ Research Signals
 
 Purpose
 -------
-Central place for research-oriented vocabulary used by Nexus OS.
+Central place for research-oriented vocabulary used by Nexus Research AI.
 
 Why This Exists
 ---------------
 Academic research evolves.
 
-Keeping research vocabulary in one location makes Nexus OS easier to:
+Keeping research vocabulary in one location makes Nexus Research AI easier to:
 
 - Maintain
 - Audit

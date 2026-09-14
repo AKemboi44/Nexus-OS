@@ -1,6 +1,6 @@
 from models.source import Source
 
-# Check if Nexus OS can create a source? PASS means Yes, Fail means no.
+# Check if Nexus Research AI can create a source? PASS means Yes, Fail means no.
 def test_source_creation ():
     source = Source(
         id = "1",

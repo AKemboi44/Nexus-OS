@@ -1,8 +1,8 @@
 
-This contains a complete Discovery MVP with OpenAlex normalization and evals
+This contains a complete Nexus Research AI Discovery MVP with OpenAlex normalization and evals
 
 
-Every Nexus module must have:
+Every Nexus Research AI module must have:
 
 1. Unit Tests
 2. Benchmark Data

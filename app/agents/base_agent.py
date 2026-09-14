@@ -1,5 +1,5 @@
 """
-Nexus OS v0.5.0 - Agent Layer
+Nexus Research AI v0.5.0 - Agent Layer
 Generated for clarity and high maintainability.
 """
 import os
