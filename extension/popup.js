@@ -188,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (signedInBadge) {
             signedInBadge.style.display = signedIn ? 'block' : 'none';
-            if (signedInText) signedInText.textContent = `Signed in as ${user.email}`;
+            if (signedInText) signedInText.textContent = signedIn ? `Signed in as ${user.email}` : '';
         }
     }
 
