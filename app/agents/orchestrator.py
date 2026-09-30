@@ -13,6 +13,7 @@ from typing import Dict, Any, List
 # Ensure sub-modules parse clean path lookups
 from app.reports.dossier_generator import DossierGenerator
 from app.research.scoring_matrix import SourceQualityEvaluator
+from app.research.publication_quality import PublicationQualityGate
 from app.synthesis.citation_engine import CitationEngine
 
 
@@ -28,7 +29,7 @@ class NexusOrchestrator:
         self.reviewer = reviewer
         self.squire = squire
         self.max_retries = max_retries
-        self.grounding_threshold = 0.85
+        self.grounding_threshold = PublicationQualityGate.threshold_for("proposal")
 
         # CORRECT ALIGNED CACHE STORE INITIALIZATION
         self.memory = None
@@ -41,7 +42,8 @@ class NexusOrchestrator:
                   file=sys.stderr)
 
     def run_research_loop(self, topic: str, custom_prompt: str = None, max_sources: int = 5,
-                          domain: str = "scholarly") -> Dict[str, Any]:
+                          domain: str = "scholarly", report_type: str = "proposal") -> Dict[str, Any]:
+        self.grounding_threshold = PublicationQualityGate.threshold_for(report_type)
         print(f"\n>>> [Nexus Core] Executing Discovery Sequence for: {topic} (Domain: {domain}, Limit: {max_sources})",
               file=sys.stderr)
         sys.stderr.flush()
@@ -203,13 +205,18 @@ class NexusOrchestrator:
         enriched_dossier = generator.generate_comprehensive_dossier(
             query=topic,
             included_sources=dossier.included_sources,
-            custom_prompt=custom_prompt
+            custom_prompt=custom_prompt,
+            domain=domain,
+            report_type=report_type,
         )
 
+        dossier.abstract = enriched_dossier.abstract
         dossier.themes = enriched_dossier.themes
         dossier.contradictions = enriched_dossier.contradictions
         dossier.research_gaps = enriched_dossier.research_gaps
         dossier.opportunity_areas = enriched_dossier.opportunity_areas
+        dossier.problems_to_solve = enriched_dossier.problems_to_solve
+        dossier.quality_report = enriched_dossier.quality_report
 
         # 7. COMMIT NEW TRACKING VECTORS BACK TO CHROMADB PERSISTENCE
         self.memory.cache_dossier_sources(topic, dossier.included_sources)

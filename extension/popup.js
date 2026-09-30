@@ -82,6 +82,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToSignupBtn = document.getElementById('backToSignupBtn');
     const returnToSignupBtn = document.getElementById('returnToSignupBtn');
     const googleSignupBtn = document.getElementById('googleSignupBtn');
+    const toggleAuthModeBtn = document.getElementById('toggleAuthModeBtn');
+    const signOutBtn = document.getElementById('signOutBtn');
+    const signedInText = document.getElementById('signedInText');
+    const authIntro = document.getElementById('authIntro');
+    const signupTermsLabel = signupTerms?.closest('.auth-terms');
     const authStatus = document.getElementById('authStatus');
     const signedInBadge = document.getElementById('signedInBadge');
 
@@ -115,6 +120,43 @@ document.addEventListener('DOMContentLoaded', () => {
     const sStep3 = document.getElementById('sStep3'); const sStep4 = document.getElementById('sStep4');
 
     const FREE_LIMIT = 5;
+    const DEFAULT_NEXUS_API_BASE_URL = 'https://brisklightai.com';
+    const analyticsSessionId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+    async function getApiBaseUrl() {
+        const configured = await chrome.storage.local.get(['nexus_api_base_url']);
+        return (configured.nexus_api_base_url || DEFAULT_NEXUS_API_BASE_URL).replace(/\/+$/, '');
+    }
+
+    async function getApiHeaders() {
+        const configured = await chrome.storage.local.get(['nexus_api_key']);
+        const headers = {'Content-Type': 'application/json'};
+        if (configured.nexus_api_key) headers['X-API-Key'] = configured.nexus_api_key;
+        const session = await window.NexusAuth.getSession();
+        if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+        return headers;
+    }
+
+    async function sendAnalytics(event, context = {}) {
+        try {
+            const storage = await chrome.storage.local.get(['nexus_auth_user']);
+            if (!storage.nexus_auth_user) return;
+            await fetch(`${await getApiBaseUrl()}/v1/analytics`, {
+                method: 'POST',
+                headers: await getApiHeaders(),
+                body: JSON.stringify({
+                    user_id: storage.nexus_auth_user?.email || 'anonymous',
+                    session_id: analyticsSessionId,
+                    event,
+                    context
+                })
+            });
+        } catch (error) {
+            console.debug('[Nexus Analytics] event delivery skipped:', error.message);
+        }
+    }
+
+    sendAnalytics('workspace_opened');
 
     let activeSessionIncludedPapers = [];
     let activeSessionExcludedPapers = [];
@@ -126,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedPlan = 'pro';
     const manifest = chrome.runtime.getManifest();
     const isLocalTestingInstall = !manifest.update_url;
-    const isBrowserWhitelisted = isLocalTestingInstall;
+    let isSignInMode = false;
 
     function setAuthStatus(message, type = 'error') {
         if (!authStatus) return;
@@ -136,9 +178,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setSignedInState(user) {
-        const signedIn = isBrowserWhitelisted || Boolean(user?.email);
+        const signedIn = Boolean(user?.id && user?.email);
         document.body.classList.toggle('auth-locked', !signedIn);
-        if (authGate) authGate.hidden = signedIn && !isBrowserWhitelisted;
+        if (authGate) authGate.hidden = signedIn;
         if (signupTermsScreen && signedIn) signupTermsScreen.style.display = 'none';
         if (authPreviewSurface) {
             authPreviewSurface.setAttribute('aria-hidden', String(!signedIn));
@@ -146,61 +188,103 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (signedInBadge) {
             signedInBadge.style.display = signedIn ? 'block' : 'none';
-            signedInBadge.textContent = isBrowserWhitelisted && !user?.email
-                ? 'Local browser testing enabled'
-                : `Signed in as ${user.email}`;
+            if (signedInText) signedInText.textContent = `Signed in as ${user.email}`;
         }
     }
 
     async function loadAuthState() {
-        const stored = await chrome.storage.local.get(['nexus_auth_user']);
-        setSignedInState(stored.nexus_auth_user);
+        try {
+            const session = await window.NexusAuth.getSession();
+            setSignedInState(session?.user);
+        } catch (error) {
+            setSignedInState(null);
+            setAuthStatus(`Your session could not be refreshed: ${error.message}`);
+        }
     }
+
+    function setAuthMode(signIn) {
+        isSignInMode = signIn;
+        if (authGate) {
+            const title = document.getElementById('authTitle');
+            if (title) title.textContent = signIn ? 'Welcome back' : 'Create your research workspace';
+        }
+        if (authIntro) authIntro.textContent = signIn
+            ? 'Sign in with your email and password to continue.'
+            : 'Create an account or sign in to access your research workspace.';
+        if (signupPassword) signupPassword.autocomplete = signIn ? 'current-password' : 'new-password';
+        if (signupTermsLabel) signupTermsLabel.hidden = signIn;
+        if (signupTerms) signupTerms.required = !signIn;
+        const submitButton = document.getElementById('emailSignupBtn');
+        if (submitButton) submitButton.textContent = signIn ? 'Sign in with email' : 'Create account with email';
+        if (toggleAuthModeBtn) toggleAuthModeBtn.textContent = signIn
+            ? 'Need an account? Sign up'
+            : 'Already have an account? Sign in';
+        if (authStatus) authStatus.style.display = 'none';
+    }
+
+    toggleAuthModeBtn?.addEventListener('click', () => setAuthMode(!isSignInMode));
 
     signupForm?.addEventListener('submit', async event => {
         event.preventDefault();
         const email = signupEmail?.value.trim().toLowerCase();
         const password = signupPassword?.value || '';
-        if (!signupForm.checkValidity() || !email || password.length < 8 || !signupTerms?.checked) {
-            setAuthStatus('Enter a valid email, use at least 8 characters for your password, and accept the terms.');
+        if (!signupForm.checkValidity() || !email || (!isSignInMode && !signupTerms?.checked)) {
+            setAuthStatus(isSignInMode
+                ? 'Enter a valid email and password.'
+                : 'Enter a valid email, use at least 8 characters for your password, and accept the terms.');
             signupForm.reportValidity();
             return;
         }
-        const user = {
-            email,
-            provider: 'email',
-            createdAt: new Date().toISOString()
-        };
-        await chrome.storage.local.set({ nexus_auth_user: user });
-        setAuthStatus('Account created. Your research workspace is now available.', 'success');
-        setSignedInState(user);
-    });
-
-    googleSignupBtn?.addEventListener('click', () => {
-        if (!chrome.identity?.getProfileUserInfo) {
-            setAuthStatus('Google signup is unavailable in this browser context. Use email signup or enable the Identity permission.');
-            return;
+        const submitButton = document.getElementById('emailSignupBtn');
+        if (submitButton) submitButton.disabled = true;
+        try {
+            if (isSignInMode) {
+                const session = await window.NexusAuth.signIn(email, password);
+                setSignedInState(session.user);
+                setAuthStatus('You are signed in.', 'success');
+            } else {
+                const session = await window.NexusAuth.signUp(email, password);
+                if (session) {
+                    setSignedInState(session.user);
+                    setAuthStatus('Account created. You are signed in.', 'success');
+                } else {
+                    setAuthStatus('Account created. Check your email to confirm your address, then sign in.', 'success');
+                }
+            }
+        } catch (error) {
+            setAuthStatus(error.message);
+        } finally {
+            if (submitButton) submitButton.disabled = false;
         }
-        chrome.identity.getProfileUserInfo(async profile => {
-            if (chrome.runtime.lastError) {
-                setAuthStatus(`Google signup could not start: ${chrome.runtime.lastError.message}`);
-                return;
-            }
-            if (!profile?.email) {
-                setAuthStatus('Sign in to Chrome with a Google account, then try Google signup again.');
-                return;
-            }
-            const user = {
-                email: profile.email.toLowerCase(),
-                provider: 'google',
-                createdAt: new Date().toISOString()
-            };
-            await chrome.storage.local.set({ nexus_auth_user: user });
-            setAuthStatus('Google account connected. Your research workspace is now available.', 'success');
-            setSignedInState(user);
-        });
     });
 
+    googleSignupBtn?.addEventListener('click', async () => {
+        googleSignupBtn.disabled = true;
+        try {
+            const session = await window.NexusAuth.signInWithGoogle();
+            setSignedInState(session.user);
+            setAuthStatus('Google sign-in succeeded.', 'success');
+        } catch (error) {
+            setAuthStatus(error.message);
+        } finally {
+            googleSignupBtn.disabled = false;
+        }
+    });
+
+    signOutBtn?.addEventListener('click', async () => {
+        signOutBtn.disabled = true;
+        try {
+            await window.NexusAuth.signOut();
+            setSignedInState(null);
+            setAuthStatus('You have signed out.', 'success');
+        } catch (error) {
+            setAuthStatus(`Could not sign out: ${error.message}`);
+        } finally {
+            signOutBtn.disabled = false;
+        }
+    });
+
+    setAuthMode(false);
     loadAuthState();
 
     // Unpacked developer installs are whitelisted so local testing is not blocked.
@@ -275,8 +359,21 @@ document.addEventListener('DOMContentLoaded', () => {
     selectPlan('pro');
 
     async function refreshEntitlements() {
-        const storage = await chrome.storage.local.get(["subscription_tier"]);
-        isPaidUser = storage.subscription_tier === "paid" || isLocalTestingInstall;
+        const storage = await chrome.storage.local.get(["nexus_auth_user"]);
+        const userId = storage.nexus_auth_user?.email;
+        let serverActive = false;
+        if (userId) {
+            try {
+                const response = await fetch(
+                    `${await getApiBaseUrl()}/v1/entitlements/${encodeURIComponent(userId)}`,
+                    {headers: await getApiHeaders()}
+                );
+                if (response.ok) serverActive = Boolean((await response.json()).active);
+            } catch (error) {
+                console.debug('[Nexus Entitlements] refresh skipped:', error.message);
+            }
+        }
+        isPaidUser = serverActive || isLocalTestingInstall;
         if (inclusionReasonsLabel) inclusionReasonsLabel.textContent =
             `Inclusion reasons (select up to ${isPaidUser ? 5 : 3}; defaults apply if none selected)`;
         if (maxSourcesSelect) {
@@ -397,7 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
             destination.style.display = 'block';
         }
     }
-    paypalUpgradeBtn?.addEventListener('click', () => {
+    paypalUpgradeBtn?.addEventListener('click', async () => {
         if (!termsAgreement?.checked) {
             if (checkoutStatus) {
                 checkoutStatus.className = 'error';
@@ -406,7 +503,40 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return;
         }
-        trackInterest('paypal_upgrade_clicks', 'PayPal checkout will open when payment integration is enabled.');
+        const destination = checkoutStatus || statusDiv;
+        if (destination) {
+            destination.className = 'success';
+            destination.innerText = 'Preparing secure PayPal checkout...';
+            destination.style.display = 'block';
+        }
+        try {
+            const storage = await chrome.storage.local.get(['nexus_auth_user']);
+            const response = await fetch(`${await getApiBaseUrl()}/v1/paypal/subscriptions`, {
+                method: 'POST',
+                headers: await getApiHeaders(),
+                body: JSON.stringify({
+                    plan: selectedPlan,
+                    user_id: storage.nexus_auth_user?.email || 'anonymous'
+                })
+            });
+            if (!response.ok) throw new Error(`PayPal order request failed (${response.status}).`);
+            const order = await response.json();
+            const approval = (order.links || []).find(link => link.rel === 'approve');
+            if (!approval?.href) throw new Error('PayPal did not return an approval URL.');
+            sendAnalytics('paypal_approval_opened', {plan: selectedPlan, order_id: order.id});
+            chrome.tabs.create({url: approval.href});
+            if (destination) destination.innerText = 'PayPal checkout opened in a new tab.';
+        } catch (error) {
+            sendAnalytics('payment_failed', {
+                provider: 'paypal',
+                error_code: 'CLIENT_CHECKOUT_ERROR',
+                message: error.message
+            });
+            if (destination) {
+                destination.className = 'error';
+                destination.innerText = `PayPal checkout could not start: ${error.message}`;
+            }
+        }
     });
     mpesaUpgradeBtn?.addEventListener('click', () =>
         trackInterest('mpesa_interest_clicks', 'M-PESA support is being evaluated. We recorded your interest.')
@@ -432,6 +562,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
             if (retryReportBtn && lastRequestContext?.action === 'trigger_docx_generation') retryReportBtn.style.display = 'block';
+            sendAnalytics(
+                lastRequestContext?.action === 'trigger_docx_generation' ? 'report_failed' : 'scan_failed',
+                {message: response?.error || 'empty_host_response'}
+            );
             return;
         }
 
@@ -448,6 +582,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (cancelScanBtn) cancelScanBtn.style.display = 'none';
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
             if (retryReportBtn && lastRequestContext?.action === 'trigger_docx_generation') retryReportBtn.style.display = 'block';
+            sendAnalytics(
+                lastRequestContext?.action === 'trigger_docx_generation' ? 'report_failed' : 'scan_failed',
+                {message: data.message || 'host_processing_error'}
+            );
             currentRoutingSessionToken = "idle";
             return;
         }
@@ -482,6 +620,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     draftStatus.style.display = 'block';
                 }
                 if (retryReportBtn) retryReportBtn.style.display = 'none';
+                sendAnalytics('report_completed', {
+                    report_type: activeReportType,
+                    document_saved_at: data.document_saved_at || ''
+                });
             }, 600);
             return;
         }
@@ -497,6 +639,11 @@ document.addEventListener('DOMContentLoaded', () => {
     backgroundChannel.onMessage.addListener(handleBackgroundResponse);
 
     async function handleResearchSuccess(data, fromCache = false) {
+        sendAnalytics('scan_completed', {
+            included_count: (data.included || []).length,
+            excluded_count: (data.excluded || []).length,
+            from_cache: fromCache
+        });
         if (progressBar) progressBar.style.width = '100%';
         [step1, step2, step3, step4].forEach(s => markStep(s, 'success'));
         if (!fromCache) {
@@ -568,6 +715,10 @@ document.addEventListener('DOMContentLoaded', () => {
             uploaded_sources: await readUploads(),
             selected_inclusion_reasons: readInclusionReasons()
         };
+        sendAnalytics('scan_started', {
+            domain: requestContext.domain,
+            max_sources: requestContext.max_sources
+        });
         lastRequestContext = requestContext;
         const cacheKey = JSON.stringify({
             topic: requestContext.topic,
@@ -608,6 +759,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusDiv.innerText = `Upload failed: ${error.message}`;
                 statusDiv.style.display = 'block';
             }
+            sendAnalytics('scan_failed', {message: error.message});
         }
     };
 
@@ -628,7 +780,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sProgContainer) sProgContainer.style.display = 'block';
             if (activeReportType === 'full_starter') {
                 if (fullPaperSpinner) fullPaperSpinner.style.display = 'block';
-                if (fullDraftBtnText) fullDraftBtnText.innerText = 'Retrying full paper...';
+                if (fullDraftBtnText) fullDraftBtnText.innerText = 'Retrying complete literature review...';
             } else {
                 if (proposalSpinner) proposalSpinner.style.display = 'block';
                 if (draftBtnText) draftBtnText.innerText = 'Retrying proposal...';
@@ -670,11 +822,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (fullDraftDocBtn) {
         fullDraftDocBtn.onclick = async function(e) {
-            const storage = await chrome.storage.local.get(["subscription_tier"]);
-            const isPaidUser = storage.subscription_tier === "paid" || isLocalTestingInstall;
-            if (!isPaidUser) {
+            await refreshEntitlements();
+            if (!isPaidUser && !isLocalTestingInstall) {
                 if (draftStatus) {
-                    draftStatus.innerText = "The Full Research Paper is available to paid users. Upgrade to unlock it.";
+                    draftStatus.innerText = "The Complete Literature Review is available to paid users. Upgrade to unlock it.";
                     draftStatus.style.display = 'block';
                 }
                 return;
@@ -701,6 +852,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 report_type: reportType,
                 is_paid_user: isPaidUser
             };
+            sendAnalytics('report_started', {report_type: reportType});
 
             button.disabled = true;
             if (reportType === 'full_starter') {
@@ -709,7 +861,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 proposalSpinner.style.display = 'block';
             }
             if (buttonTextId && document.getElementById(buttonTextId)) document.getElementById(buttonTextId).innerText = 'Compiling...';
-            if (reportType === 'full_starter' && fullDraftBtnText) fullDraftBtnText.innerText = 'Generating full paper...';
+            if (reportType === 'full_starter' && fullDraftBtnText) fullDraftBtnText.innerText = 'Generating complete literature review...';
             if (cancelReportBtn) cancelReportBtn.style.display = 'block';
             if (retryReportBtn) retryReportBtn.style.display = 'none';
             if (draftStatus) draftStatus.style.display = 'none';
@@ -770,7 +922,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fullDraftDocBtn) {
             fullDraftDocBtn.disabled = false;
             if (fullPaperSpinner) fullPaperSpinner.style.display = 'none';
-            if (fullDraftBtnText) fullDraftBtnText.innerText = 'Generate Full Research Paper';
+            if (fullDraftBtnText) fullDraftBtnText.innerText = 'Generate Complete Literature Review';
         }
         if (cancelReportBtn) cancelReportBtn.style.display = 'none';
     }

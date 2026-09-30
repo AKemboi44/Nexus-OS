@@ -10,3 +10,4 @@ package-lock.json
 *.xlsx
 *.docx
 native_host/
+ROADMAP_v1_0_0.md

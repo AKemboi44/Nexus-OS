@@ -13,6 +13,7 @@ if project_root not in sys.path:
 
 from models.research_dossier import ResearchDossier
 from app.synthesis.insight_engine import InsightEngine
+from app.research.publication_quality import PublicationQualityGate
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -126,7 +127,7 @@ class ResearchPipeline:
         included_papers = included_papers[:max_sources + len(additional_sources or [])]
 
         dossier = ResearchDossier(query=query)
-        dossier.included_sources = [f"{p['title']} ({p['year']})" for p in included_papers]
+        dossier.included_sources = included_papers
         dossier.evidence_summary = [p.get('abstract', 'No description.') for p in included_papers]
 
         evidence_blocks = [{'id': p['uid'], 'content': p.get('abstract', '')} for p in included_papers]
@@ -184,8 +185,28 @@ class ResearchPipeline:
         first_url = "https://semanticscholar.org"
         if included_papers: first_url = included_papers[0].get("url") or first_url
 
-        return {
-            "status": "success", "domain_executed": "scholarly", "synthesis": str(synthesis_text),
+        gate = PublicationQualityGate()
+        quality_report = gate.validate_dossier(dossier, included_papers)
+
+        dossier.abstract = str(synthesis_text)
+        dossier.themes = self._derive_core_themes(query, synthesis_text, included_papers)
+        dossier.contradictions = [
+            "Claims become more credible when they align with the strongest, most methodologically transparent sources."
+        ]
+        dossier.research_gaps = [
+            "Additional evidence is needed to validate the strongest findings across broader contexts and populations."
+        ]
+        dossier.opportunity_areas = [
+            "A stronger publication-grade synthesis should expand validation, define boundary conditions, and compare implementation settings."
+        ]
+        dossier.problems_to_solve = [
+            "Clarify which findings hold across contexts and which require more explicit methodological validation."
+        ]
+        dossier.quality_report = quality_report
+        dossier.report_data = {
+            "status": "success",
+            "domain_executed": "scholarly",
+            "synthesis": str(synthesis_text),
             "grounding_fidelity_score": 0.95 if included_papers else 0.00,
             "topical_relevance_signal": 1.00 if included_papers else 0.00,
             "pymupdf_fulltext_chunks_pushed": len(evidence_blocks),
@@ -195,8 +216,11 @@ class ResearchPipeline:
             "discovery_report_name": os.path.basename(absolute_xlsx_path),
             "discovery_report_directory": os.path.dirname(absolute_xlsx_path),
             "inclusion_reasons": selected_reasons,
-            "included": included_papers, "excluded": excluded_papers
+            "included": included_papers,
+            "excluded": excluded_papers,
+            "quality_report": quality_report,
         }
+        return dossier
 
     @staticmethod
     def _inclusion_reason(source: Dict[str, Any], selected_reasons: List[str]) -> str:
