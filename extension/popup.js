@@ -121,7 +121,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const FREE_LIMIT = 5;
     const DEFAULT_NEXUS_API_BASE_URL = 'https://brisklightai.com';
-    const analyticsSessionId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    function createAnalyticsSessionId() {
+        if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+        return Array.from(crypto.getRandomValues(new Uint8Array(16)),
+            byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    const analyticsSessionId = createAnalyticsSessionId();
 
     async function getApiBaseUrl() {
         const configured = await chrome.storage.local.get(['nexus_api_base_url']);
