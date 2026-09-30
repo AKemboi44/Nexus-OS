@@ -27,7 +27,15 @@ def execute_mcp_research(topic: str, max_sources: int = 5, domain: str = "schola
             additional_sources=additional_sources or [],
             selected_inclusion_reasons=selected_inclusion_reasons
         )
-        return result_data
+        if isinstance(result_data, dict):
+            return result_data
+        if hasattr(result_data, "to_dict"):
+            return result_data.to_dict()
+        if hasattr(result_data, "model_dump"):
+            return result_data.model_dump()
+        raise TypeError(
+            f"Unsupported research result type: {type(result_data).__name__}"
+        )
     except Exception as e:
         return {"status": "error", "message": f"Pipeline failure: {str(e)}"}
 
@@ -112,7 +120,7 @@ def main():
                 final_response = {
                     "status": "error",
                     "action": "paid_report_required",
-                    "message": "The Full Research Starter Report is available to paid users."
+                    "message": "The Complete Literature Review is available to paid users."
                 }
                 report_type = None
             else:
@@ -129,12 +137,13 @@ def main():
                     query=topic,
                     included_sources=included_sources,
                     custom_prompt=payload.get("custom_prompt"),
-                    domain=domain_target
+                    domain=domain_target,
+                    report_type=report_type or "proposal",
                 )
                 from app.agents.scribe_agent import ScribeResearchAgent
                 scribe = ScribeResearchAgent()
                 if report_type == "full_starter":
-                    saved_path = scribe.generate_full_research_starter_report(
+                    saved_path = scribe.generate_complete_literature_review(
                         topic=topic, included_sources=included_sources,
                         dossier=dossier, domain=domain_target
                     )
@@ -147,7 +156,8 @@ def main():
                     "status": "success",
                     "action": "docx_generation_complete",
                     "document_saved_at": os.path.basename(saved_path),
-                    "report_type": report_type
+                    "report_type": report_type,
+                    "quality_report": dossier.quality_report,
                 }
 
         # --- ROUTE B: CORE DISCOVERY SWEEPS ---

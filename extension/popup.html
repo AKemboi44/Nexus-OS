@@ -376,7 +376,7 @@
       <h1 id="authTitle">Create your research workspace</h1>
       <p class="auth-subtitle">Sign up to run evidence scans, save audit history, and unlock your research reports.</p>
     </div>
-    <p class="auth-subtitle">You can preview the workspace below. Sign up when you are ready to start researching.</p>
+    <p class="auth-subtitle" id="authIntro">Create an account or sign in to access your research workspace.</p>
     <form id="signupForm" novalidate>
       <div class="form-group">
         <label for="signupEmail">Email address</label>
@@ -392,6 +392,7 @@
       </label>
       <button class="btn" id="emailSignupBtn" type="submit">Create account with email</button>
     </form>
+    <button class="flow-back" id="toggleAuthModeBtn" type="button">Already have an account? Sign in</button>
     <div class="auth-divider">or</div>
     <button class="btn google-btn" id="googleSignupBtn" type="button">Continue with Google</button>
     <div class="auth-status" id="authStatus" role="status" aria-live="polite"></div>
@@ -417,7 +418,10 @@
     <p>We may update these terms as the service develops. Material changes will be communicated through the product or the account contact information where appropriate.</p>
     <button class="btn" id="returnToSignupBtn" type="button" style="margin-top:12px;">Return to signup</button>
   </section>
-  <div class="signed-in-badge" id="signedInBadge"></div>
+  <div class="signed-in-badge" id="signedInBadge">
+    <span id="signedInText"></span>
+    <button class="flow-back" id="signOutBtn" type="button">Sign out</button>
+  </div>
 
   <div class="auth-preview-surface" id="authPreviewSurface">
   <div class="tier-banner" id="tierBanner" role="button" tabindex="0" aria-label="Open upgrade details">
@@ -470,7 +474,7 @@
         <div class="plan-options" role="radiogroup" aria-label="Choose an upgrade plan">
           <button class="plan-option selected" id="proPlanOption" type="button" data-plan="pro" aria-pressed="true">
             <strong>Research Pro</strong>
-            <span>Up to 100 sources per scan with full starter reports.</span>
+            <span>Up to 100 sources per scan with complete literature reviews.</span>
             <span class="plan-price">$19 <small>/ month</small></span>
             <span class="plan-action">Selected plan</span>
           </button>
@@ -484,7 +488,7 @@
         <div class="upgrade-benefits">
           <div class="upgrade-benefit"><strong>📚 Deeper discovery</strong><span>Review up to 100 sources in one scan.</span></div>
           <div class="upgrade-benefit"><strong>🧭 Broader control</strong><span>Use all inclusion criteria and legal research access.</span></div>
-          <div class="upgrade-benefit"><strong>📝 Full starter reports</strong><span>Generate the complete researcher starter document.</span></div>
+          <div class="upgrade-benefit"><strong>📝 Complete literature reviews</strong><span>Generate a structured, publication-ready literature review.</span></div>
           <div class="upgrade-benefit"><strong>📤 Extended exports</strong><span>Work with larger audits and evidence reviews.</span></div>
           <div class="upgrade-benefit"><strong>✨ Better quality proposal</strong><span>Turn audited evidence into a clearer, stronger research proposal.</span></div>
           <div class="upgrade-benefit"><strong>📖 Full cited research paper draft</strong><span>Generate a structured draft with integrated citations and references.</span></div>
@@ -504,7 +508,7 @@
           <div class="checkout-summary-row"><span>Price</span><strong id="checkoutPlanPrice">$19 / month</strong></div>
           <div class="checkout-summary-row"><span>Source capacity</span><strong id="checkoutSourceCapacity">Up to 100</strong></div>
           <div class="checkout-summary-row"><span>Domain support</span><strong id="checkoutDomainCapacity">1 domain</strong></div>
-          <div class="checkout-summary-row"><span>Reports</span><strong>Full starter reports</strong></div>
+          <div class="checkout-summary-row"><span>Reports</span><strong>Complete literature reviews</strong></div>
         </div>
         <p class="flow-subtitle">Select a payment method to continue. Payment details are handled in the secure checkout flow.</p>
         <div class="checkout-methods">
@@ -683,7 +687,7 @@
       </button>
       <button class="btn" id="fullDraftDocBtn" style="margin-top:8px; background:linear-gradient(135deg, #7c3aed, #4f46e5);">
         <div class="spinner" id="fullPaperSpinner" style="display:none;"></div>
-        <span id="fullDraftBtnText">Generate Full Research Paper</span>
+        <span id="fullDraftBtnText">Generate Complete Literature Review</span>
       </button>
       <button class="btn" id="cancelReportBtn" type="button" style="display:none; margin-top:8px; background:#64748b;">
         Stop report generation
@@ -708,6 +712,7 @@
   </div>
   </div>
 
+  <script src="auth.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

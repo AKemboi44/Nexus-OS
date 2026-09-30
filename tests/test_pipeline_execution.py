@@ -16,4 +16,5 @@ def test_pipeline_execution():
     assert dossier.query == (
         "mobile money repayment"
     )
-
+    assert len(dossier.included_sources) == len(dossier.report_data["included"])
+    assert "excluded" in dossier.report_data

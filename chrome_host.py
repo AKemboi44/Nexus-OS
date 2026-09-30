@@ -139,7 +139,7 @@ def main():
                         send_message({
                             "status": "error",
                             "action": "paid_report_required",
-                            "message": "The Full Research Starter Report is available to paid users."
+                            "message": "The Complete Literature Review is available to paid users."
                         })
                         continue
                     # Import your exact class signature layout directly from disk workspace storage
@@ -148,7 +148,7 @@ def main():
 
                     # Fire the exact method signature name mapping array properties
                     if report_type == "full_starter":
-                        saved_absolute_path = scribe_worker.generate_full_research_starter_report(
+                        saved_absolute_path = scribe_worker.generate_complete_literature_review(
                             topic=str(topic),
                             included_sources=msg.get("included_sources", [])
                         )

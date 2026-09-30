@@ -10,6 +10,10 @@
     "sidePanel",
     "identity"
   ],
+  "host_permissions": [
+    "https://brisklightai.com/*",
+    "https://mdjgrtkjjcwmhuhpsjsk.supabase.co/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
