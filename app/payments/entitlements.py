@@ -4,11 +4,16 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from app.supabase_store import SupabaseRequestError, SupabaseRestClient
+
 
 class EntitlementStore:
     """Durable server-side subscription state used to authorize paid features."""
 
     def __init__(self, database_path: str = None):
+        self.supabase = SupabaseRestClient.from_env()
+        if self.supabase:
+            return
         self.database_path = database_path or os.getenv(
             "NEXUS_ENTITLEMENTS_DB",
             os.path.join(os.getcwd(), "nexus_entitlements.sqlite3"),
@@ -62,6 +67,24 @@ class EntitlementStore:
     ):
         if not user_key or not provider_id:
             raise ValueError("user_key and provider_id are required.")
+        if self.supabase:
+            self.supabase.request(
+                "POST",
+                "entitlements",
+                params={"on_conflict": "user_id"},
+                json={
+                    "user_id": user_key,
+                    "provider": provider,
+                    "provider_id": provider_id,
+                    "plan": plan,
+                    "status": status,
+                    "starts_at": starts_at,
+                    "ends_at": ends_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
+            return
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -90,6 +113,13 @@ class EntitlementStore:
             )
 
     def get(self, user_key: str) -> Optional[Dict[str, Any]]:
+        if self.supabase:
+            rows = self.supabase.request(
+                "GET",
+                "entitlements",
+                params={"user_id": f"eq.{user_key}", "select": "*", "limit": 1},
+            )
+            return rows[0] if rows else None
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM entitlements WHERE user_key = ?", (user_key,)
@@ -97,6 +127,18 @@ class EntitlementStore:
         return dict(row) if row else None
 
     def get_by_provider(self, provider: str, provider_id: str) -> Optional[Dict[str, Any]]:
+        if self.supabase:
+            rows = self.supabase.request(
+                "GET",
+                "entitlements",
+                params={
+                    "provider": f"eq.{provider}",
+                    "provider_id": f"eq.{provider_id}",
+                    "select": "*",
+                    "limit": 1,
+                },
+            )
+            return rows[0] if rows else None
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM entitlements WHERE provider = ? AND provider_id = ?",
@@ -112,6 +154,14 @@ class EntitlementStore:
         """Return False for a replayed webhook event."""
         if not event_id:
             raise ValueError("event_id is required.")
+        if self.supabase:
+            try:
+                self.supabase.insert("payment_events", {"event_id": event_id})
+                return True
+            except SupabaseRequestError as error:
+                if error.status_code == 409:
+                    return False
+                raise
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO payment_events(event_id, received_at) VALUES (?, ?)",

@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sStep3 = document.getElementById('sStep3'); const sStep4 = document.getElementById('sStep4');
 
     const FREE_LIMIT = 5;
-    const DEFAULT_NEXUS_API_BASE_URL = 'https://brisklightai.com';
+    const DEFAULT_NEXUS_API_BASE_URL = 'https://nexus-os-production-2e14.up.railway.app';
     function createAnalyticsSessionId() {
         if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
         return Array.from(crypto.getRandomValues(new Uint8Array(16)),
@@ -405,23 +405,77 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshEntitlements();
 
     let currentRoutingSessionToken = "idle";
-    const backgroundChannel = chrome.runtime.connect({ name: "nexus_popup_channel" });
-
-    function sendBackgroundRequest(request) {
-        return new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage(request, response => {
-                if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message));
-                    return;
-                }
-                if (!response) {
-                    reject(new Error('The background worker returned no response.'));
-                    return;
-                }
-                handleBackgroundResponse(response);
-                resolve(response);
+    async function sendBackgroundRequest(request) {
+        const isReport = request.action === 'trigger_docx_generation';
+        const endpoint = isReport ? '/v1/reports' : '/v1/scan';
+        const payload = isReport
+            ? {
+                topic: request.topic,
+                included_sources: request.included_sources || [],
+                uploaded_sources: request.uploaded_sources || [],
+                report_type: request.report_type || 'proposal',
+                domain: request.domain || 'scholarly',
+                max_sources: Number(request.max_sources || 5)
+            }
+            : {
+                topic: request.topic,
+                max_sources: Number(request.max_sources || 5),
+                domain: request.domain || 'scholarly',
+                uploaded_sources: request.uploaded_sources || [],
+                selected_inclusion_reasons: request.selected_inclusion_reasons || []
+            };
+        try {
+            const response = await fetch(`${await getApiBaseUrl()}${endpoint}`, {
+                method: 'POST',
+                headers: await getApiHeaders(),
+                body: JSON.stringify(payload)
             });
-        });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data?.detail || data?.message ||
+                    `Research API request failed (${response.status}).`);
+            }
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                throw new Error('The research API returned an invalid response.');
+            }
+            if (isReport) {
+                if (!data.document_base64 || !data.document_name ||
+                    data.action !== 'docx_generation_complete') {
+                    throw new Error('The research API returned an incomplete report.');
+                }
+            } else {
+                if (!Array.isArray(data.included)) {
+                    throw new Error('The research API returned an incomplete scan result.');
+                }
+                data.status = data.status || 'success';
+                data.action = 'research_scan_complete';
+                data.excluded = data.excluded || [];
+            }
+            await handleBackgroundResponse({success: true, data});
+            return {success: true, data};
+        } catch (error) {
+            const data = {status: 'error', message: error.message};
+            await handleBackgroundResponse({success: true, data});
+            return {success: false, data};
+        }
+    }
+
+    function downloadGeneratedReport(data) {
+        if (!data.document_base64 || !data.document_name) return;
+        const binary = atob(data.document_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        const reportUrl = URL.createObjectURL(new Blob(
+            [bytes],
+            {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+        ));
+        const link = document.createElement('a');
+        link.href = reportUrl;
+        link.download = data.document_name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(reportUrl), 60_000);
     }
 
     function markStep(stepElement, state) {
@@ -610,6 +664,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at) {
             if (reportGenerationCancelled) return;
             reportProcessingActive = false;
+            downloadGeneratedReport(data);
             if (sProgressBar) sProgressBar.style.width = '100%';
             [sStep1, sStep2, sStep3, sStep4].forEach(s => markStep(s, 'success'));
 
@@ -620,9 +675,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (sProgContainer) sProgContainer.style.display = 'none';
                 if (draftStatus) {
                     // CRITICAL FIX: Extract the dynamic filename returned directly from your Python script execution run
-                    const savedFile = data.document_saved_at ? data.document_saved_at : "comprehensive_pre_research_proposal_report.docx";
+                    const savedFile = data.document_name || data.document_saved_at ||
+                        "comprehensive_pre_research_proposal_report.docx";
 
-                    draftStatus.innerHTML = `✅ <strong>Project Writeup Compiled Successfully!</strong><br>👉 Word report file generated down to root storage path:<br><span style="color:#1e40af;font-size:11px;font-family:monospace;font-weight:700;word-break:break-all;">C:\\Users\\Abraham.Kemboi\\PycharmProjects\\Nexus-os\\${savedFile}</span>`;
+                    draftStatus.textContent = `Project writeup compiled successfully. Downloaded: ${savedFile}`;
                     draftStatus.style.display = 'block';
                 }
                 if (retryReportBtn) retryReportBtn.style.display = 'none';
@@ -642,8 +698,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 600);
         }
     }
-    backgroundChannel.onMessage.addListener(handleBackgroundResponse);
-
     async function handleResearchSuccess(data, fromCache = false) {
         sendAnalytics('scan_completed', {
             included_count: (data.included || []).length,
@@ -856,7 +910,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 included_sources: activeSessionIncludedPapers,
                 uploaded_sources: await readUploads(),
                 report_type: reportType,
-                is_paid_user: isPaidUser
+                domain: domainSelect?.value || "scholarly",
+                max_sources: Number(maxSourcesSelect?.value || 5)
             };
             sendAnalytics('report_started', {report_type: reportType});
 

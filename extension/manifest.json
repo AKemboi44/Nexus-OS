@@ -1,23 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "Nexus Research AI Sweep Suite",
-  "version": "1.0.1",
-  "description": "Autonomous cross-engine data synthesis assistant.",
+  "name": "Nexus Research AI",
+  "version": "1.0.3",
+  "description": "Research discovery and evidence synthesis in your browser.",
   "permissions": [
-    "activeTab",
     "storage",
-    "nativeMessaging",
     "sidePanel",
     "identity"
   ],
   "host_permissions": [
-    "https://brisklightai.com/*",
+    "https://nexus-os-production-2e14.up.railway.app/*",
     "https://mdjgrtkjjcwmhuhpsjsk.supabase.co/*"
   ],
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
   "action": {
     "default_title": "Open Nexus Research AI Panel"
   },
