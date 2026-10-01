@@ -6,11 +6,15 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from app.supabase_store import SupabaseRestClient
 
 class AnalyticsEventStore:
     """Small durable event store for funnel, error, and product-usage analytics."""
 
     def __init__(self, database_path: str = None):
+        self.supabase = SupabaseRestClient.from_env()
+        if self.supabase:
+            return
         self.database_path = database_path or os.getenv(
             "NEXUS_ANALYTICS_DB",
             os.path.join(os.getcwd(), "nexus_analytics.sqlite3"),
@@ -65,6 +69,18 @@ class AnalyticsEventStore:
         if not isinstance(payload, dict):
             raise ValueError("properties must be an object.")
         timestamp = occurred_at or datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            self.supabase.insert(
+                "analytics_events",
+                {
+                    "event_name": event_name,
+                    "user_id": user_id if user_id != "anonymous" else None,
+                    "session_id": str(session_id or "unknown")[:120],
+                    "occurred_at": timestamp,
+                    "properties": payload,
+                },
+            )
+            return
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -83,6 +99,15 @@ class AnalyticsEventStore:
 
     def summary(self, days: int = 30) -> Dict[str, Any]:
         days = min(max(int(days), 1), 365)
+        if self.supabase:
+            result = self.supabase.request(
+                "POST",
+                "rpc/nexus_analytics_summary",
+                json={"days": days},
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Supabase returned an invalid analytics summary.")
+            return result
         with self._connect() as connection:
             totals = connection.execute(
                 """

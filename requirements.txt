@@ -14,5 +14,6 @@ chromadb>=0.4.24
 
 # --- DOCUMENT PARSING ENGINE ---
 pymupdf>=1.23.26
+python-docx>=1.1.2
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0

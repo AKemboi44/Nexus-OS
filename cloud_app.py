@@ -3,10 +3,16 @@ import os
 import sys
 import secrets
 import requests
+import base64
+import tempfile
+from pathlib import Path
+from uuid import UUID
 from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, constr
 from typing import Optional, List, Dict, Any
+from app.supabase_store import SupabaseRestClient
 from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
 from app.payments.paypal import PayPalClient
@@ -18,18 +24,21 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in allowed_origins.split(",") if origin.strip()],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 pipeline = ResearchPipeline()
 analytics = AnalyticsEventStore()
 paypal = PayPalClient()
 entitlements = EntitlementStore()
+supabase_database = SupabaseRestClient.from_env()
 
 class ScanRequest(BaseModel):
     topic: str
     max_sources: Optional[int] = 5
     domain: Optional[str] = "scholarly"
+    uploaded_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    selected_inclusion_reasons: List[str] = Field(default_factory=list)
 
 class AnalyticsEvent(BaseModel):
     user_id: Optional[str] = "anonymous"
@@ -47,6 +56,23 @@ class PayPalOrderRequest(BaseModel):
 class PayPalCaptureRequest(BaseModel):
     order_id: str
     user_id: str = "anonymous"
+
+class SavedDossierRequest(BaseModel):
+    title: constr(min_length=1, max_length=200)
+    payload: Dict[str, Any]
+
+
+class SavedSourceRequest(BaseModel):
+    source: Dict[str, Any]
+
+
+class ReportRequest(BaseModel):
+    topic: str
+    included_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    uploaded_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    report_type: str = "proposal"
+    domain: str = "scholarly"
+    max_sources: int = 5
 
 
 def require_admin(x_admin_token: Optional[str]):
@@ -97,7 +123,58 @@ def require_supabase_user(authorization: Optional[str]) -> Dict[str, Any]:
 
 
 def supabase_user_id(user: Dict[str, Any]) -> str:
-    return str(user.get("email") or user["id"])
+    return str(user["id"])
+
+
+def require_supabase_database() -> SupabaseRestClient:
+    if not supabase_database:
+        raise HTTPException(status_code=503, detail="Supabase database is not configured.")
+    return supabase_database
+
+
+def parse_uploaded_sources(uploads: List[Dict[str, Any]], domain: str) -> List[Dict[str, Any]]:
+    if len(uploads) > 10:
+        raise HTTPException(status_code=400, detail="A request can include at most 10 uploaded sources.")
+    parsed = []
+    total_size = 0
+    for upload in uploads:
+        name = str(upload.get("name", "uploaded-document"))[:255]
+        encoded = upload.get("data", "")
+        if not isinstance(encoded, str) or len(encoded) > 20_000_000:
+            raise HTTPException(status_code=400, detail=f"Upload {name} is invalid or exceeds the 15 MB limit.")
+        try:
+            raw_data = base64.b64decode(encoded, validate=True)
+            if not raw_data:
+                raise ValueError("Upload is empty.")
+            total_size += len(raw_data)
+            if total_size > 15_000_000:
+                raise HTTPException(status_code=400, detail="Combined uploads cannot exceed 15 MB.")
+            if name.lower().endswith(".pdf") or upload.get("type") == "application/pdf":
+                import pymupdf
+                with pymupdf.open(stream=raw_data, filetype="pdf") as pdf:
+                    text = "\n".join(page.get_text() for page in pdf).strip()
+            else:
+                text = raw_data.decode("utf-8", errors="replace").strip()
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(status_code=400, detail=f"Could not read uploaded source {name}.") from error
+        parsed.append({
+            "uid": f"upload_{name}",
+            "title": name,
+            "authors": ["User Upload"],
+            "venue": "User-provided source",
+            "year": "n.d.",
+            "citation_count": 0,
+            "is_peer_reviewed": False,
+            "abstract": text[:12000] or "No extractable text.",
+            "url": f"file:///{name}",
+            "domain": domain,
+            "provider_source": "user_upload",
+            "include": bool(text.strip()),
+        })
+    return parsed
+
 
 # cloud_app.py - Block 2 of 2
 @app.post("/v1/scan")
@@ -106,22 +183,302 @@ async def execute_cloud_scan(
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
-    require_supabase_user(authorization)
+    user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     if not payload.topic.strip():
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
+    if not 1 <= (payload.max_sources or 0) <= 100:
+        raise HTTPException(status_code=400, detail="max_sources must be between 1 and 100.")
+    if (payload.max_sources or 0) > 20 and not entitlements.is_active(str(user["id"])):
+        raise HTTPException(status_code=403, detail="Research scans above 20 sources require an active subscription.")
     try:
+        uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain or "scholarly")
         result_data = pipeline.run_research(
             query=payload.topic,
-            max_sources=payload.max_sources
+            max_sources=payload.max_sources,
+            additional_sources=uploaded_sources,
+            selected_inclusion_reasons=payload.selected_inclusion_reasons,
         )
         if hasattr(result_data, "to_dict"):
-            return result_data.to_dict()
-        if hasattr(result_data, "model_dump"):
-            return result_data.model_dump()
+            result_data = result_data.to_dict()
+        elif hasattr(result_data, "model_dump"):
+            result_data = result_data.model_dump()
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    result_data = jsonable_encoder(result_data)
+    if not isinstance(result_data, dict):
+        raise HTTPException(status_code=500, detail="Research pipeline returned an invalid result.")
+    try:
+        database = require_supabase_database()
+        record = database.insert(
+            "research_runs",
+            {
+                "user_id": supabase_user_id(user),
+                "query": payload.topic.strip(),
+                "result": result_data,
+            },
+        )
+        result_data["research_run_id"] = record["id"]
         return result_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Research completed but could not be saved.") from error
+
+
+@app.post("/v1/reports")
+async def generate_research_report(
+    payload: ReportRequest,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    topic = payload.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic cannot be blank.")
+    if payload.report_type not in {"proposal", "full_starter"}:
+        raise HTTPException(status_code=400, detail="Unsupported report type.")
+    if payload.report_type == "full_starter" and not entitlements.is_active(str(user["id"])):
+        raise HTTPException(status_code=403, detail="The Complete Literature Review is available to paid users.")
+    try:
+        included_sources = list(payload.included_sources)
+        uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain)
+        included_sources.extend(source for source in uploaded_sources if source.get("include"))
+        if not included_sources:
+            research_result = pipeline.run_research(
+                query=topic,
+                max_sources=min(max(payload.max_sources, 1), 100),
+                additional_sources=uploaded_sources,
+            )
+            if hasattr(research_result, "to_dict"):
+                research_result = research_result.to_dict()
+            elif hasattr(research_result, "model_dump"):
+                research_result = research_result.model_dump()
+            included_sources = research_result.get("included", [])
+        from app.agents.scribe_agent import ScribeResearchAgent
+        from app.reports.dossier_generator import DossierGenerator
+
+        dossier = DossierGenerator().generate_comprehensive_dossier(
+            query=topic,
+            included_sources=included_sources,
+            domain=payload.domain,
+            report_type=payload.report_type,
+        )
+        scribe = ScribeResearchAgent()
+        with tempfile.TemporaryDirectory(prefix="nexus-report-") as report_directory:
+            if payload.report_type == "full_starter":
+                saved_path = scribe.generate_complete_literature_review(
+                    topic=topic,
+                    included_sources=included_sources,
+                    dossier=dossier,
+                    domain=payload.domain,
+                    output_directory=report_directory,
+                )
+            else:
+                saved_path = scribe.generate_apa_dossier_report(
+                    topic=topic,
+                    included_sources=included_sources,
+                    dossier=dossier,
+                    domain=payload.domain,
+                    output_directory=report_directory,
+                )
+            return {
+                "status": "success",
+                "action": "docx_generation_complete",
+                "document_name": Path(saved_path).name,
+                "document_base64": base64.b64encode(Path(saved_path).read_bytes()).decode("ascii"),
+                "report_type": payload.report_type,
+                "quality_report": jsonable_encoder(dossier.quality_report),
+            }
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="Report generation failed.") from error
+
+
+@app.get("/v1/research")
+async def list_research_runs(
+    limit: int = 50,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    database = require_supabase_database()
+    return database.request(
+        "GET",
+        "research_runs",
+        params={
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "id,query,created_at",
+            "order": "created_at.desc",
+            "limit": min(max(limit, 1), 100),
+        },
+    )
+
+
+@app.get("/v1/research/{run_id}")
+async def get_research_run(
+    run_id: UUID,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    rows = require_supabase_database().request(
+        "GET",
+        "research_runs",
+        params={
+            "id": f"eq.{run_id}",
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "*",
+            "limit": 1,
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Research run not found.")
+    return rows[0]
+
+
+@app.get("/v1/dossiers")
+async def list_saved_dossiers(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    return require_supabase_database().request(
+        "GET",
+        "saved_dossiers",
+        params={
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "*",
+            "order": "updated_at.desc",
+            "limit": 100,
+        },
+    )
+
+
+@app.post("/v1/dossiers")
+async def save_dossier(
+    payload: SavedDossierRequest,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    return require_supabase_database().insert(
+        "saved_dossiers",
+        {
+            "user_id": supabase_user_id(user),
+            "title": payload.title.strip(),
+            "payload": payload.payload,
+        },
+    )
+
+
+@app.delete("/v1/dossiers/{dossier_id}")
+async def delete_saved_dossier(
+    dossier_id: UUID,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    deleted = require_supabase_database().request(
+        "DELETE",
+        "saved_dossiers",
+        params={
+            "id": f"eq.{dossier_id}",
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "id",
+        },
+        prefer="return=representation",
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Saved dossier not found.")
+    return {"status": "deleted"}
+
+
+@app.get("/v1/sources")
+async def list_saved_sources(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    return require_supabase_database().request(
+        "GET",
+        "saved_sources",
+        params={
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "*",
+            "order": "created_at.desc",
+            "limit": 200,
+        },
+    )
+
+
+@app.post("/v1/sources")
+async def save_source(
+    payload: SavedSourceRequest,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    source = payload.source
+    source_key = next(
+        (
+            str(source[key]).strip().lower()
+            for key in ("doi", "id", "url", "title")
+            if source.get(key)
+        ),
+        None,
+    )
+    if not source_key:
+        raise HTTPException(status_code=400, detail="Saved sources must include a DOI, ID, URL, or title.")
+    database = require_supabase_database()
+    records = database.request(
+        "POST",
+        "saved_sources",
+        params={"on_conflict": "user_id,source_key"},
+        json={
+            "user_id": supabase_user_id(user),
+            "source_key": source_key[:500],
+            "source": source,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    if not isinstance(records, list) or not records:
+        raise HTTPException(status_code=503, detail="Supabase did not return the saved source.")
+    return records[0]
+
+
+@app.delete("/v1/sources/{source_id}")
+async def delete_saved_source(
+    source_id: UUID,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    deleted = require_supabase_database().request(
+        "DELETE",
+        "saved_sources",
+        params={
+            "id": f"eq.{source_id}",
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "id",
+        },
+        prefer="return=representation",
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Saved source not found.")
+    return {"status": "deleted"}
 
 @app.post("/v1/analytics")
 async def log_telemetry_event(
@@ -287,10 +644,10 @@ async def get_entitlement(
         allowed_ids.add(str(user["email"]))
     if user_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Cannot access another user's entitlements.")
-    record = entitlements.get(user_id)
+    record = entitlements.get(str(user["id"]))
     return {
         "user_id": user_id,
-        "active": entitlements.is_active(user_id),
+        "active": bool(record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"}),
         "entitlement": record,
     }
 
@@ -312,10 +669,10 @@ async def paypal_webhook(request: Request):
     resource = event.get("resource", {})
     event_type = event.get("event_type", "")
     provider_id = resource.get("id") or resource.get("billing_agreement_id")
-    user_id = resource.get("custom_id") or resource.get("subscriber", {}).get("payer_id")
+    user_id = resource.get("custom_id")
     if not user_id and provider_id:
         prior = entitlements.get_by_provider("paypal", provider_id)
-        user_id = prior.get("user_key") if prior else None
+        user_id = (prior.get("user_id") or prior.get("user_key")) if prior else None
     if "ACTIVATED" in event_type or "PAYMENT.COMPLETED" in event_type:
         status = "ACTIVE"
     elif any(value in event_type for value in ("CANCEL", "SUSPEND", "EXPIRED", "REVOKED")):

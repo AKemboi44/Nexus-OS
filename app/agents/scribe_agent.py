@@ -30,28 +30,33 @@ class ScribeResearchAgent:
                 print(f"[Scribe Editorial Notice]: Gemini editor unavailable: {error}")
 
     def generate_apa_dossier_report(self, topic: str, included_sources: list,
-                                    dossier=None, domain: str = "scholarly") -> str:
+                                    dossier=None, domain: str = "scholarly",
+                                    output_directory: str = None) -> str:
         return self._generate_report(
             topic, included_sources, dossier=dossier, domain=domain,
-            report_type="proposal"
+            report_type="proposal", output_directory=output_directory
         )
 
     def generate_full_research_starter_report(self, topic: str, included_sources: list,
-                                               dossier=None, domain: str = "scholarly") -> str:
+                                               dossier=None, domain: str = "scholarly",
+                                               output_directory: str = None) -> str:
         return self.generate_complete_literature_review(
-            topic, included_sources, dossier=dossier, domain=domain
+            topic, included_sources, dossier=dossier, domain=domain,
+            output_directory=output_directory
         )
 
     def generate_complete_literature_review(self, topic: str, included_sources: list,
-                                            dossier=None, domain: str = "scholarly") -> str:
+                                            dossier=None, domain: str = "scholarly",
+                                            output_directory: str = None) -> str:
         return self._generate_report(
             topic, included_sources, dossier=dossier, domain=domain,
-            report_type="full_starter"
+            report_type="full_starter", output_directory=output_directory
         )
 
     def _generate_report(self, topic: str, included_sources: list,
                          dossier=None, domain: str = "scholarly",
-                         report_type: str = "proposal") -> str:
+                         report_type: str = "proposal",
+                         output_directory: str = None) -> str:
         doc = Document()
 
         # Configure standard academic 1-inch margins on all sides
@@ -96,13 +101,14 @@ class ScribeResearchAgent:
         doc.add_page_break()
         return self._write_synthesis_body(
             doc, topic, included_sources, dossier=dossier, domain=domain,
-            report_type=report_type
+            report_type=report_type, output_directory=output_directory
         )
 
     # app/agents/scribe_agent.py - Part B
     def _write_synthesis_body(self, doc: Document, topic: str, included_sources: list,
                               dossier=None, domain: str = "scholarly",
-                              report_type: str = "proposal") -> str:
+                              report_type: str = "proposal",
+                              output_directory: str = None) -> str:
         # 2. Main Title Header (Heading 1 Level)
         h1 = doc.add_paragraph()
         h1.alignment = 1
@@ -178,7 +184,10 @@ class ScribeResearchAgent:
             f"{'comprehensive_pre_research_proposal_report' if report_type == 'proposal' else 'complete_literature_review'}_{self._clean_filename(topic)}_"
             f"{time.strftime('%Y%m%d_%H%M%S')}.docx"
         )
-        target_docx_path = os.path.join(r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os", filename_docx)
+        target_docx_path = os.path.join(
+            output_directory or r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os",
+            filename_docx,
+        )
         doc.save(target_docx_path)
         return target_docx_path
 
