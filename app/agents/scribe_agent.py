@@ -514,7 +514,7 @@ class ScribeResearchAgent:
     ):
         """Build one focused six-sentence paragraph with a centered inline citation."""
         claim = re.sub(r"\s+", " ", str(text).strip())
-        claim = re.sub(r"\([^)]*(?:19|20)\d{2}[^)]*\)", "", claim)
+        claim = self._remove_parenthetical_years(claim)
         claim = claim.replace("###", "").replace("**", "").replace("...", ".")
         claim = claim.replace('"', "").replace("“", "").replace("”", "").strip(" .")
         if not claim:
@@ -581,6 +581,36 @@ class ScribeResearchAgent:
         )
         return self._fit_sentence_paragraph(paragraph, minimum=75, maximum=None)
 
+    @staticmethod
+    def _remove_parenthetical_years(text):
+        parts = []
+        cursor = 0
+        while cursor < len(text):
+            opening = text.find("(", cursor)
+            if opening < 0:
+                parts.append(text[cursor:])
+                break
+            closing = text.find(")", opening + 1)
+            if closing < 0:
+                parts.append(text[cursor:])
+                break
+            parts.append(text[cursor:opening])
+            contents = text[opening + 1:closing]
+            tokens = contents.replace(",", " ").replace(";", " ").split()
+            has_year = any(
+                len(token) == 4
+                and token.isdigit()
+                and token.startswith(("19", "20"))
+                for token in tokens
+            )
+            if not has_year:
+                parts.append(text[opening:closing + 1])
+            cursor = closing + 1
+        cleaned = " ".join("".join(parts).split())
+        for punctuation in ",.;!?":
+            cleaned = cleaned.replace(f" {punctuation}", punctuation)
+        return cleaned
+
     def _editorial_claim(self, claim, topic, section, sources):
         """Paraphrase a source-grounded claim into a researcher-led synthesis."""
         if not self.client or not sources:
@@ -623,10 +653,10 @@ class ScribeResearchAgent:
         """Preserve a generated abstract as connected prose and normalize its keyword line."""
         clean = re.sub(r"\s+", " ", str(text or "").strip())
         clean = re.sub(r"^(?:abstract\s*:?)\s*", "", clean, flags=re.I)
-        keyword_match = re.search(r"\bkeywords?\s*:\s*(.*)$", clean, flags=re.I)
-        if keyword_match:
-            body = clean[:keyword_match.start()].strip(" .")
-            keywords = keyword_match.group(1).strip(" .")
+        keyword_position = self._keyword_label_position(clean)
+        if keyword_position is not None:
+            body = clean[:keyword_position].strip(" .")
+            keywords = clean[keyword_position:].split(":", 1)[1].strip(" .")
         else:
             body = clean.strip(" .")
             keyword_tokens = [
@@ -652,6 +682,25 @@ class ScribeResearchAgent:
         return f"{body.strip(' .')}. Keywords: {keywords}."
 
     @staticmethod
+    def _keyword_label_position(text):
+        lowered = text.lower()
+        cursor = 0
+        while True:
+            position = lowered.find("keyword", cursor)
+            if position < 0:
+                return None
+            cursor = position + len("keyword")
+            if position and (lowered[position - 1].isalnum() or lowered[position - 1] == "_"):
+                continue
+            label_end = cursor
+            if label_end < len(lowered) and lowered[label_end] == "s":
+                label_end += 1
+            while label_end < len(lowered) and lowered[label_end].isspace():
+                label_end += 1
+            if label_end < len(lowered) and lowered[label_end] == ":":
+                return position
+
+    @staticmethod
     def _sentence(text):
         sentence = re.sub(r"\s+", " ", str(text).strip()).replace("...", ".").strip(" .")
         if not sentence:
@@ -675,7 +724,8 @@ class ScribeResearchAgent:
     def _remove_incomplete_fragments(text):
         clean = re.sub(r"\.{2,}", ".", str(text))
         clean = re.sub(r"\s+", " ", clean).strip()
-        clean = re.sub(r"\s+([,.;!?])", r"\1", clean)
+        for punctuation in ",.;!?":
+            clean = clean.replace(f" {punctuation}", punctuation)
         if clean and clean[-1] not in ".!?":
             clean += "."
         return clean
