@@ -160,11 +160,17 @@
     }
 
     async function signOut() {
-        const session = await getSession();
-        if (session) {
-            await authRequest('logout', {accessToken: session.access_token});
+        try {
+            const session = await getSession();
+            if (session) {
+                await authRequest('logout', {
+                    method: 'POST',
+                    accessToken: session.access_token
+                });
+            }
+        } finally {
+            await clearSession();
         }
-        await clearSession();
     }
 
     window.NexusAuth = {

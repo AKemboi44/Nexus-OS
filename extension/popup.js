@@ -283,7 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
             setSignedInState(null);
             setAuthStatus('You have signed out.', 'success');
         } catch (error) {
-            setAuthStatus(`Could not sign out: ${error.message}`);
+            setSignedInState(null);
+            setAuthStatus(`Signed out on this device, but Supabase sign-out failed: ${error.message}`);
         } finally {
             signOutBtn.disabled = false;
         }
