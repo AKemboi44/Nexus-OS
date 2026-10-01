@@ -58,6 +58,12 @@ three dossiers; active paid entitlements and the verified `akiptoo20@gmail.com`
 account have unlimited downloads. Each successful free download consumes one
 allowance, including repeat downloads of the same dossier.
 
+Apply
+[`supabase/migrations/202610010003_backfill_saved_research_dossiers.sql`](supabase/migrations/202610010003_backfill_saved_research_dossiers.sql)
+to backfill saved-dossier index records for existing research runs. New scans
+also create a saved-dossier record linked to the full result in `research_runs`;
+the index stores counts and filename rather than duplicating all source data.
+
 When both Supabase environment variables are configured, Railway writes scans,
 analytics, entitlements, and payment webhook idempotency records to Supabase.
 Without them, local development retains the existing SQLite stores; user-facing
