@@ -114,12 +114,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelReportBtn = document.getElementById('cancelReportBtn');
     const retryReportBtn = document.getElementById('retryReportBtn');
     const draftStatus = document.getElementById('draftStatus');
+    const downloadCachedReportBtn = document.getElementById('downloadCachedReportBtn');
+    const upgradeFromReportBtn = document.getElementById('upgradeFromReportBtn');
     const sProgContainer = document.getElementById('scribeProgressContainer');
     const sProgressBar = document.getElementById('scribeProgressBar');
     const sStep1 = document.getElementById('sStep1'); const sStep2 = document.getElementById('sStep2');
     const sStep3 = document.getElementById('sStep3'); const sStep4 = document.getElementById('sStep4');
 
     const FREE_LIMIT = 5;
+    const REPORT_CACHE_DB = 'nexus-report-cache';
+    const REPORT_CACHE_STORE = 'reports';
+    const REPORT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+    const REPORT_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+    let cachedReportKey = null;
+    let currentReportCacheUserId = null;
     const DEFAULT_NEXUS_API_BASE_URL = 'https://nexus-os-production-2e14.up.railway.app';
     function createAnalyticsSessionId() {
         if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -184,6 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setSignedInState(user) {
         const signedIn = Boolean(user?.id && user?.email);
+        currentReportCacheUserId = signedIn ? user.id : null;
         document.body.classList.toggle('auth-locked', !signedIn);
         if (authGate) authGate.hidden = signedIn;
         if (signupTermsScreen && signedIn) signupTermsScreen.style.display = 'none';
@@ -195,6 +204,9 @@ document.addEventListener('DOMContentLoaded', () => {
             signedInBadge.style.display = signedIn ? 'block' : 'none';
             if (signedInText) signedInText.textContent = signedIn ? `Signed in as ${user.email}` : '';
         }
+        loadCachedReportForUser(user?.id).catch(error =>
+            console.debug('[Nexus Report Cache] cache lookup skipped:', error.message)
+        );
     }
 
     async function loadAuthState() {
@@ -432,8 +444,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
-                throw new Error(data?.detail || data?.message ||
+                const requestError = new Error(data?.detail || data?.message ||
                     `Research API request failed (${response.status}).`);
+                requestError.status = response.status;
+                throw requestError;
             }
             if (!data || typeof data !== 'object' || Array.isArray(data)) {
                 throw new Error('The research API returned an invalid response.');
@@ -454,29 +468,170 @@ document.addEventListener('DOMContentLoaded', () => {
             await handleBackgroundResponse({success: true, data});
             return {success: true, data};
         } catch (error) {
-            const data = {status: 'error', message: error.message};
+            const data = {status: 'error', message: error.message, status_code: error.status};
             await handleBackgroundResponse({success: true, data});
             return {success: false, data};
         }
     }
 
-    function downloadGeneratedReport(data) {
-        if (!data.document_base64 || !data.document_name) return;
-        const binary = atob(data.document_base64);
+    function createReportBlob(encodedReport) {
+        const binary = atob(encodedReport);
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index++) {
             bytes[index] = binary.charCodeAt(index);
         }
-        const reportUrl = URL.createObjectURL(new Blob(
+        return new Blob(
             [bytes],
             {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
-        ));
+        );
+    }
+
+    function downloadReportBlob(reportBlob, filename) {
+        const reportUrl = URL.createObjectURL(reportBlob);
         const link = document.createElement('a');
         link.href = reportUrl;
-        link.download = data.document_name;
+        link.download = filename;
         link.click();
         setTimeout(() => URL.revokeObjectURL(reportUrl), 60_000);
     }
+
+    function openReportCache() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(REPORT_CACHE_DB, 1);
+            request.onupgradeneeded = () => {
+                const database = request.result;
+                if (!database.objectStoreNames.contains(REPORT_CACHE_STORE)) {
+                    database.createObjectStore(REPORT_CACHE_STORE, {keyPath: 'key'});
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error || new Error('Could not open report cache.'));
+        });
+    }
+
+    async function getCachedReports() {
+        const database = await openReportCache();
+        return new Promise((resolve, reject) => {
+            const transaction = database.transaction(REPORT_CACHE_STORE, 'readonly');
+            const request = transaction.objectStore(REPORT_CACHE_STORE).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error || new Error('Could not read cached reports.'));
+            transaction.oncomplete = () => database.close();
+            transaction.onerror = () => {
+                database.close();
+                reject(transaction.error || new Error('Could not read cached reports.'));
+            };
+        });
+    }
+
+    async function cacheGeneratedReport(reportBlob, reportName, reportType, reportTopic, userId) {
+        if (!userId || reportBlob.size > REPORT_CACHE_MAX_BYTES) return false;
+        const database = await openReportCache();
+        const cacheKey = `${userId}:${reportType}`;
+        return new Promise((resolve, reject) => {
+            const transaction = database.transaction(REPORT_CACHE_STORE, 'readwrite');
+            const store = transaction.objectStore(REPORT_CACHE_STORE);
+            const existingRequest = store.getAll();
+            existingRequest.onsuccess = () => {
+                const now = Date.now();
+                existingRequest.result.forEach(report => {
+                    if (report.userId !== userId || report.expiresAt <= now) {
+                        store.delete(report.key);
+                    }
+                });
+                store.put({
+                    key: cacheKey,
+                    userId,
+                    reportType,
+                    reportTopic,
+                    reportName,
+                    reportBlob,
+                    createdAt: now,
+                    expiresAt: now + REPORT_CACHE_TTL_MS
+                });
+            };
+            existingRequest.onerror = () => transaction.abort();
+            transaction.oncomplete = () => {
+                database.close();
+                resolve(true);
+            };
+            transaction.onerror = () => {
+                database.close();
+                reject(transaction.error || new Error('Could not save report to cache.'));
+            };
+            transaction.onabort = () => {
+                database.close();
+                reject(transaction.error || new Error('Report cache write was aborted.'));
+            };
+        });
+    }
+
+    async function loadCachedReportForUser(userId) {
+        cachedReportKey = null;
+        if (downloadCachedReportBtn) downloadCachedReportBtn.style.display = 'none';
+        if (!userId || !window.indexedDB) return;
+        const reports = await getCachedReports();
+        if (currentReportCacheUserId !== userId) return;
+        const now = Date.now();
+        const validReports = reports.filter(report =>
+            report.userId === userId && report.expiresAt > now
+        );
+        const expiredReports = reports.filter(report => report.expiresAt <= now);
+        if (expiredReports.length) {
+            const database = await openReportCache();
+            const transaction = database.transaction(REPORT_CACHE_STORE, 'readwrite');
+            const store = transaction.objectStore(REPORT_CACHE_STORE);
+            expiredReports.forEach(report => store.delete(report.key));
+            transaction.oncomplete = () => database.close();
+            transaction.onerror = () => database.close();
+        }
+        const latest = validReports.sort((left, right) => right.createdAt - left.createdAt)[0];
+        if (!latest) return;
+        cachedReportKey = latest.key;
+        if (downloadCachedReportBtn) {
+            const reportKind = latest.reportType === 'full_starter' ? 'complete literature review' : 'proposal';
+            downloadCachedReportBtn.textContent = `Download cached ${reportKind}: ${latest.reportTopic}`;
+            downloadCachedReportBtn.style.display = 'block';
+        }
+    }
+
+    downloadCachedReportBtn?.addEventListener('click', async () => {
+        try {
+            const session = await window.NexusAuth.getSession();
+            if (!session?.user?.id || !cachedReportKey) {
+                throw new Error('Sign in to the account that generated this report.');
+            }
+            const database = await openReportCache();
+            const report = await new Promise((resolve, reject) => {
+                const transaction = database.transaction(REPORT_CACHE_STORE, 'readonly');
+                const request = transaction.objectStore(REPORT_CACHE_STORE).get(cachedReportKey);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error || new Error('Could not read cached report.'));
+                transaction.oncomplete = () => database.close();
+                transaction.onerror = () => {
+                    database.close();
+                    reject(transaction.error || new Error('Could not read cached report.'));
+                };
+            });
+            if (!report || report.userId !== session.user.id || report.expiresAt <= Date.now()) {
+                throw new Error('This cached report is no longer available. Generate it again to download a fresh copy.');
+            }
+            downloadReportBlob(report.reportBlob, report.reportName);
+            if (draftStatus) {
+                draftStatus.className = 'success';
+                draftStatus.textContent = `Downloaded cached report: ${report.reportName}`;
+                draftStatus.style.display = 'block';
+            }
+        } catch (error) {
+            if (draftStatus) {
+                draftStatus.className = 'error';
+                draftStatus.textContent = error.message;
+                draftStatus.style.display = 'block';
+            }
+        }
+    });
+
+    upgradeFromReportBtn?.addEventListener('click', () => showUpgradeFlow('details'));
 
     function markStep(stepElement, state) {
         if (!stepElement) return; const iconSpan = stepElement.querySelector('.step-icon');
@@ -632,19 +787,32 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = response.data;
         if (data.status === 'error') {
             reportProcessingActive = false;
-            if (statusDiv) {
+            const isReportRequest = lastRequestContext?.action === 'trigger_docx_generation';
+            const message = data.message || 'Processing failed.';
+            if (isReportRequest && draftStatus) {
+                draftStatus.className = 'error';
+                draftStatus.textContent = message;
+                draftStatus.style.display = 'block';
+                if (upgradeFromReportBtn) {
+                    upgradeFromReportBtn.style.display = data.status_code === 403 ? 'block' : 'none';
+                }
+            } else if (statusDiv) {
                 statusDiv.className = 'error';
-                statusDiv.innerText = data.message || 'Processing failed.';
+                statusDiv.innerText = message;
                 statusDiv.style.display = 'block';
             }
             resetScribeButtonState();
             if (activeReportButton) activeReportButton.disabled = false;
             if (cancelScanBtn) cancelScanBtn.style.display = 'none';
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
-            if (retryReportBtn && lastRequestContext?.action === 'trigger_docx_generation') retryReportBtn.style.display = 'block';
+            if (retryReportBtn && isReportRequest) {
+                retryReportBtn.style.display = data.status_code === 403 ? 'none' : 'block';
+            }
+            if (cancelReportBtn) cancelReportBtn.style.display = 'none';
+            if (sProgContainer) sProgContainer.style.display = 'none';
             sendAnalytics(
-                lastRequestContext?.action === 'trigger_docx_generation' ? 'report_failed' : 'scan_failed',
-                {message: data.message || 'host_processing_error'}
+                isReportRequest ? 'report_failed' : 'scan_failed',
+                {message, status_code: data.status_code || null}
             );
             currentRoutingSessionToken = "idle";
             return;
@@ -664,7 +832,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at) {
             if (reportGenerationCancelled) return;
             reportProcessingActive = false;
-            downloadGeneratedReport(data);
+            let reportBlob;
+            let cacheSaved = false;
+            try {
+                reportBlob = createReportBlob(data.document_base64);
+                downloadReportBlob(reportBlob, data.document_name);
+            } catch (error) {
+                resetScribeButtonState();
+                if (activeReportButton) activeReportButton.disabled = false;
+                if (sProgContainer) sProgContainer.style.display = 'none';
+                if (draftStatus) {
+                    draftStatus.className = 'error';
+                    draftStatus.textContent = `The report was generated, but the download could not start: ${error.message}`;
+                    draftStatus.style.display = 'block';
+                }
+                currentRoutingSessionToken = 'idle';
+                return;
+            }
+            try {
+                const session = await window.NexusAuth.getSession();
+                cacheSaved = await cacheGeneratedReport(
+                    reportBlob,
+                    data.document_name,
+                    activeReportType,
+                    lastRequestContext?.topic || '',
+                    session?.user?.id
+                );
+                await loadCachedReportForUser(session?.user?.id);
+            } catch (error) {
+                console.warn('[Nexus Report Cache] report downloaded but could not be cached:', error.message);
+            }
             if (sProgressBar) sProgressBar.style.width = '100%';
             [sStep1, sStep2, sStep3, sStep4].forEach(s => markStep(s, 'success'));
 
@@ -678,9 +875,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const savedFile = data.document_name || data.document_saved_at ||
                         "comprehensive_pre_research_proposal_report.docx";
 
-                    draftStatus.textContent = `Project writeup compiled successfully. Downloaded: ${savedFile}`;
+                    draftStatus.className = 'success';
+                    draftStatus.textContent = `Project writeup compiled successfully. Downloaded: ${savedFile}${cacheSaved ? ' A copy is cached on this device for 30 days.' : ' This report was not cached on this device.'}`;
                     draftStatus.style.display = 'block';
                 }
+                if (upgradeFromReportBtn) upgradeFromReportBtn.style.display = 'none';
                 if (retryReportBtn) retryReportBtn.style.display = 'none';
                 sendAnalytics('report_completed', {
                     report_type: activeReportType,
@@ -885,9 +1084,11 @@ document.addEventListener('DOMContentLoaded', () => {
             await refreshEntitlements();
             if (!isPaidUser && !isLocalTestingInstall) {
                 if (draftStatus) {
-                    draftStatus.innerText = "The Complete Literature Review is available to paid users. Upgrade to unlock it.";
+                    draftStatus.className = 'error';
+                    draftStatus.innerText = "The Complete Literature Review is available to paid users. Upgrade your subscription, then try again.";
                     draftStatus.style.display = 'block';
                 }
+                if (upgradeFromReportBtn) upgradeFromReportBtn.style.display = 'block';
                 return;
             }
             generateDocument(e, "full_starter", fullDraftDocBtn, null);
