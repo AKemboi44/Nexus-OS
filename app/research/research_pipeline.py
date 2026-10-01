@@ -109,7 +109,8 @@ class ResearchPipeline:
 
     def run_research(self, query: str, max_sources: int = 5,
                      additional_sources: List[Dict[str, Any]] = None,
-                     selected_inclusion_reasons: List[str] = None) -> Dict[str, Any]:
+                     selected_inclusion_reasons: List[str] = None,
+                     output_directory: str = None) -> Dict[str, Any]:
         selected_reasons = [
             reason for reason in (selected_inclusion_reasons or [])
             if reason in self.DEFAULT_INCLUSION_REASONS
@@ -138,7 +139,7 @@ class ResearchPipeline:
             synthesis_text = "### Multi-Engine Analysis\nNo relevant data points returned."
 
         filename = f"research_audit_{clean_filename(query)}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
-        working_dir = r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os"
+        working_dir = output_directory or r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os"
         absolute_xlsx_path = os.path.join(working_dir, filename)
 
         try:

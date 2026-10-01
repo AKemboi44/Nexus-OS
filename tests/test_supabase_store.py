@@ -58,3 +58,30 @@ def test_request_raises_status_aware_error_for_postgrest_failure(monkeypatch):
         client.request("POST", "payment_events", json={"event_id": "event-1"})
 
     assert error.value.status_code == 409
+
+
+def test_storage_methods_use_private_service_role_object_api(monkeypatch):
+    client = SupabaseRestClient("https://example.supabase.co", "server-secret")
+    captured = []
+
+    def fake_request(method, url, **kwargs):
+        captured.append((method, url, kwargs))
+        return FakeResponse(text="stored bytes")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    client.upload_storage_object("research-dossiers", "user-id/run-id/report one.xlsx", b"xlsx", "application/xlsx")
+    result = client.download_storage_object("research-dossiers", "user-id/run-id/report one.xlsx")
+    client.delete_storage_object("research-dossiers", "user-id/run-id/report one.xlsx")
+
+    assert [request[0] for request in captured] == ["POST", "GET", "DELETE"]
+    assert captured[0][1] == (
+        "https://example.supabase.co/storage/v1/object/"
+        "research-dossiers/user-id/run-id/report%20one.xlsx"
+    )
+    assert captured[1][1] == captured[0][1]
+    assert captured[2][1] == "https://example.supabase.co/storage/v1/object/research-dossiers"
+    assert captured[0][2]["headers"]["Authorization"] == "Bearer server-secret"
+    assert captured[0][2]["data"] == b"xlsx"
+    assert captured[2][2]["json"] == {"prefixes": ["user-id/run-id/report one.xlsx"]}
+    assert result == b"response"

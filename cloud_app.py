@@ -2,12 +2,14 @@
 import os
 import sys
 import secrets
+import logging
 import requests
 import base64
 import tempfile
 from pathlib import Path
-from uuid import UUID
-from fastapi import FastAPI, HTTPException, Header, Request
+from uuid import UUID, uuid4
+from urllib.parse import quote
+from fastapi import FastAPI, HTTPException, Header, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, constr
@@ -19,6 +21,7 @@ from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
+logger = logging.getLogger(__name__)
 allowed_origins = os.getenv("NEXUS_ALLOWED_ORIGINS", os.getenv("CORS_origins", "*"))
 app.add_middleware(
     CORSMiddleware,
@@ -26,6 +29,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
+    expose_headers=["X-Dossier-Downloads-Remaining"],
 )
 pipeline = ResearchPipeline()
 analytics = AnalyticsEventStore()
@@ -132,6 +136,39 @@ def require_supabase_database() -> SupabaseRestClient:
     return supabase_database
 
 
+DOSSIER_DOWNLOAD_LIMIT = 3
+DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
+DOSSIER_STORAGE_BUCKET = "research-dossiers"
+
+
+def is_dossier_download_unlimited(user: Dict[str, Any]) -> bool:
+    return (
+        str(user.get("email") or "").strip().lower() in DOSSIER_DOWNLOAD_WHITELIST
+        or entitlements.is_active(supabase_user_id(user))
+    )
+
+
+def dossier_download_status(user: Dict[str, Any]) -> Dict[str, Any]:
+    if is_dossier_download_unlimited(user):
+        return {"unlimited": True, "limit": None, "used": 0, "remaining": None}
+    records = require_supabase_database().request(
+        "GET",
+        "dossier_download_usage",
+        params={
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "download_count",
+            "limit": 1,
+        },
+    )
+    used = int(records[0]["download_count"]) if records else 0
+    return {
+        "unlimited": False,
+        "limit": DOSSIER_DOWNLOAD_LIMIT,
+        "used": used,
+        "remaining": max(0, DOSSIER_DOWNLOAD_LIMIT - used),
+    }
+
+
 def parse_uploaded_sources(uploads: List[Dict[str, Any]], domain: str) -> List[Dict[str, Any]]:
     if len(uploads) > 10:
         raise HTTPException(status_code=400, detail="A request can include at most 10 uploaded sources.")
@@ -193,39 +230,146 @@ async def execute_cloud_scan(
         raise HTTPException(status_code=403, detail="Research scans above 20 sources require an active subscription.")
     try:
         uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain or "scholarly")
-        result_data = pipeline.run_research(
-            query=payload.topic,
-            max_sources=payload.max_sources,
-            additional_sources=uploaded_sources,
-            selected_inclusion_reasons=payload.selected_inclusion_reasons,
-        )
-        if hasattr(result_data, "to_dict"):
-            result_data = result_data.to_dict()
-        elif hasattr(result_data, "model_dump"):
-            result_data = result_data.model_dump()
+        dossier_bytes = None
+        with tempfile.TemporaryDirectory(prefix="nexus-dossier-") as dossier_directory:
+            result_data = pipeline.run_research(
+                query=payload.topic,
+                max_sources=payload.max_sources,
+                additional_sources=uploaded_sources,
+                selected_inclusion_reasons=payload.selected_inclusion_reasons,
+                output_directory=dossier_directory,
+            )
+            if hasattr(result_data, "to_dict"):
+                result_data = result_data.to_dict()
+            elif hasattr(result_data, "model_dump"):
+                result_data = result_data.model_dump()
+            result_data = jsonable_encoder(result_data)
+            dossier_name = str(result_data.get("discovery_report_name") or "")
+            dossier_root = Path(dossier_directory).resolve(strict=True)
+            dossier_path = (dossier_root / dossier_name).resolve(strict=True)
+            if (
+                not dossier_name.endswith(".xlsx")
+                or dossier_path.parent != dossier_root
+                or not dossier_path.is_file()
+            ):
+                raise RuntimeError("Research dossier was not created in its temporary output directory.")
+            dossier_bytes = dossier_path.read_bytes()
+            result_data["excel_report_saved_at"] = dossier_name
+            result_data["discovery_report_directory"] = None
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
-    result_data = jsonable_encoder(result_data)
     if not isinstance(result_data, dict):
         raise HTTPException(status_code=500, detail="Research pipeline returned an invalid result.")
     try:
         database = require_supabase_database()
-        record = database.insert(
-            "research_runs",
-            {
-                "user_id": supabase_user_id(user),
-                "query": payload.topic.strip(),
-                "result": result_data,
-            },
+        result_data["dossier_download"] = dossier_download_status(user)
+        run_id = uuid4()
+        storage_path = f"{supabase_user_id(user)}/{run_id}/{result_data['discovery_report_name']}"
+        if not dossier_bytes:
+            raise RuntimeError("Research dossier was empty.")
+        database.upload_storage_object(
+            DOSSIER_STORAGE_BUCKET,
+            storage_path,
+            dossier_bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        result_data["research_run_id"] = record["id"]
-        return result_data
+        result_data["excel_dossier_storage_path"] = storage_path
+        try:
+            record = database.insert(
+                "research_runs",
+                {
+                    "id": str(run_id),
+                    "user_id": supabase_user_id(user),
+                    "query": payload.topic.strip(),
+                    "result": result_data,
+                },
+            )
+        except Exception:
+            try:
+                database.delete_storage_object(DOSSIER_STORAGE_BUCKET, storage_path)
+            except Exception:
+                logger.exception("Could not clean up dossier storage after research-run persistence failed.")
+            raise
+        response_data = dict(result_data)
+        response_data["research_run_id"] = record["id"]
+        response_data.pop("excel_dossier_storage_path", None)
+        return response_data
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=503, detail="Research completed but could not be saved.") from error
+
+
+@app.get("/v1/research/{run_id}/dossier")
+async def download_research_dossier(
+    run_id: UUID,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    database = require_supabase_database()
+    rows = database.request(
+        "GET",
+        "research_runs",
+        params={
+            "id": f"eq.{run_id}",
+            "user_id": f"eq.{supabase_user_id(user)}",
+            "select": "result",
+            "limit": 1,
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Research run not found.")
+
+    result_data = rows[0].get("result") or {}
+    storage_path = result_data.get("excel_dossier_storage_path")
+    filename = str(result_data.get("discovery_report_name") or "")
+    expected_storage_path = f"{supabase_user_id(user)}/{run_id}/{filename}"
+    if (
+        not filename.endswith(".xlsx")
+        or Path(filename).name != filename
+        or storage_path != expected_storage_path
+    ):
+        raise HTTPException(status_code=404, detail="This research run has no downloadable Excel dossier.")
+    try:
+        dossier_bytes = database.download_storage_object(DOSSIER_STORAGE_BUCKET, storage_path)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="The saved Excel dossier is unavailable.") from error
+    if not dossier_bytes:
+        raise HTTPException(status_code=503, detail="The saved Excel dossier is empty.")
+
+    if is_dossier_download_unlimited(user):
+        download_status = {"unlimited": True, "remaining": None}
+    else:
+        try:
+            downloads_remaining = database.request(
+                "POST",
+                "rpc/nexus_claim_dossier_download",
+                json={"p_user_id": supabase_user_id(user)},
+            )
+            downloads_remaining = int(downloads_remaining)
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="Could not verify dossier download allowance.") from error
+        if downloads_remaining < 0:
+            raise HTTPException(
+                status_code=403,
+                detail="You have used all 3 free Excel dossier downloads. Upgrade your plan for more downloads.",
+            )
+        download_status = {"unlimited": False, "remaining": downloads_remaining}
+
+    return Response(
+        content=dossier_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
+            "X-Dossier-Downloads-Remaining": (
+                "unlimited" if download_status["unlimited"] else str(download_status["remaining"])
+            ),
+        },
+    )
 
 
 @app.post("/v1/reports")
@@ -347,7 +491,12 @@ async def get_research_run(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Research run not found.")
-    return rows[0]
+    record = dict(rows[0])
+    result_data = record.get("result")
+    if isinstance(result_data, dict):
+        record["result"] = dict(result_data)
+        record["result"].pop("excel_dossier_storage_path", None)
+    return record
 
 
 @app.get("/v1/dossiers")
