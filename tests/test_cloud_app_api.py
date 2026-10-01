@@ -24,6 +24,9 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
             }
 
     class Database:
+        def __init__(self):
+            self.inserted = []
+
         def request(self, method, resource, **kwargs):
             assert (method, resource) == ("GET", "dossier_download_usage")
             return []
@@ -32,9 +35,8 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
             self.upload = (bucket, path, content, content_type)
 
         def insert(self, table, values):
-            self.table = table
-            self.values = values
-            return {"id": values["id"]}
+            self.inserted.append((table, values))
+            return {"id": values.get("id", "saved-dossier-id")}
 
     pipeline = Pipeline()
     database = Database()
@@ -60,13 +62,24 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     assert pipeline.kwargs["query"] == "AI evidence"
     assert pipeline.kwargs["output_directory"]
     assert pipeline.kwargs["additional_sources"][0]["abstract"] == "Research notes"
-    assert database.table == "research_runs"
-    assert database.values["user_id"] == "user-id"
-    assert result["research_run_id"] == database.values["id"]
-    assert database.values["result"]["excel_dossier_storage_path"] == database.upload[1]
+    assert [table for table, _ in database.inserted] == ["research_runs", "saved_dossiers"]
+    run_values = database.inserted[0][1]
+    saved_dossier_values = database.inserted[1][1]
+    assert run_values["user_id"] == "user-id"
+    assert result["research_run_id"] == run_values["id"]
+    assert result["saved_dossier_id"] == "saved-dossier-id"
+    assert run_values["result"]["excel_dossier_storage_path"] == database.upload[1]
+    assert saved_dossier_values["payload"] == {
+        "research_run_id": result["research_run_id"],
+        "query": "AI evidence",
+        "status": "success",
+        "discovery_report_name": "research_audit_ai_evidence_20261001_120000.xlsx",
+        "included_count": 1,
+        "excluded_count": 0,
+    }
     assert database.upload[0] == cloud_app.DOSSIER_STORAGE_BUCKET
     assert database.upload[2] == b"workbook"
-    assert "excel_dossier_base64" not in database.values["result"]
+    assert "excel_dossier_base64" not in run_values["result"]
     assert result["discovery_report_directory"] is None
     assert "excel_dossier_storage_path" not in result
     assert result["dossier_download"]["remaining"] == 3

@@ -277,7 +277,7 @@ async def execute_cloud_scan(
         )
         result_data["excel_dossier_storage_path"] = storage_path
         try:
-            record = database.insert(
+            run_record = database.insert(
                 "research_runs",
                 {
                     "id": str(run_id),
@@ -286,14 +286,43 @@ async def execute_cloud_scan(
                     "result": result_data,
                 },
             )
+            included_sources = result_data.get("included")
+            excluded_sources = result_data.get("excluded")
+            dossier_record = database.insert(
+                "saved_dossiers",
+                {
+                    "user_id": supabase_user_id(user),
+                    "title": payload.topic.strip()[:200] or "Research dossier",
+                    "payload": {
+                        "research_run_id": run_record["id"],
+                        "query": payload.topic.strip(),
+                        "status": result_data.get("status"),
+                        "discovery_report_name": result_data.get("discovery_report_name"),
+                        "included_count": len(included_sources) if isinstance(included_sources, list) else 0,
+                        "excluded_count": len(excluded_sources) if isinstance(excluded_sources, list) else 0,
+                    },
+                },
+            )
         except Exception:
+            try:
+                database.request(
+                    "DELETE",
+                    "research_runs",
+                    params={
+                        "id": f"eq.{run_id}",
+                        "user_id": f"eq.{supabase_user_id(user)}",
+                    },
+                )
+            except Exception:
+                logger.exception("Could not clean up research-run row after dossier persistence failed.")
             try:
                 database.delete_storage_object(DOSSIER_STORAGE_BUCKET, storage_path)
             except Exception:
-                logger.exception("Could not clean up dossier storage after research-run persistence failed.")
+                logger.exception("Could not clean up dossier storage after research persistence failed.")
             raise
         response_data = dict(result_data)
-        response_data["research_run_id"] = record["id"]
+        response_data["research_run_id"] = run_record["id"]
+        response_data["saved_dossier_id"] = dossier_record["id"]
         response_data.pop("excel_dossier_storage_path", None)
         return response_data
     except HTTPException:
