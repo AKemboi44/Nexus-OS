@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nexus Research AI",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Research discovery and evidence synthesis in your browser.",
   "permissions": [
     "storage",

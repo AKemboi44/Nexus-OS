@@ -49,6 +49,15 @@ research and saved-item access to each authenticated owner. The Railway API uses
 the service-role key and also filters every user-facing query by the authenticated
 Supabase user ID.
 
+Apply
+[`supabase/migrations/202610010002_research_dossier_downloads.sql`](supabase/migrations/202610010002_research_dossier_downloads.sql)
+as well. It creates the private `research-dossiers` Storage bucket and an atomic
+per-user download counter. New Excel dossiers are stored privately in Supabase
+Storage rather than on the API server's filesystem. Free accounts can download
+three dossiers; active paid entitlements and the verified `akiptoo20@gmail.com`
+account have unlimited downloads. Each successful free download consumes one
+allowance, including repeat downloads of the same dossier.
+
 When both Supabase environment variables are configured, Railway writes scans,
 analytics, entitlements, and payment webhook idempotency records to Supabase.
 Without them, local development retains the existing SQLite stores; user-facing
@@ -58,6 +67,7 @@ configuration.
 The authenticated API supports:
 
 - `POST /v1/scan` to run and save a research scan.
+- `GET /v1/research/{run_id}/dossier` to download that run's Excel dossier.
 - `POST /v1/reports` to generate and download a Word report.
 - `GET /v1/research` and `GET /v1/research/{run_id}` for the current user's saved scans.
 - `GET`, `POST`, and `DELETE /v1/dossiers` for saved dossiers.

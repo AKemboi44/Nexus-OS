@@ -925,16 +925,95 @@ document.addEventListener('DOMContentLoaded', () => {
         if (progressContainer) progressContainer.style.display = 'none';
         if (cancelScanBtn) cancelScanBtn.style.display = 'none';
         statusDiv.className = 'success';
-        statusDiv.innerText = `${fromCache ? '♻️ Cached result loaded.' : '🎉 Scan complete.'} Audit database saved at ${data.excel_report_saved_at || 'the project folder'}.`;
+        statusDiv.innerText = `${fromCache ? '♻️ Cached result loaded.' : '🎉 Scan complete.'} Your Excel research dossier is ready to download.`;
         statusDiv.style.display = 'block';
-                if (reportMetadata) {
-                    reportMetadata.innerHTML = `
-                        <strong>Research reports</strong><br>
-                        Excel dossier: <span class="report-path">${data.discovery_report_name || 'Unavailable'}</span><br>
-                        Directory: <span class="report-path">${data.discovery_report_directory || 'Unavailable'}</span>
-                    `;
-                    reportMetadata.style.display = 'block';
+        if (reportMetadata) {
+            const download = data.dossier_download || {};
+            const remaining = download.unlimited ? null : Number(download.remaining);
+            const quotaKnown = download.unlimited || Number.isFinite(remaining);
+            reportMetadata.innerHTML = `
+                <strong>Research reports</strong><br>
+                Excel dossier: <span class="report-path" id="dossierFilename"></span><br>
+                <button class="btn" id="downloadDossierBtn" type="button" style="width:auto; margin-top:8px; padding:8px 12px; font-size:0.78rem;">
+                    Download Excel dossier
+                </button>
+                <span id="dossierDownloadStatus" role="status" style="display:block; margin-top:6px; color:var(--text-muted);"></span>
+                <button class="btn" id="upgradeDossierBtn" type="button" style="display:none; width:auto; margin-top:8px; padding:8px 12px; font-size:0.78rem;">
+                    View plans
+                </button>
+            `;
+            const filenameElement = document.getElementById('dossierFilename');
+            const downloadButton = document.getElementById('downloadDossierBtn');
+            const downloadStatus = document.getElementById('dossierDownloadStatus');
+            const upgradeButton = document.getElementById('upgradeDossierBtn');
+            if (filenameElement) filenameElement.textContent = data.discovery_report_name || 'Unavailable';
+            if (downloadStatus) {
+                downloadStatus.textContent = download.unlimited
+                    ? 'Unlimited dossier downloads available.'
+                    : quotaKnown
+                        ? `${remaining} of 3 free downloads remaining.`
+                        : 'Your free download allowance will be checked before downloading.';
+            }
+            if (downloadButton) downloadButton.hidden = !data.research_run_id;
+            if (Number.isFinite(remaining) && remaining <= 0) {
+                if (downloadButton) downloadButton.disabled = true;
+                if (downloadStatus) downloadStatus.textContent = 'You have used all 3 free dossier downloads.';
+                if (upgradeButton) upgradeButton.style.display = 'inline-flex';
+            }
+            downloadButton?.addEventListener('click', async () => {
+                downloadButton.disabled = true;
+                let exhausted = false;
+                if (downloadStatus) downloadStatus.textContent = 'Preparing your Excel dossier…';
+                try {
+                    const response = await fetch(
+                        `${await getApiBaseUrl()}/v1/research/${encodeURIComponent(data.research_run_id)}/dossier`,
+                        {headers: await getApiHeaders()}
+                    );
+                    if (!response.ok) {
+                        let message = `Download failed (${response.status}).`;
+                        const responseText = await response.text();
+                        try {
+                            const error = JSON.parse(responseText);
+                            message = error.detail || message;
+                        } catch (parseError) {
+                            if (responseText) message = responseText;
+                        }
+                        if (downloadStatus) downloadStatus.textContent = message;
+                        if (response.status === 403) {
+                            exhausted = true;
+                            if (upgradeButton) upgradeButton.style.display = 'inline-flex';
+                        }
+                        return;
+                    }
+                    const blob = await response.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = objectUrl;
+                    link.download = data.discovery_report_name || 'research-dossier.xlsx';
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+                    const remainingHeader = response.headers.get('X-Dossier-Downloads-Remaining');
+                    if (downloadStatus) {
+                        downloadStatus.textContent = remainingHeader === 'unlimited'
+                            ? 'Dossier downloaded. Unlimited downloads available.'
+                            : `Dossier downloaded. ${remainingHeader} of 3 free downloads remaining.`;
+                    }
+                    if (remainingHeader !== 'unlimited' && Number(remainingHeader) <= 0) {
+                        exhausted = true;
+                        downloadButton.disabled = true;
+                        if (upgradeButton) upgradeButton.style.display = 'inline-flex';
+                    }
+                } catch (error) {
+                    if (downloadStatus) downloadStatus.textContent = `Download failed: ${error.message}`;
+                } finally {
+                    if (downloadButton.isConnected && !exhausted) downloadButton.disabled = false;
                 }
+            });
+            upgradeButton?.addEventListener('click', () => showUpgradeFlow('details'));
+            reportMetadata.style.display = 'block';
+        }
 
                 activeSessionIncludedPapers = data.included || [];
                 activeSessionExcludedPapers = data.excluded || [];

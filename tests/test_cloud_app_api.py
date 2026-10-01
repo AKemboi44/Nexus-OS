@@ -1,5 +1,7 @@
 import asyncio
 import base64
+from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -11,13 +13,28 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     class Pipeline:
         def run_research(self, **kwargs):
             self.kwargs = kwargs
-            return {"status": "success", "included": [{"title": "Evidence"}], "excluded": []}
+            Path(kwargs["output_directory"], "research_audit_ai_evidence_20261001_120000.xlsx").write_bytes(
+                b"workbook"
+            )
+            return {
+                "status": "success",
+                "included": [{"title": "Evidence"}],
+                "excluded": [],
+                "discovery_report_name": "research_audit_ai_evidence_20261001_120000.xlsx",
+            }
 
     class Database:
+        def request(self, method, resource, **kwargs):
+            assert (method, resource) == ("GET", "dossier_download_usage")
+            return []
+
+        def upload_storage_object(self, bucket, path, content, content_type):
+            self.upload = (bucket, path, content, content_type)
+
         def insert(self, table, values):
             self.table = table
             self.values = values
-            return {"id": "run-id"}
+            return {"id": values["id"]}
 
     pipeline = Pipeline()
     database = Database()
@@ -25,6 +42,7 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app, "pipeline", pipeline)
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
 
     result = asyncio.run(cloud_app.execute_cloud_scan(
         cloud_app.ScanRequest(
@@ -40,10 +58,155 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     ))
 
     assert pipeline.kwargs["query"] == "AI evidence"
+    assert pipeline.kwargs["output_directory"]
     assert pipeline.kwargs["additional_sources"][0]["abstract"] == "Research notes"
     assert database.table == "research_runs"
     assert database.values["user_id"] == "user-id"
-    assert result["research_run_id"] == "run-id"
+    assert result["research_run_id"] == database.values["id"]
+    assert database.values["result"]["excel_dossier_storage_path"] == database.upload[1]
+    assert database.upload[0] == cloud_app.DOSSIER_STORAGE_BUCKET
+    assert database.upload[2] == b"workbook"
+    assert "excel_dossier_base64" not in database.values["result"]
+    assert result["discovery_report_directory"] is None
+    assert "excel_dossier_storage_path" not in result
+    assert result["dossier_download"]["remaining"] == 3
+
+
+def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch):
+    run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
+    filename = "research_audit_ai_20261001_120000.xlsx"
+    path = f"user-id/{run_id}/{filename}"
+
+    class Database:
+        def request(self, method, resource, **kwargs):
+            self.query = kwargs["params"]
+            return [{
+                "result": {
+                    "discovery_report_name": filename,
+                    "excel_dossier_storage_path": path,
+                }
+            }]
+
+        def download_storage_object(self, bucket, object_path):
+            self.download = (bucket, object_path)
+            return b"excel bytes"
+
+    database = Database()
+    original_request = database.request
+
+    def request(method, resource, **kwargs):
+        if resource == "rpc/nexus_claim_dossier_download":
+            database.claim = kwargs["json"]
+            return 2
+        return original_request(method, resource, **kwargs)
+
+    database.request = request
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+
+    response = asyncio.run(cloud_app.download_research_dossier(run_id, authorization="Bearer token"))
+
+    assert response.body == b"excel bytes"
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert response.headers["x-dossier-downloads-remaining"] == "2"
+    assert database.query["user_id"] == "eq.user-id"
+    assert database.claim == {"p_user_id": "user-id"}
+    assert database.download == (cloud_app.DOSSIER_STORAGE_BUCKET, path)
+
+
+def test_dossier_download_whitelist_bypasses_quota(monkeypatch):
+    run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
+    filename = "research_audit_ai_20261001_120000.xlsx"
+    result = {
+        "discovery_report_name": filename,
+        "excel_dossier_storage_path": f"user-id/{run_id}/{filename}",
+    }
+
+    class Database:
+        def request(self, method, resource, **kwargs):
+            assert resource == "research_runs"
+            return [{"result": result}]
+
+        def download_storage_object(self, bucket, path):
+            return b"excel bytes"
+
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {
+        "id": "user-id", "email": "AkIpToO20@GmAiL.cOm",
+    })
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(
+        cloud_app.entitlements,
+        "is_active",
+        lambda user_id: pytest.fail("Whitelisted users should not need an entitlement lookup."),
+    )
+    database = Database()
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+
+    response = asyncio.run(cloud_app.download_research_dossier(run_id, authorization="Bearer token"))
+
+    assert response.body == b"excel bytes"
+    assert response.headers["x-dossier-downloads-remaining"] == "unlimited"
+
+
+def test_dossier_download_rejects_exhausted_free_allowance(monkeypatch):
+    run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
+    filename = "research_audit_ai_20261001_120000.xlsx"
+    path = f"user-id/{run_id}/{filename}"
+
+    class Database:
+        def request(self, method, resource, **kwargs):
+            if resource == "rpc/nexus_claim_dossier_download":
+                return -1
+            return [{"result": {
+                "discovery_report_name": filename,
+                "excel_dossier_storage_path": path,
+            }}]
+
+        def download_storage_object(self, bucket, object_path):
+            return b"excel bytes"
+
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", Database)
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(cloud_app.download_research_dossier(run_id, authorization="Bearer token"))
+
+    assert error.value.status_code == 403
+    assert "all 3 free" in error.value.detail
+
+
+def test_dossier_download_paid_user_bypasses_quota(monkeypatch):
+    run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
+    filename = "research_audit_ai_20261001_120000.xlsx"
+    path = f"user-id/{run_id}/{filename}"
+
+    class Database:
+        def request(self, method, resource, **kwargs):
+            assert resource == "research_runs"
+            return [{"result": {
+                "discovery_report_name": filename,
+                "excel_dossier_storage_path": path,
+            }}]
+
+        def download_storage_object(self, bucket, object_path):
+            return b"excel bytes"
+
+    database = Database()
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {
+        "id": "user-id", "email": "paid@example.com",
+    })
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: True)
+
+    response = asyncio.run(cloud_app.download_research_dossier(run_id, authorization="Bearer token"))
+
+    assert response.body == b"excel bytes"
+    assert response.headers["x-dossier-downloads-remaining"] == "unlimited"
 
 
 def test_cloud_scan_rejects_more_than_free_source_limit_for_free_users(monkeypatch):
