@@ -32,7 +32,7 @@ The Chrome extension uses Supabase Auth with email/password and Google OAuth. Co
 
 `https://mdjgrtkjjcwmhuhpsjsk.supabase.co/auth/v1/callback`
 
-In Supabase **Authentication → URL Configuration**, keep `https://brisklightai.com` as the site URL and add the exact extension redirect URI returned by `chrome.identity.getRedirectURL()` to the redirect allowlist. For the extension ID `cgnachdfccocngempafblhkjckcpjood`, this is normally:
+In Supabase **Authentication → URL Configuration**, use `https://www.brisklightai.com` as the canonical site URL, allow both `https://www.brisklightai.com/` and `https://brisklightai.com/`, and add the exact extension redirect URI returned by `chrome.identity.getRedirectURL()` to the redirect allowlist. For the extension ID `cgnachdfccocngempafblhkjckcpjood`, this is normally:
 
 `https://cgnachdfccocngempafblhkjckcpjood.chromiumapp.org/`
 
@@ -91,3 +91,17 @@ Messaging host, Python environment, or machine-specific filesystem paths. Scans
 are persisted to the signed-in user's Supabase research history, and generated
 Word reports are returned to the browser for download. The same API is intended
 to serve the website client.
+
+To build the Chrome Web Store ZIP, run `python extension/build_release.py` from
+the repository root. The generated package is saved under `extension/dist/`.
+Listing copy and final submission requirements are in
+[`extension/STORE_LISTING.md`](extension/STORE_LISTING.md).
+
+## Website
+
+The static web workspace is in [`website/`](website/), built to deploy on
+Cloudflare Pages with `website` as the project root and no build command. It
+uses the existing Supabase Auth project and Railway API. Review the deployment
+and launch checklist in [`website/README.md`](website/README.md); in particular,
+verify the privacy/support contact, set the website origins in Railway and
+Supabase Auth, and configure DNS before launch.

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8fc">
+  <meta name="description" content="Discover, audit, and synthesize research evidence with Nexus Research AI.">
+  <title>Nexus Research AI — Evidence, made clearer</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="canonical" href="https://www.brisklightai.com/">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Nexus Research AI home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40"><circle cx="17" cy="17" r="10"></circle><path d="m25 25 8 8M12 18l5-5 5 7 4-5"></path></svg>
+      </span>
+      <span>Nexus<span class="brand-light"> Research AI</span></span>
+    </a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="#how-it-works">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#products">Products</a>
+    </nav>
+    <div class="header-actions">
+      <button class="button button-quiet" id="signInOpen" type="button">Sign in</button>
+      <button class="button button-primary" id="headerStart" type="button">Open workspace <span aria-hidden="true">↗</span></button>
+      <button class="button button-quiet" id="signOut" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="live-dot"></span> RESEARCH WORKSPACE · WEB + CHROME</div>
+        <h1>Evidence first.<br><span>Clarity follows.</span></h1>
+        <p class="hero-lede">Move from a research question to a transparent, reviewable evidence base. Discover sources, see why they were included, and take your work with you.</p>
+        <div class="hero-actions">
+          <button class="button button-primary button-large" id="heroStart" type="button">Start researching <span aria-hidden="true">→</span></button>
+          <a class="button button-outline button-large" href="#how-it-works">See how it works</a>
+        </div>
+        <div class="hero-proof"><span>✓ Source-level audit trail</span><span>✓ Exportable workbooks</span><span>✓ Your account, across devices</span></div>
+      </div>
+      <div class="hero-visual" aria-label="Illustration of a research evidence map">
+        <div class="visual-glow"></div>
+        <div class="research-window">
+          <div class="window-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>Evidence map</span><span class="window-badge">LIVE</span></div>
+          <div class="visual-query"><span class="query-icon">⌕</span><span>How does AI affect clinical decisions?</span><span class="query-arrow">↵</span></div>
+          <div class="visual-stats"><div><strong>28</strong><span>sources reviewed</span></div><div><strong class="green">16</strong><span>included</span></div><div><strong class="amber">12</strong><span>filtered</span></div></div>
+          <div class="evidence-list">
+            <div class="evidence-item"><span class="evidence-check">✓</span><span class="evidence-lines"><b>Clinical decision support systems</b><i>Journal article · 2024 · 142 citations</i></span><span class="evidence-tag">INCLUDED</span></div>
+            <div class="evidence-item"><span class="evidence-check">✓</span><span class="evidence-lines"><b>Human oversight in AI-assisted care</b><i>Systematic review · 2023 · 87 citations</i></span><span class="evidence-tag">INCLUDED</span></div>
+            <div class="evidence-item muted"><span class="evidence-check no">–</span><span class="evidence-lines"><b>Automated diagnosis: a survey</b><i>Limited metadata · low topical match</i></span><span class="evidence-tag gray">FILTERED</span></div>
+          </div>
+          <div class="visual-footer"><span><span class="live-dot"></span> Inclusion reasons recorded</span><span>Export audit ↗</span></div>
+        </div>
+        <div class="floating-note"><span class="note-icon">✦</span><span><b>Transparent by design</b><small>Review every decision.</small></span></div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="Research workflow values">
+      <span>BUILT FOR CAREFUL RESEARCH</span><i></i><span>Discover</span><span class="strip-arrow">→</span><span>Evaluate</span><span class="strip-arrow">→</span><span>Synthesize</span><span class="strip-arrow">→</span><span>Export</span>
+    </section>
+
+    <section class="section how-section" id="how-it-works">
+      <div class="section-heading">
+        <div class="eyebrow">A CLEARER RESEARCH FLOW</div>
+        <h2>From question to evidence,<br><span>without the black box.</span></h2>
+        <p>Keep the source trail visible at every step. Nexus supports your judgement; it doesn't replace it.</p>
+      </div>
+      <div class="steps-grid">
+        <article class="step-card"><span class="step-number">01</span><div class="step-symbol">⌕</div><h3>Ask a focused question</h3><p>Start with a topic and set the scope of your discovery scan.</p></article>
+        <article class="step-card"><span class="step-number">02</span><div class="step-symbol">◎</div><h3>Review the evidence</h3><p>Inspect source details and see the reasons behind inclusion and filtering.</p></article>
+        <article class="step-card"><span class="step-number">03</span><div class="step-symbol">↗</div><h3>Export your work</h3><p>Download an Excel audit dossier or generate a structured Word report.</p></article>
+      </div>
+    </section>
+
+    <section class="feature-section" id="features">
+      <div class="feature-layout">
+        <div class="feature-copy">
+          <div class="eyebrow">A WORKSPACE THAT TRAVELS WITH YOU</div>
+          <h2>Research at your desk.<br><span>Or in your browser.</span></h2>
+          <p>Use the full web workspace for longer research sessions, or bring the Chrome extension into your everyday browsing. Both connect to the same signed-in account and saved research.</p>
+          <button class="text-link" id="featureStart" type="button">Explore the web workspace <span aria-hidden="true">→</span></button>
+        </div>
+        <div class="feature-cards">
+          <article class="feature-card"><div class="feature-icon blue">⌘</div><h3>Evidence discovery</h3><p>Find relevant scholarly work and bring your own inclusion criteria to the review.</p><span class="feature-index">01 / DISCOVER</span></article>
+          <article class="feature-card"><div class="feature-icon purple">▤</div><h3>Auditable exports</h3><p>Keep included evidence, filtered candidates, and research context together.</p><span class="feature-index">02 / DOCUMENT</span></article>
+          <article class="feature-card"><div class="feature-icon teal">◉</div><h3>One account</h3><p>Sign in once to access your research history from the web and extension.</p><span class="feature-index">03 / CONTINUE</span></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section products-section" id="products">
+      <div class="products-intro"><div><div class="eyebrow">THE BRISKLIGHT AI TOOLKIT</div><h2>Purpose-built AI.<br><span>One growing home.</span></h2></div><p>Nexus Research AI is the first product in this workspace. The site is designed to grow as more focused tools become available.</p></div>
+      <div class="product-row"><div class="product-avatar">N</div><div class="product-info"><span class="product-label">RESEARCH · EVIDENCE REVIEW</span><h3>Nexus Research AI</h3><p>Discover sources, audit evidence, and develop structured research reports.</p></div><span class="product-state"><i></i> Available now</span><button class="button button-outline product-open" id="productOpen" type="button">Open workspace →</button></div>
+    </section>
+
+    <section class="cta-section">
+      <div><div class="eyebrow">START WITH THE EVIDENCE</div><h2>Your next research question<br>has a place to start.</h2></div>
+      <button class="button button-light button-large" id="ctaStart" type="button">Open Nexus workspace <span aria-hidden="true">→</span></button>
+      <div class="cta-orb" aria-hidden="true"></div>
+    </section>
+
+    <section class="workspace-section" id="workspace" hidden>
+      <div class="workspace-heading">
+        <div><div class="eyebrow">YOUR RESEARCH DESK</div><h2>Welcome, <span id="accountEmail"></span></h2><p>Your research stays linked to your signed-in account.</p></div>
+        <div class="header-actions"><button class="button button-outline" id="upgradePlan" type="button" hidden>View plans ↗</button><button class="button button-outline" id="refreshHistory" type="button">Refresh history ↻</button></div>
+      </div>
+      <div class="workspace-grid">
+        <section class="workspace-card scan-card">
+          <div class="card-heading"><div><span class="card-kicker">NEW SCAN</span><h3>Start with a question</h3></div><span class="card-symbol">⌕</span></div>
+          <form id="scanForm">
+            <label for="topic">Research topic</label>
+            <textarea id="topic" required maxlength="1200" placeholder="e.g. How do AI clinical decision support tools affect diagnostic accuracy?"></textarea>
+            <div class="form-two">
+              <div><label for="maxSources">Sources</label><select id="maxSources"><option value="5">5 sources</option><option value="10">10 sources</option><option value="20">20 sources</option><option value="50" data-paid-only>50 sources · paid</option><option value="100" data-paid-only>100 sources · paid</option></select></div>
+              <div><label for="domain">Research area</label><select id="domain"><option value="scholarly">Scholarly research</option><option value="legal" data-paid-only>Legal research · paid</option></select></div>
+            </div>
+            <fieldset class="criteria-fieldset"><legend>Evidence criteria <span id="criteriaLimit">(up to 3, optional)</span></legend>
+              <label class="check-label"><input type="checkbox" value="Peer-reviewed or journal-associated source"><span>Peer-reviewed or journal-associated</span></label>
+              <label class="check-label"><input type="checkbox" value="Cited source with usable metadata"><span>Cited with usable metadata</span></label>
+              <label class="check-label"><input type="checkbox" value="Unique source relevant to the requested topic"><span>Unique and topic-relevant</span></label>
+              <label class="check-label"><input type="checkbox" value="Recent publication within the research area"><span>Recent publication</span></label>
+            </fieldset>
+            <button class="button button-primary scan-submit" id="scanSubmit" type="submit">Run evidence scan <span aria-hidden="true">→</span></button>
+            <p class="form-message" id="scanStatus" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+        <section class="workspace-card history-card">
+          <div class="card-heading"><div><span class="card-kicker">YOUR LIBRARY</span><h3>Recent research</h3></div><span class="card-symbol">▤</span></div>
+          <div id="historyList" class="history-list"><p class="empty-state">Sign in and run a scan to start your research library.</p></div>
+          <div class="saved-heading"><h4>Saved sources</h4><span id="sourceCount">0</span></div>
+          <div id="savedSourcesList" class="saved-sources-list"><p class="empty-state">Save a source from a scan to keep it here.</p></div>
+        </section>
+      </div>
+      <section class="workspace-card results-card" id="scanResults" hidden>
+        <div class="results-heading"><div><span class="card-kicker">SCAN COMPLETE</span><h3 id="resultTitle">Evidence review</h3><p id="resultSummary"></p></div><div class="result-actions"><button class="button button-outline" id="downloadExcel" type="button">Download Excel</button><button class="button button-primary" id="proposalReport" type="button">Proposal report</button><button class="button button-outline" id="fullReport" type="button">Complete review · paid</button></div></div>
+        <p class="form-message" id="reportStatus" role="status" aria-live="polite"></p>
+        <div class="results-columns"><div><h4>Included evidence <span id="includedCount"></span></h4><div id="includedSources" class="source-list"></div></div><div><h4>Filtered candidates <span id="excludedCount"></span></h4><div id="excludedSources" class="source-list"></div></div></div>
+      </section>
+      <section class="workspace-card plans-card" id="plansCard" hidden>
+        <div class="card-heading"><div><span class="card-kicker">RESEARCH PRO</span><h3>Choose the scope you need</h3></div><button class="dialog-close" id="closePlans" type="button" aria-label="Close plans">×</button></div>
+        <p class="plans-description">Paid access unlocks larger scans and Complete Literature Reviews. Checkout is handled securely by PayPal.</p>
+        <div class="plan-options">
+          <article><span class="card-kicker">RESEARCH PRO</span><strong>$19 <small>/ month</small></strong><p>Up to 100 sources and paid research reports.</p><button class="button button-primary" data-plan="pro" type="button">Continue with Pro</button></article>
+          <article><span class="card-kicker">RESEARCH ULTIMATE</span><strong>$49 <small>/ month</small></strong><p>Higher research capacity and expanded workspace access.</p><button class="button button-outline" data-plan="ultimate" type="button">Continue with Ultimate</button></article>
+        </div>
+        <label class="billing-consent"><input id="billingConsent" type="checkbox"><span>I agree to monthly billing and the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a>. Cancel future renewals through PayPal.</span></label>
+        <p class="form-message" id="billingStatus" role="status" aria-live="polite"></p>
+      </section>
+    </section>
+  </main>
+
+  <div class="auth-backdrop" id="authDialog" hidden>
+    <section class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <button class="dialog-close" id="authClose" type="button" aria-label="Close sign-in">×</button>
+      <div class="brand-mark auth-mark"><svg viewBox="0 0 40 40"><circle cx="17" cy="17" r="10"></circle><path d="m25 25 8 8M12 18l5-5 5 7 4-5"></path></svg></div>
+      <div class="eyebrow">YOUR RESEARCH, IN ONE PLACE</div>
+      <h2 id="authTitle">Welcome to Nexus</h2>
+      <p class="auth-description">Sign in or create an account to save research and continue across devices.</p>
+      <div class="auth-tabs"><button class="auth-tab active" id="authSignInTab" type="button">Sign in</button><button class="auth-tab" id="authSignUpTab" type="button">Create account</button></div>
+      <form id="authForm">
+        <label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email" required>
+        <label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required>
+        <button class="button button-primary auth-submit" id="authSubmit" type="submit">Sign in</button>
+      </form>
+      <div class="auth-divider"><span>or continue with</span></div>
+      <button class="button button-outline google-button" id="googleSignIn" type="button"><span class="google-g">G</span> Continue with Google</button>
+      <p class="form-message" id="authStatus" role="status" aria-live="polite"></p>
+      <p class="auth-legal">By continuing, you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy.</a></p>
+    </section>
+  </div>
+
+  <footer class="site-footer">
+    <a class="brand footer-brand" href="/"><span class="brand-mark"><svg viewBox="0 0 40 40"><circle cx="17" cy="17" r="10"></circle><path d="m25 25 8 8M12 18l5-5 5 7 4-5"></path></svg></span><span>Nexus<span class="brand-light"> Research AI</span></span></a>
+    <p>Research support built around visible evidence.</p>
+    <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+    <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
+  </footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>
