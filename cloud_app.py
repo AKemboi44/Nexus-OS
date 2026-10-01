@@ -270,7 +270,7 @@ async def generate_research_report(
         scribe = ScribeResearchAgent()
         with tempfile.TemporaryDirectory(prefix="nexus-report-") as report_directory:
             if payload.report_type == "full_starter":
-                saved_path = scribe.generate_complete_literature_review(
+                scribe.generate_complete_literature_review(
                     topic=topic,
                     included_sources=included_sources,
                     dossier=dossier,
@@ -278,18 +278,25 @@ async def generate_research_report(
                     output_directory=report_directory,
                 )
             else:
-                saved_path = scribe.generate_apa_dossier_report(
+                scribe.generate_apa_dossier_report(
                     topic=topic,
                     included_sources=included_sources,
                     dossier=dossier,
                     domain=payload.domain,
                     output_directory=report_directory,
                 )
+            report_root = Path(report_directory).resolve(strict=True)
+            report_files = list(report_root.glob("*.docx"))
+            if len(report_files) != 1:
+                raise RuntimeError("Report generation did not produce exactly one document.")
+            report_path = report_files[0].resolve(strict=True)
+            if report_path.parent != report_root or not report_path.is_file():
+                raise RuntimeError("Generated report escaped its temporary output directory.")
             return {
                 "status": "success",
                 "action": "docx_generation_complete",
-                "document_name": Path(saved_path).name,
-                "document_base64": base64.b64encode(Path(saved_path).read_bytes()).decode("ascii"),
+                "document_name": report_path.name,
+                "document_base64": base64.b64encode(report_path.read_bytes()).decode("ascii"),
                 "report_type": payload.report_type,
                 "quality_report": jsonable_encoder(dossier.quality_report),
             }

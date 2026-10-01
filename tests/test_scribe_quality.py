@@ -102,6 +102,35 @@ def test_scribe_formats_publication_style_abstract_with_keywords():
     assert "This review examines" in abstract
 
 
+def test_scribe_removes_parenthetical_year_citations_without_regex_backtracking():
+    cleaned = ScribeResearchAgent._remove_parenthetical_years(
+        "Evidence supports this claim (Author, 2021), but keeps this note (important context)."
+    )
+
+    assert cleaned == "Evidence supports this claim, but keeps this note (important context)."
+
+
+def test_scribe_parses_keyword_label_with_optional_spacing():
+    agent = ScribeResearchAgent()
+
+    abstract = agent._format_abstract(
+        "A sufficiently detailed review abstract discusses evidence across methods and settings. "
+        "Keywords : research quality, validation",
+        "research quality",
+        [],
+    )
+
+    assert "Keywords: research quality, validation." in abstract
+
+
+def test_scribe_cleans_space_before_punctuation():
+    cleaned = ScribeResearchAgent._remove_incomplete_fragments(
+        "Evidence remains useful , despite limits ."
+    )
+
+    assert cleaned == "Evidence remains useful, despite limits."
+
+
 def test_complete_literature_review_contains_paper_components():
     agent = ScribeResearchAgent()
     sections = []
