@@ -1980,7 +1980,9 @@ class ScribeResearchAgent:
         normalized = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
         return (
             bool(re.match(r"^#?\s*(?:cautious|fallback|generated)?\s*abstract\b", normalized))
+            or bool(re.match(r"^#?\s*caution(?:\s+regarding\s+source\s+material\s+integrity)?\b", normalized))
             or "supplied draft for this research topic could not be preserved" in normalized
+            or "the supplied draft abstract could not be synthesized" in normalized
             or "synthesis generation service failed" in normalized
             or "no usable content was recoverable" in normalized
         )
@@ -1993,6 +1995,8 @@ class ScribeResearchAgent:
             "source records are severely corrupted",
             "unsafe to synthesize a coherent research abstract",
             "corrupted abstracts lack sufficient clarity",
+            "caution regarding source material integrity",
+            "the supplied draft abstract could not be synthesized due to service failure",
             "reliable synthesis would require access to uncorrupted source materials",
             "readers should consult the original publications directly",
         ))
