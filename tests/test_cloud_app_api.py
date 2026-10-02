@@ -189,7 +189,7 @@ def test_analytics_recording_failure_does_not_break_cached_report(monkeypatch):
     assert result["cache_hit"] is True
 
 
-def test_degraded_report_fallback_is_returned_but_never_cached(monkeypatch, tmp_path):
+def test_provider_quota_error_enqueues_pending_report(monkeypatch):
     class Database:
         def __init__(self):
             self.uploads = []
@@ -202,29 +202,16 @@ def test_degraded_report_fallback_is_returned_but_never_cached(monkeypatch, tmp_
 
     class DossierGenerator:
         def generate_comprehensive_dossier(self, **kwargs):
-            return type("Dossier", (), {"quality_report": {"passed": True}})()
-
-    class Scribe:
-        fallback_mode = "deterministic_evidence_fallback"
-        provider = "gemini"
-        model = "gemini-test"
-        telemetry_attempts = 2
-        telemetry_fallback_used = True
-        telemetry_correction_used = False
-
-        def generate_apa_dossier_report(self, **kwargs):
-            output = Path(kwargs["output_directory"]) / "fallback.docx"
-            output.write_bytes(b"limited fallback docx")
-            return str(output)
+            raise cloud_app.ReportProviderLimitError("429 RESOURCE_EXHAUSTED quota exceeded")
 
     database = Database()
     events = []
-    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    cloud_app.global_queue_manager.clear()
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id", "email": "test@example.com"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
     monkeypatch.setattr("app.reports.dossier_generator.DossierGenerator", DossierGenerator)
-    monkeypatch.setattr("app.agents.scribe_agent.ScribeResearchAgent", Scribe)
 
     result = asyncio.run(cloud_app.generate_research_report(
         cloud_app.ReportRequest(
@@ -236,16 +223,21 @@ def test_degraded_report_fallback_is_returned_but_never_cached(monkeypatch, tmp_
         authorization="******",
     ))
 
-    assert result["status"] == "degraded"
-    assert result["action"] == "evidence_grounded_fallback_docx"
-    assert result["generation_mode"] == "deterministic_evidence_fallback"
-    assert result["degraded"] is True
-    assert result["cache_hit"] is False
-    assert result["report_cache_id"] is None
-    assert base64.b64decode(result["document_base64"]) == b"limited fallback docx"
+    assert result["status"] == "queued"
+    assert result["action"] == "report_queued_pending"
+    assert result["estimated_wait"] == "usually under 20 minutes"
+    assert "job_id" in result
+    assert "document_base64" not in result
     assert database.uploads == []
-    assert events[-1]["event_name"] == "report_degraded_completed"
-    assert events[-1]["properties"]["outcome_category"] == "evidence_grounded_fallback"
+    assert events[-1]["event_name"] == "report_queued"
+    assert events[-1]["properties"]["estimated_wait"] == "usually under 20 minutes"
+    
+    # Check queue manager has the job
+    job = cloud_app.global_queue_manager.get_job(result["job_id"])
+    assert job is not None
+    assert job.status == "queued"
+    assert job.topic == "Quota-safe report"
+    assert job.user_id == "user-id"
 
 
 def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch):

@@ -1,19 +1,26 @@
 import os
 import re
-from typing import List, Any
-from google import genai
+from typing import List, Any, Optional
 from dotenv import load_dotenv
 from models.research_dossier import ResearchDossier
 from app.research.publication_quality import PublicationQualityGate
 from app.research.spelling import normalize_topic_spelling
+from app.synthesis.providers import (
+    SynthesisProviderRegistry,
+    SynthesisProviderError,
+    SynthesisUnavailableError,
+    DegradationLogger,
+)
 
 
 class DossierGenerator:
-    def __init__(self):
+    def __init__(self, provider_registry: Optional[SynthesisProviderRegistry] = None):
         load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        self.client = genai.Client(api_key=api_key) if api_key else None
+        self.provider_registry = provider_registry or SynthesisProviderRegistry()
         self.quality_gate = PublicationQualityGate()
+        # Maintain client property for backward compatibility
+        primary = self.provider_registry.get_primary_provider()
+        self.client = getattr(primary, "client", None)
 
     def generate(self, query: str, included_sources: list = None,
                  excluded_sources: list = None, evidence_summary: list = None,
@@ -66,110 +73,37 @@ class DossierGenerator:
             year = self._source_value(src, "year", "N/A")
             source_context += f"\n[Source {i}] Title: {title} ({year})\nAbstract: {abstract}\n"
 
-        if not self.client:
-            dossier.abstract = "Synthesis unavailable because the language model is not configured."
-            dossier.themes = [
-                f"Evidence base: the selected literature addresses {query}."
-            ]
-            dossier.contradictions = [
-                "The available evidence suggests that findings may vary by setting, population, or operational implementation."
-            ]
-            dossier.research_gaps = [
-                "The available source set does not fully resolve the methods, populations, or contexts that remain under-studied."
-            ]
-            dossier.research_areas = [
-                f"Compare how the findings on {query} vary across the populations, settings, and methods represented in the included sources."
-            ]
-            dossier.opportunity_areas = [
-                f"Assess where the findings on {query} could inform a focused follow-up study or practical intervention, then validate that use with transparent measures."
-            ]
-            dossier.problems_to_solve = [
-                f"Determine which interventions most reliably address the documented challenges in {query}."
-            ]
-            dossier.quality_report = self.quality_gate.validate_dossier(
-                dossier, included_sources, report_type=report_type
-            )
-            return dossier
-
         # Base system prompt template instructions
         base_prompt = self.quality_gate.build_generation_contract(query, custom_prompt, domain)
         base_prompt += f"\n\nSource Material for Extraction:\n{source_context}\n\n"
 
-        try:
-            response = self.client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=base_prompt
-            )
-            self._parse_synthesis_payload(response.text, dossier)
-        except Exception as e:
-            print(f"[Dossier Generator Error]: {e}")
-            dossier.evidence_summary = [f"Synthesis pipeline error: {str(e)}"]
-            dossier.abstract = "Synthesis unavailable because the generation service failed."
-            dossier.themes = [
-                f"The selected literature provides evidence relevant to {query}."
-            ]
-            dossier.contradictions = [
-                "The available evidence suggests that conclusions may differ across implementation settings or populations."
-            ]
-            dossier.research_gaps = [
-                "The available evidence does not fully resolve the methods, populations, or contexts that remain under-studied."
-            ]
-            dossier.research_areas = [
-                f"Compare how the findings on {query} vary across the populations, settings, and methods represented in the included sources."
-            ]
-            dossier.opportunity_areas = [
-                f"Assess where the findings on {query} could inform a focused follow-up study or practical intervention, then validate that use with transparent measures."
-            ]
-            dossier.problems_to_solve = [
-                f"Determine which interventions most reliably address the documented challenges in {query}."
-            ]
+        if self.client and hasattr(self.client, "models"):
+            # Compatibility with tests patching generator.client.models
+            try:
+                response = self.client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=base_prompt
+                )
+                text = getattr(response, "text", "") or ""
+                self._parse_synthesis_payload(text, dossier)
+            except Exception as e:
+                DegradationLogger.log_degradation("gemini", "client_error", str(e))
+                raise SynthesisProviderError(f"Dossier synthesis error: {e}", provider="gemini", raw_error=e)
+        else:
+            try:
+                text, provider_name = self.provider_registry.generate_with_failover(base_prompt)
+                self._parse_synthesis_payload(text, dossier)
+            except SynthesisProviderError:
+                raise
+            except Exception as e:
+                DegradationLogger.log_degradation("unknown", "unexpected_error", str(e))
+                raise SynthesisProviderError(f"Dossier synthesis error: {e}", raw_error=e)
 
         quality_report = self.quality_gate.validate_dossier(
             dossier, included_sources, report_type=report_type
         )
         dossier.quality_report = quality_report
-        if not quality_report["passed"]:
-            self._apply_quality_fallback(dossier, query, included_sources, domain)
-            dossier.quality_report = self.quality_gate.validate_dossier(
-                dossier, included_sources, report_type=report_type
-            )
-
         return dossier
-
-    def _apply_quality_fallback(self, dossier: ResearchDossier, query: str, included_sources: list, domain: str):
-        if not getattr(dossier, "abstract", ""):
-            dossier.abstract = (
-                f"This evidence synthesis evaluates {query} using {len(included_sources)} selected {domain} source(s). "
-                "The review prioritizes evidence quality, source coverage, and measured claims over speculative conclusions."
-            )
-        if "keywords:" not in dossier.abstract.lower():
-            dossier.abstract = (
-                f"{dossier.abstract.rstrip('.')} The synthesis identifies recurring findings, "
-                "boundary conditions, and unresolved evidence limitations relevant to future research. "
-                f"Keywords: {query}, evidence synthesis, research methods, empirical findings, research gaps."
-            )
-        if not getattr(dossier, "themes", []):
-            dossier.themes = [f"The selected literature addresses {query} through recurring evidence-backed patterns."]
-        if not getattr(dossier, "contradictions", []):
-            dossier.contradictions = [
-                "The available sources indicate that conclusions may vary by context, population, or implementation setting."
-            ]
-        if not getattr(dossier, "research_gaps", []):
-            dossier.research_gaps = [
-                "The current evidence base does not fully resolve methodological limitations, boundary conditions, or under-studied contexts."
-            ]
-        if not getattr(dossier, "research_areas", []):
-            dossier.research_areas = [
-                f"Test whether findings about {query} hold across the populations and settings represented in the included sources."
-            ]
-        if not getattr(dossier, "opportunity_areas", []):
-            dossier.opportunity_areas = [
-                "Research can be extended through more transparent measurement, broader validation, and clearer practical translation."
-            ]
-        if not getattr(dossier, "problems_to_solve", []):
-            dossier.problems_to_solve = [
-                f"Determine which interventions or design choices most reliably address the documented challenges in {query}."
-            ]
 
     def _parse_synthesis_payload(self, text: str, dossier: ResearchDossier):
         """Helper to break raw model string responses into explicit structural dossier lists."""
