@@ -5,6 +5,8 @@ import secrets
 import logging
 import requests
 import base64
+import hashlib
+import json
 import tempfile
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -14,7 +16,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, constr
 from typing import Optional, List, Dict, Any
-from app.supabase_store import SupabaseRestClient
+from app.supabase_store import SupabaseRequestError, SupabaseRestClient
 from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
 from app.payments.paypal import PayPalClient
@@ -141,6 +143,11 @@ def require_supabase_database() -> SupabaseRestClient:
 DOSSIER_DOWNLOAD_LIMIT = 3
 DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
+REPORT_CACHE_VERSION = "1"
+REPORT_CACHE_PREFIX = "report-cache"
+DOCX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 def is_dossier_download_unlimited(user: Dict[str, Any]) -> bool:
@@ -168,6 +175,49 @@ def dossier_download_status(user: Dict[str, Any]) -> Dict[str, Any]:
         "limit": DOSSIER_DOWNLOAD_LIMIT,
         "used": used,
         "remaining": max(0, DOSSIER_DOWNLOAD_LIMIT - used),
+    }
+
+
+def report_cache_key(
+    user: Dict[str, Any],
+    topic: str,
+    report_type: str,
+    domain: str,
+    included_sources: List[Dict[str, Any]],
+) -> str:
+    cache_input = {
+        "version": REPORT_CACHE_VERSION,
+        "topic": topic,
+        "report_type": report_type,
+        "domain": domain,
+        "included_sources": included_sources,
+    }
+    serialized_input = json.dumps(
+        jsonable_encoder(cache_input),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    digest = hashlib.sha256(serialized_input.encode("utf-8")).hexdigest()
+    return (
+        f"{supabase_user_id(user)}/{REPORT_CACHE_PREFIX}/{digest}/"
+        f"{report_type}-report.docx"
+    )
+
+
+def cached_report_response(
+    document_bytes: bytes,
+    cache_key: str,
+    report_type: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "action": "cached_docx_download",
+        "document_name": Path(cache_key).name,
+        "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+        "report_type": report_type,
+        "cache_hit": True,
     }
 
 
@@ -442,6 +492,41 @@ async def generate_research_report(
                     "Each source needs an author, title, year, and publication venue or valid DOI/URL."
                 ),
             )
+        database = require_supabase_database()
+        cache_key = report_cache_key(
+            user,
+            topic,
+            payload.report_type,
+            payload.domain,
+            included_sources,
+        )
+        try:
+            cached_document = database.download_storage_object(
+                DOSSIER_STORAGE_BUCKET, cache_key
+            )
+        except SupabaseRequestError as error:
+            if error.status_code != 404:
+                logger.warning(
+                    "Could not read cached %s report for user %s: %s",
+                    payload.report_type,
+                    supabase_user_id(user),
+                    error,
+                )
+            cached_document = None
+        except RuntimeError as error:
+            logger.warning(
+                "Could not read cached %s report for user %s: %s",
+                payload.report_type,
+                supabase_user_id(user),
+                error,
+            )
+            cached_document = None
+        if cached_document:
+            return cached_report_response(
+                cached_document,
+                cache_key,
+                payload.report_type,
+            )
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 
@@ -476,13 +561,29 @@ async def generate_research_report(
             report_path = report_files[0].resolve(strict=True)
             if report_path.parent != report_root or not report_path.is_file():
                 raise RuntimeError("Generated report escaped its temporary output directory.")
+            document_bytes = report_path.read_bytes()
+            try:
+                database.upload_storage_object(
+                    DOSSIER_STORAGE_BUCKET,
+                    cache_key,
+                    document_bytes,
+                    DOCX_CONTENT_TYPE,
+                )
+            except (RuntimeError, SupabaseRequestError) as error:
+                logger.warning(
+                    "Could not cache %s report for user %s: %s",
+                    payload.report_type,
+                    supabase_user_id(user),
+                    error,
+                )
             return {
                 "status": "success",
                 "action": "docx_generation_complete",
                 "document_name": report_path.name,
-                "document_base64": base64.b64encode(report_path.read_bytes()).decode("ascii"),
+                "document_base64": base64.b64encode(document_bytes).decode("ascii"),
                 "report_type": payload.report_type,
                 "quality_report": jsonable_encoder(dossier.quality_report),
+                "cache_hit": False,
             }
     except HTTPException:
         raise

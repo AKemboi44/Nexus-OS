@@ -239,11 +239,16 @@ def test_cloud_scan_rejects_more_than_free_source_limit_for_free_users(monkeypat
 def test_word_report_failure_is_logged_with_original_exception(monkeypatch, caplog):
     from app.reports.dossier_generator import DossierGenerator
 
+    class Database:
+        def download_storage_object(self, bucket, path):
+            raise cloud_app.SupabaseRequestError(404, "Object not found")
+
     def fail_generation(self, **kwargs):
         raise RuntimeError("editorial service unavailable")
 
     monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
     monkeypatch.setattr(
         DossierGenerator,
         "generate_comprehensive_dossier",
@@ -268,6 +273,38 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
     assert error.value.detail == "Report generation failed."
     assert "Word report generation failed for report type proposal." in caplog.text
     assert "editorial service unavailable" in caplog.text
+
+
+def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
+    class Database:
+        def download_storage_object(self, bucket, path):
+            self.bucket = bucket
+            self.path = path
+            return b"cached docx"
+
+    database = Database()
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+
+    result = asyncio.run(cloud_app.generate_research_report(
+        cloud_app.ReportRequest(
+            topic="Research quality",
+            included_sources=[{
+                "title": "Evidence",
+                "authors": ["Author"],
+                "year": 2024,
+                "venue": "Journal of Evidence",
+            }],
+        ),
+        authorization="******",
+    ))
+
+    assert result["action"] == "cached_docx_download"
+    assert result["cache_hit"] is True
+    assert base64.b64decode(result["document_base64"]) == b"cached docx"
+    assert database.bucket == cloud_app.DOSSIER_STORAGE_BUCKET
+    assert database.path.startswith("user-id/report-cache/")
 
 
 def test_word_report_rejects_sources_without_citable_metadata(monkeypatch):
