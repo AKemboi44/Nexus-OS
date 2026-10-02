@@ -372,9 +372,19 @@
             : 'Research evidence';
         const included = Array.isArray(data.included) ? data.included : [];
         const excluded = Array.isArray(data.excluded) ? data.excluded : [];
-        byId('reviewedCount').textContent = String(included.length + excluded.length);
-        byId('includedCount').textContent = String(included.length);
-        byId('excludedCount').textContent = String(excluded.length);
+        const reviewedCount = included.length + excluded.length;
+        const resultSummary = byId('resultSummary');
+        if (resultSummary) {
+            resultSummary.textContent = `${included.length} sources included · ${excluded.length} candidates filtered`;
+        }
+        [
+            ['reviewedCount', reviewedCount],
+            ['includedCount', included.length],
+            ['excludedCount', excluded.length]
+        ].forEach(([id, count]) => {
+            const counter = byId(id);
+            if (counter) counter.textContent = String(count);
+        });
         byId('includedSources').replaceChildren(...included.map(source => makeSourceCard(source, true)));
         byId('excludedSources').replaceChildren(...excluded.map(source => makeSourceCard(source, false)));
         byId('fullReport').hidden = !paid;
