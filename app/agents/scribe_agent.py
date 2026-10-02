@@ -44,7 +44,7 @@ class ScribeResearchAgent:
                     max_retries=0,
                 )
                 self.provider = "anthropic"
-                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+                self.model = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
                 try:
                     sdk_version = version("anthropic")
                 except PackageNotFoundError:
@@ -457,7 +457,7 @@ class ScribeResearchAgent:
                     or self._source_value(source, "url", "")
                 ),
                 "abstract": self._shorten(
-                    self._clean_prose(self._source_value(source, "abstract", "")), 220
+                    self._clean_prose(self._source_value(source, "abstract", "")), 160
                 ),
             })
 
@@ -515,21 +515,22 @@ class ScribeResearchAgent:
             '"significance":[{"text":"paragraph","evidence_ids":["S1"]}],'
             '"timeline":[{"phase":"phase name","duration":"proposed duration","activities":"specific proposed activities"}]'
             "}\n\n"
-            "CONTENT REQUIREMENTS: provide at least two developed paragraphs in Introduction and "
-            "Background and in Statement of the Problem; at least two answerable research questions; "
-            "two or three specific research objectives; include hypotheses only when the supplied "
+            "CONTENT REQUIREMENTS: provide one focused paragraph for Introduction and Background, "
+            "Statement of the Problem, Significance and Implications, each literature-review category, "
+            "the conceptual framework, and each methodology category. Provide at least two answerable "
+            "research questions and two specific research objectives; include hypotheses only when the supplied "
             "evidence and proposed design justify them. Discuss a theoretical or conceptual framework "
             "only if a named framework is explicitly present in the source records; otherwise explain "
             "that the supplied records do not establish an appropriate framework and identify this as "
             "a limitation of the current evidence. "
-            "For every literature-review category, provide two analytical paragraphs that explicitly "
-            "address the corresponding dossier notes and cite only relevant supplied sources. The "
+            "Every literature-review category must explicitly address the corresponding dossier notes "
+            "and cite only relevant supplied sources. The "
             "literature review must cover themes, contradictions/boundary conditions, gaps, research "
-            "areas, opportunities, and research problems. Methodology must have at least two paragraphs "
-            "each for design, data collection, analysis, and limitations, with concrete, explicitly "
-            "provisional choices instead of generic advice. Provide two paragraphs on significance and "
-            "four feasible, clearly preliminary timeline phases. Keep each prose paragraph between "
-            "70 and 150 words and at least four complete sentences. Questions and timeline activities "
+            "areas, opportunities, and research problems. Methodology must cover design, data collection, "
+            "analysis, and limitations with concrete, explicitly "
+            "provisional choices instead of generic advice. Provide one paragraph on significance and "
+            "three feasible, clearly preliminary timeline phases. Keep each prose paragraph between "
+            "45 and 100 words and at least three complete sentences. Questions and timeline activities "
             "may be concise.\n\n"
             f"Research topic: {topic}\nResearch domain: {domain}\n"
             f"Dossier synthesis notes: {json.dumps(synthesis, ensure_ascii=False)}\n"
@@ -581,12 +582,12 @@ class ScribeResearchAgent:
             return "Claude rejected the API key. Verify CLAUDE_API_KEY in the Railway API service."
         if status_code == 403:
             return (
-                f"Claude denied access to model {self.model or 'claude-sonnet-5-5'}. "
+                f"Claude denied access to model {self.model or 'claude-haiku-4-5-20251001'}. "
                 "Check model access and workspace permissions for the configured API key."
             )
         if status_code == 404:
             return (
-                f"Claude could not find model {self.model or 'claude-sonnet-5-5'}. "
+                f"Claude could not find model {self.model or 'claude-haiku-4-5-20251001'}. "
                 "Set CLAUDE_MODEL to a model enabled for this API key."
             )
         if status_code == 400:
@@ -625,7 +626,7 @@ class ScribeResearchAgent:
             request = {
                 "model": settings.get(
                     "model",
-                    self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
+                    self.model or os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
                 ),
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": contents}],
@@ -779,12 +780,12 @@ class ScribeResearchAgent:
 
     def _generate_proposal_json(self, prompt):
         default_model = (
-            "claude-sonnet-5-5"
+            "claude-haiku-4-5-20251001"
             if self.provider == "anthropic"
             else "gemini-3.6-flash"
         )
         selected_model = self.model or default_model
-        output_limit = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384")) if self.provider == "anthropic" else 8192
+        output_limit = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "4096")) if self.provider == "anthropic" else 8192
         generation_config = {
             "response_mime_type": "application/json",
             "max_output_tokens": output_limit,
@@ -913,7 +914,7 @@ class ScribeResearchAgent:
         validated = {}
         for section in prose_sections:
             paragraphs = self._validate_proposal_paragraphs(draft.get(section), source_ids)
-            if paragraphs is None or len(paragraphs) < 2:
+            if paragraphs is None or len(paragraphs) < 1:
                 return None
             validated[section] = paragraphs
 
@@ -951,7 +952,7 @@ class ScribeResearchAgent:
             paragraphs = self._validate_proposal_paragraphs(
                 literature_review.get(section), source_ids, require_evidence=True
             )
-            if paragraphs is None or len(paragraphs) < 2:
+            if paragraphs is None or len(paragraphs) < 1:
                 return None
             validated_review[section] = paragraphs
         validated["literature_review"] = validated_review
@@ -959,7 +960,7 @@ class ScribeResearchAgent:
         framework = self._validate_proposal_paragraphs(
             draft.get("conceptual_framework"), source_ids
         )
-        if framework is None or len(framework) < 2:
+        if framework is None or len(framework) < 1:
             return None
         validated["conceptual_framework"] = framework
 
@@ -968,13 +969,13 @@ class ScribeResearchAgent:
             paragraphs = self._validate_proposal_paragraphs(
                 methodology.get(section), source_ids
             )
-            if paragraphs is None or len(paragraphs) < 2:
+            if paragraphs is None or len(paragraphs) < 1:
                 return None
             validated_methods[section] = paragraphs
         validated["methodology"] = validated_methods
 
         timeline = draft.get("timeline")
-        if not isinstance(timeline, list) or len(timeline) < 4:
+        if not isinstance(timeline, list) or len(timeline) < 3:
             return None
         validated_timeline = []
         for item in timeline[:8]:
@@ -1002,7 +1003,7 @@ class ScribeResearchAgent:
         return validated
 
     def _validate_proposal_paragraphs(
-        self, items, source_ids, minimum_words=70, minimum_sentences=4,
+        self, items, source_ids, minimum_words=45, minimum_sentences=3,
         require_evidence=False,
     ):
         if not isinstance(items, list):
@@ -1020,7 +1021,7 @@ class ScribeResearchAgent:
             sentence_count = len(re.findall(r"[.!?](?:\s|$)", text))
             if (
                 len(text.split()) < minimum_words
-                or len(text.split()) > 190
+                or len(text.split()) > 120
                 or sentence_count < minimum_sentences
                 or not text.endswith((".", "!", "?"))
                 or self._has_repeated_word_corruption(text)

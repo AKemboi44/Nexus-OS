@@ -414,6 +414,55 @@ def test_proposal_validation_rejects_prompt_leakage_and_square_brackets():
     ) is None
 
 
+def test_proposal_validation_accepts_concise_complete_draft():
+    agent = ScribeResearchAgent()
+    source_ids = {"S1": {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}}
+    paragraph = {
+        "text": (
+            "The supplied evidence identifies a bounded pattern across the reviewed settings. "
+            "This pattern provides a focused basis for the proposed investigation. "
+            "The source descriptions indicate that context and measurement may shape its interpretation. "
+            "Additional data would be needed to establish whether the relationship generalizes across populations."
+        ),
+        "evidence_ids": ["S1"],
+    }
+    question = {
+        "text": "How does the identified pattern vary across the reviewed settings?",
+        "evidence_ids": ["S1"],
+    }
+    draft = {
+        "introduction": [paragraph],
+        "problem_statement": [paragraph],
+        "research_questions": [question, question],
+        "hypotheses": [],
+        "research_objectives": [question, question],
+        "literature_review": {
+            key: [paragraph]
+            for key in (
+                "key_themes",
+                "contradictions_and_boundary_conditions",
+                "research_gaps",
+                "research_areas",
+                "opportunities",
+                "research_problems",
+            )
+        },
+        "conceptual_framework": [paragraph],
+        "methodology": {
+            key: [paragraph]
+            for key in ("research_design", "data_collection", "analysis", "limitations")
+        },
+        "significance": [paragraph],
+        "timeline": [
+            {"phase": "Planning", "duration": "Month 1", "activities": "Confirm sources, scope, questions, and methods."},
+            {"phase": "Analysis", "duration": "Month 2", "activities": "Analyze evidence, document findings, and verify limits."},
+            {"phase": "Reporting", "duration": "Month 3", "activities": "Draft the report, review it, and finalize revisions."},
+        ],
+    }
+
+    assert agent._validate_proposal_draft(draft, source_ids) is not None
+
+
 def test_proposal_editor_fails_closed_if_model_is_unavailable_or_invalid():
     agent = ScribeResearchAgent()
     agent.client = None
@@ -594,7 +643,7 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     def generate_content(contents, config):
         prompts.append(contents)
         requested_models.append(config["model"])
-        assert config["max_output_tokens"] == 16384
+        assert config["max_output_tokens"] == 4096
         return next(responses)
 
     agent._generate_content = generate_content
@@ -604,7 +653,7 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     assert len(prompts) == 2
     assert "Original schema and proposal prompt" in prompts[1]
     assert "Regenerate" in prompts[1]
-    assert requested_models == ["custom-claude-model", "claude-sonnet-5-5"]
+    assert requested_models == ["custom-claude-model", "claude-haiku-4-5-20251001"]
 
 
 def test_claude_invalid_json_reports_retry_diagnostics_without_blind_token_advice():
