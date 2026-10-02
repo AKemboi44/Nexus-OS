@@ -697,11 +697,16 @@ class ScribeResearchAgent:
                 str(error),
             )
             if is_limit:
+                err_detail = str(error)
+                if "RESOURCE_EXHAUSTED" in err_detail or "429" in err_detail:
+                    err_detail = "429 RESOURCE_EXHAUSTED / Quota limit reached"
+                elif len(err_detail) > 120:
+                    err_detail = err_detail[:120] + "..."
                 print(
                     "[Scribe Proposal Warning]: Provider quota or rate limit "
                     f"(provider={self.telemetry_last_provider or self.provider or 'unknown'}, "
                     f"model={self.telemetry_last_model or self.model or 'unknown'}, "
-                    f"fallback_used={self.telemetry_fallback_used}, details={error})."
+                    f"fallback_used={self.telemetry_fallback_used}, details={err_detail})."
                 )
                 raise ReportProviderLimitError(
                     "The configured report model is temporarily at its request limit. Retry later or check the provider's quota and billing settings."
@@ -796,9 +801,12 @@ class ScribeResearchAgent:
                 response = self.client.messages.create(**request)
             except Exception as error:
                 if "output_config" in request and self._http_status(error) == 400:
+                    err_msg = str(error)
+                    if len(err_msg) > 120:
+                        err_msg = err_msg[:120] + "..."
                     print(
                         "[Scribe Editorial Notice]: Claude rejected the structured-output "
-                        f"request for model {request['model']} (details={error}). Retrying "
+                        f"request for model {request['model']} (details={err_msg}). Retrying "
                         "once with the JSON-only prompt; response validation remains enabled."
                     )
                     request.pop("output_config")
@@ -845,9 +853,12 @@ class ScribeResearchAgent:
         status_code = self._http_status(claude_error)
         if isinstance(status_code, int) and status_code < 400:
             raise claude_error
+        err_msg = str(claude_error)
+        if len(err_msg) > 120:
+            err_msg = err_msg[:120] + "..."
         print(
             "[Scribe Editorial Notice]: Claude request failed "
-            f"(status={status_code}, details={claude_error}). "
+            f"(status={status_code}, error={err_msg}). "
             f"Falling back to Gemini model {self.gemini_model}."
         )
         self.telemetry_fallback_used = True
@@ -1024,52 +1035,28 @@ class ScribeResearchAgent:
 
     @staticmethod
     def _claude_output_token_limit():
-        configured_limit = os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "6144")
+        configured_limit = os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "8192")
         try:
             output_limit = int(configured_limit)
         except ValueError:
-            print(
-                "[Scribe Editorial Notice]: Invalid CLAUDE_MAX_OUTPUT_TOKENS; "
-                "using the 6144-token report output limit."
-            )
-            return 6144
+            return 8192
         if output_limit < 1024:
-            print(
-                "[Scribe Editorial Notice]: CLAUDE_MAX_OUTPUT_TOKENS must be at least 1024; "
-                "using the 6144-token report output limit."
-            )
-            return 6144
+            return 8192
         if output_limit > 8192:
-            print(
-                "[Scribe Editorial Notice]: Capping CLAUDE_MAX_OUTPUT_TOKENS at 8192 "
-                "to control report cost."
-            )
             return 8192
         return output_limit
 
     @staticmethod
     def _proposal_output_token_limit():
-        configured_limit = os.getenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", "3000")
+        configured_limit = os.getenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", "4096")
         try:
             output_limit = int(configured_limit)
         except ValueError:
-            print(
-                "[Scribe Editorial Notice]: Invalid CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS; "
-                "using the 3000-token concise proposal output limit."
-            )
-            return 3000
-        if output_limit < 2048:
-            print(
-                "[Scribe Editorial Notice]: CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS must be at least 2048; "
-                "using the 3000-token concise proposal output limit."
-            )
-            return 3000
-        if output_limit > 4096:
-            print(
-                "[Scribe Editorial Notice]: Capping CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS at 4096 "
-                "to control concise proposal cost."
-            )
             return 4096
+        if output_limit < 2048:
+            return 4096
+        if output_limit > 8192:
+            return 8192
         return output_limit
 
     def _proposal_source_priority(self, source, index):

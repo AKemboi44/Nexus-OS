@@ -836,21 +836,34 @@ async def generate_research_report(
                 DOSSIER_STORAGE_BUCKET, cache_key
             )
         except SupabaseRequestError as error:
-            if error.status_code != 404:
+            if error.status_code != 404 and "not found" not in str(error).lower():
                 logger.warning(
                     "Could not read cached %s report for user %s: %s",
                     payload.report_type,
                     supabase_user_id(user),
                     error,
                 )
+            else:
+                logger.debug(
+                    "Cache miss for %s report for user %s",
+                    payload.report_type,
+                    supabase_user_id(user),
+                )
             cached_document = None
         except RuntimeError as error:
-            logger.warning(
-                "Could not read cached %s report for user %s: %s",
-                payload.report_type,
-                supabase_user_id(user),
-                error,
-            )
+            if "not found" in str(error).lower() or "404" in str(error):
+                logger.debug(
+                    "Cache miss for %s report for user %s",
+                    payload.report_type,
+                    supabase_user_id(user),
+                )
+            else:
+                logger.warning(
+                    "Could not read cached %s report for user %s: %s",
+                    payload.report_type,
+                    supabase_user_id(user),
+                    error,
+                )
             cached_document = None
         if cached_document:
             response = cached_report_response(
