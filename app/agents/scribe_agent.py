@@ -534,7 +534,7 @@ class ScribeResearchAgent:
             "analysis, and limitations with concrete, explicitly "
             "provisional choices instead of generic advice. Provide one paragraph on significance and "
             "three feasible, clearly preliminary timeline phases. Keep each prose paragraph between "
-            "45 and 100 words and at least three complete sentences. Questions and timeline activities "
+            "55 and 75 words and exactly three complete sentences. Questions and timeline activities "
             "may be concise.\n\n"
             f"Research topic: {topic}\nResearch domain: {domain}\n"
             f"Dossier synthesis notes: {json.dumps(synthesis, ensure_ascii=False)}\n"
@@ -622,9 +622,9 @@ class ScribeResearchAgent:
         if self.provider == "anthropic":
             settings = config or {}
             max_tokens = int(
-                os.getenv(
-                    "CLAUDE_MAX_OUTPUT_TOKENS",
-                    str(settings.get("max_output_tokens", 16384)),
+                settings.get(
+                    "max_output_tokens",
+                    self._claude_output_token_limit(),
                 )
             )
             request = {
@@ -666,10 +666,17 @@ class ScribeResearchAgent:
                 block.text for block in response.content
                 if getattr(block, "type", None) == "text"
             )
-            return SimpleNamespace(
+            result = SimpleNamespace(
                 text=text,
                 stop_reason=getattr(response, "stop_reason", None),
             )
+            if result.stop_reason == "max_tokens" and self.gemini_client:
+                print(
+                    "[Scribe Editorial Notice]: Claude reached its output limit. "
+                    f"Completing the report with Gemini model {self.gemini_model}."
+                )
+                return self._generate_with_gemini(contents, config)
+            return result
         if self.provider == "gemini":
             return self._generate_with_gemini(contents, config)
         return self.client.models.generate_content(
@@ -819,7 +826,7 @@ class ScribeResearchAgent:
             else "gemini-3.6-flash"
         )
         selected_model = self.model or default_model
-        output_limit = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "4096")) if self.provider == "anthropic" else 8192
+        output_limit = self._claude_output_token_limit() if self.provider == "anthropic" else 8192
         generation_config = {
             "response_mime_type": "application/json",
             "max_output_tokens": output_limit,
@@ -860,6 +867,31 @@ class ScribeResearchAgent:
             f"({last_response_details}). Verify the Railway deployment and Claude model "
             "configuration. Increase CLAUDE_MAX_OUTPUT_TOKENS only when stop_reason is max_tokens."
         ) from last_error
+
+    @staticmethod
+    def _claude_output_token_limit():
+        configured_limit = os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "6144")
+        try:
+            output_limit = int(configured_limit)
+        except ValueError:
+            print(
+                "[Scribe Editorial Notice]: Invalid CLAUDE_MAX_OUTPUT_TOKENS; "
+                "using the 6144-token report output limit."
+            )
+            return 6144
+        if output_limit < 1024:
+            print(
+                "[Scribe Editorial Notice]: CLAUDE_MAX_OUTPUT_TOKENS must be at least 1024; "
+                "using the 6144-token report output limit."
+            )
+            return 6144
+        if output_limit > 8192:
+            print(
+                "[Scribe Editorial Notice]: Capping CLAUDE_MAX_OUTPUT_TOKENS at 8192 "
+                "to control report cost."
+            )
+            return 8192
+        return output_limit
 
     @staticmethod
     def _parse_proposal_json(response_text):
