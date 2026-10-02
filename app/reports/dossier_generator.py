@@ -77,27 +77,14 @@ class DossierGenerator:
         base_prompt = self.quality_gate.build_generation_contract(query, custom_prompt, domain)
         base_prompt += f"\n\nSource Material for Extraction:\n{source_context}\n\n"
 
-        if self.client and hasattr(self.client, "models") and hasattr(self.client.models, "generate_content"):
-            # Compatibility with tests patching generator.client.models
-            try:
-                response = self.client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=base_prompt
-                )
-                text = getattr(response, "text", "") or ""
-                self._parse_synthesis_payload(text, dossier)
-            except Exception as e:
-                DegradationLogger.log_degradation("gemini", "client_error", str(e))
-                raise SynthesisProviderError(f"Dossier synthesis error: {e}", provider="gemini", raw_error=e)
-        else:
-            try:
-                text, provider_name = self.provider_registry.generate_with_failover(base_prompt)
-                self._parse_synthesis_payload(text, dossier)
-            except SynthesisProviderError:
-                raise
-            except Exception as e:
-                DegradationLogger.log_degradation("unknown", "unexpected_error", str(e))
-                raise SynthesisProviderError(f"Dossier synthesis error: {e}", raw_error=e)
+        try:
+            text, provider_name = self.provider_registry.generate_with_failover(base_prompt)
+            self._parse_synthesis_payload(text, dossier)
+        except SynthesisProviderError:
+            raise
+        except Exception as e:
+            DegradationLogger.log_degradation("unknown", "unexpected_error", str(e))
+            raise SynthesisProviderError(f"Dossier synthesis error: {e}", raw_error=e)
 
         quality_report = self.quality_gate.validate_dossier(
             dossier, included_sources, report_type=report_type
