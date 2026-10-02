@@ -1,3 +1,4 @@
+import os
 import sys
 import requests
 import certifi
@@ -7,7 +8,7 @@ from .base_provider import DiscoveryProvider
 
 class SemanticScholarProvider(DiscoveryProvider):
     def __init__(self, api_key: str = None):
-        self.api_key = api_key
+        self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 
     def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         old_stdout = sys.stdout
