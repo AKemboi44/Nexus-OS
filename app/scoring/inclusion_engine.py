@@ -8,8 +8,6 @@ into InclusionDecision.
 from models.source_score import SourceScore
 from models.inclusion_decision import InclusionDecision
 
-from Nexus_os.models.inclusion_decision import InclusionDecision
-
 
 class InclusionEngine:
     def __init__(self, threshold: float = 6.0):
@@ -43,3 +41,6 @@ class InclusionEngine:
             confidence=round(confidence, 2),
             rationale=rationale
         )
+
+    def decide(self, source_score) -> InclusionDecision:
+        return self.process(source_score)

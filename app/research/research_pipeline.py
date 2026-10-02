@@ -16,6 +16,7 @@ from app.synthesis.insight_engine import InsightEngine
 from app.research.publication_quality import PublicationQualityGate
 from app.reports.dossier_generator import DossierGenerator
 from app.reports.excel_formatting import format_research_workbook
+from app.synthesis.citation_engine import CitationEngine
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -23,13 +24,15 @@ from .providers.crossref_provider import CrossrefProvider
 
 # app/research/research_pipeline.py - Block 2 of 3
 class ResearchPipeline:
-    DEFAULT_INCLUSION_REASONS = [
-        "Peer-reviewed or journal-associated source",
-        "Cited source with usable metadata",
-        "Unique source relevant to the requested topic",
-        "Recent publication within the research area",
-        "Accessible abstract or full-text evidence",
+    DEFAULT_AUDIT_CRITERIA = [
+        "Topic relevance",
+        "Publication recency",
+        "Usable research metadata or evidence",
     ]
+    _STOP_WORDS = {
+        "about", "and", "are", "for", "from", "how", "into", "of", "on", "or",
+        "the", "to", "with", "using", "use", "in", "a", "an",
+    }
 
     def __init__(self):
         self.insight_engine = InsightEngine()
@@ -46,14 +49,15 @@ class ResearchPipeline:
         return processed
 
     def _discover_sources_real(self, query: str, max_sources: int = 5,
-                               selected_reasons: List[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+                               selected_reasons: List[str] = None) -> Dict[str, Any]:
         expanded_query = self._pre_process_query(query)
         combined_raw_sources = []
         engines = [(self.openalex, "openalex"), (self.semantic_scholar, "semantic_scholar"), (self.crossref, "crossref")]
+        provider_limit = min(max(max_sources * 3, max_sources + 10), 100)
 
         for provider, provider_name in engines:
             try:
-                raw_data = provider.fetch_raw_sources(expanded_query, max_sources)
+                raw_data = provider.fetch_raw_sources(expanded_query, provider_limit)
                 if isinstance(raw_data, list):
                     for item in raw_data:
                         item["__provider_origin__"] = provider_name
@@ -61,12 +65,10 @@ class ResearchPipeline:
             except Exception as e:
                 print(f"[Warning] Engine error: {str(e)}", file=sys.stderr)
 
-        # Schema Evaluation & Deduplication Matrix
-        seen_titles = set()
-        included_records = []
+        # Normalize the full pool before any selection so provider response order cannot
+        # determine the evidence set.
+        normalized_records = []
         excluded_records = []
-
-        # app/research/research_pipeline.py - Continued Discovery Logic
         for src in combined_raw_sources:
             try:
                 origin = src.get("__provider_origin__")
@@ -77,59 +79,146 @@ class ResearchPipeline:
                 else:
                     norm = self.crossref.normalize_schema(src)
 
-                title_value = norm.get("title", "")
-                if isinstance(title_value, list):
-                    title_value = " ".join(str(value) for value in title_value)
-                    norm["title"] = title_value
-                title_key = str(title_value).strip().lower()
-                if title_key in seen_titles:
-                    norm["exclusion_reason"] = f"Duplicate footprint match ({origin.upper()})."
-                    norm["provider_source"] = origin
-                    excluded_records.append(norm)
-                    continue
-
-                seen_titles.add(title_key)
-                if len(included_records) < max_sources:
-                    norm["provider_source"] = origin
-                    norm["inclusion_reason"] = self._inclusion_reason(
-                        norm, selected_reasons or self.DEFAULT_INCLUSION_REASONS[:3]
-                    )
-                    included_records.append(norm)
-                else:
-                    norm["exclusion_reason"] = (
-                        f"Query quota exceeded after selecting the top {max_sources} "
-                        "unique candidates."
-                    )
-                    norm["provider_source"] = origin
-                    excluded_records.append(norm)
+                norm["provider_source"] = origin
+                normalized_records.append(norm)
             except Exception as e:
-                src["exclusion_reason"] = f"Mapping violation exception: {str(e)}"
+                raw_title = src.get("title") if isinstance(src, dict) else ""
+                if isinstance(raw_title, list):
+                    raw_title = next((str(item) for item in raw_title if str(item).strip()), "")
+                src["exclusion_reason"] = (
+                    f"Metadata normalization failed for '{str(raw_title or 'untitled provider record')[:180]}': {str(e)}. "
+                    "Relevant: could not assess. Recency: could not verify. Quality: provider metadata could not be "
+                    "normalized. Evidence: no auditable contribution was retained."
+                )
+                src["source_contribution"] = "Could not normalize provider metadata for audit."
                 excluded_records.append(src)
 
-        return {"included": included_records, "excluded": excluded_records}
+        seen_keys = set()
+        unique_records = []
+        for source in normalized_records:
+            duplicate_key = self._duplicate_key(source)
+            if duplicate_key and duplicate_key in seen_keys:
+                source["exclusion_reason"] = (
+                    f"Duplicate record: '{self._title_label(source)}' matches a DOI or title already reviewed. "
+                    f"{self._audit_facts(source, 'not independently reselected because it duplicates reviewed evidence')}"
+                )
+                source["source_contribution"] = self._source_contribution(source)
+                excluded_records.append(source)
+                continue
+            if duplicate_key:
+                seen_keys.add(duplicate_key)
+            unique_records.append(source)
+
+        eligible_records = []
+        for source in unique_records:
+            relevance, matched_terms = self._topic_relevance(query, source)
+            source["_relevance_score"] = relevance
+            source["_matched_terms"] = matched_terms
+            source["source_contribution"] = self._source_contribution(source)
+            if relevance <= 0:
+                source["exclusion_reason"] = (
+                    f"No meaningful topical match for '{self._title_label(source)}': the title, abstract, and "
+                    f"supplied subject terms do not match the requested topic. "
+                    f"{self._audit_facts(source, 'no matching topic terms')}"
+                )
+                self._remove_ranking_fields(source)
+                excluded_records.append(source)
+            elif not self._has_usable_research_record(source):
+                source["exclusion_reason"] = (
+                    f"Insufficient usable research metadata or evidence for '{self._title_label(source)}': "
+                    f"a traceable source needs a title, author, publication year, and venue or DOI/URL. "
+                    f"{self._audit_facts(source, 'topic terms matched but the record is not referenceable')}"
+                )
+                self._remove_ranking_fields(source)
+                excluded_records.append(source)
+            else:
+                source["_selection_score"] = self._selection_score(source, relevance)
+                eligible_records.append(source)
+
+        eligible_records.sort(
+            key=lambda source: (
+                -source["_selection_score"],
+                -source["_relevance_score"],
+                str(source.get("title") or "").casefold(),
+                str(source.get("uid") or "").casefold(),
+            )
+        )
+        included_records = eligible_records[:max_sources]
+        for source in included_records:
+            source["inclusion_reason"] = self._inclusion_reason(source)
+            self._remove_ranking_fields(source)
+        for source in eligible_records[max_sources:]:
+            source["exclusion_reason"] = (
+                f"Lower topical match than selected evidence: '{self._title_label(source)}' ranked below the "
+                f"selected evidence after deterministic relevance, recency, and metadata-quality ranking. "
+                f"{self._audit_facts(source, 'matched ' + (', '.join(source.get('_matched_terms') or []) or 'topic terms'))}"
+            )
+            self._remove_ranking_fields(source)
+            excluded_records.append(source)
+
+        return {
+            "included": included_records,
+            "excluded": excluded_records,
+            "audit": {
+                "candidates_retrieved": len(combined_raw_sources),
+                "candidates_reviewed": len(normalized_records),
+                "unique_candidates_reviewed": len(unique_records),
+                "active_criteria": selected_reasons or self.DEFAULT_AUDIT_CRITERIA,
+            },
+        }
 
 
     def run_research(self, query: str, max_sources: int = 5,
                      additional_sources: List[Dict[str, Any]] = None,
                      selected_inclusion_reasons: List[str] = None,
                      output_directory: str = None) -> Dict[str, Any]:
-        selected_reasons = [
-            reason for reason in (selected_inclusion_reasons or [])
-            if reason in self.DEFAULT_INCLUSION_REASONS
-        ][:3]
-        if not selected_reasons:
-            selected_reasons = self.DEFAULT_INCLUSION_REASONS[:3]
+        selected_reasons = list(dict.fromkeys(
+            str(reason).strip() for reason in (selected_inclusion_reasons or []) if str(reason).strip()
+        )) or self.DEFAULT_AUDIT_CRITERIA.copy()
         discovery_results = self._discover_sources_real(query, max_sources, selected_reasons)
         included_papers = discovery_results["included"]
         excluded_papers = discovery_results["excluded"]
         for source in additional_sources or []:
             if source.get("include", True):
+                source = source.copy()
+                source["source_contribution"] = self._source_contribution(source)
+                source["inclusion_reason"] = self._manual_inclusion_reason(source)
                 included_papers.append(source)
             else:
+                source = source.copy()
+                source["source_contribution"] = self._source_contribution(source)
+                source["exclusion_reason"] = source.get("exclusion_reason") or (
+                    "User-provided source was not selected for this evidence sample."
+                )
                 excluded_papers.append(source)
         included_papers = included_papers[:max_sources + len(additional_sources or [])]
+        referenceable_included = []
+        for source in included_papers:
+            source["source_contribution"] = source.get("source_contribution") or self._source_contribution(source)
+            if not CitationEngine.is_referenceable(source):
+                source["exclusion_reason"] = (
+                    f"Insufficient usable research metadata or evidence for '{self._title_label(source)}': "
+                    f"the selected record is not referenceable in a report. "
+                    f"{self._audit_facts(source, 'not retained without traceable publication metadata')}"
+                )
+                excluded_papers.append(source)
+                continue
+            source["inclusion_reason"] = source.get("inclusion_reason") or self._audit_facts(
+                source, "retained from the reviewed evidence set"
+            )
+            referenceable_included.append(source)
+        included_papers = referenceable_included
+        for source in excluded_papers:
+            source["source_contribution"] = source.get("source_contribution") or self._source_contribution(source)
+            source["exclusion_reason"] = source.get("exclusion_reason") or (
+                f"Excluded from the evidence sample. "
+                f"{self._audit_facts(source, 'selection rationale was not supplied')}"
+            )
 
-        evidence_blocks = [{'id': p['uid'], 'content': p.get('abstract', '')} for p in included_papers]
+        evidence_blocks = [{
+            'id': p.get('uid') or p.get('doi') or p.get('title'),
+            'content': p.get('abstract', ''),
+        } for p in included_papers]
         if evidence_blocks:
             insight_obj = self.insight_engine.generate_insight(query, evidence_blocks)
             synthesis_text = insight_obj.insight
@@ -155,12 +244,17 @@ class ResearchPipeline:
                 columns=["__provider_origin__"])
 
             core_themes = dossier.themes or self._derive_core_themes(query, synthesis_text, included_papers)
+            audit = discovery_results.get("audit", {})
             summary = pd.DataFrame([
                 {"Metric": "Research topic", "Value": query},
                 {"Metric": "Domain", "Value": "scholarly"},
+                {"Metric": "Requested source cap", "Value": max_sources},
+                {"Metric": "Provider candidates retrieved", "Value": audit.get("candidates_retrieved", len(included_papers) + len(excluded_papers))},
+                {"Metric": "Candidates reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
                 {"Metric": "Included sources", "Value": len(included_papers)},
                 {"Metric": "Excluded sources", "Value": len(excluded_papers)},
-                {"Metric": "Inclusion reasons", "Value": "; ".join(selected_reasons)},
+                {"Metric": "Active selection criteria", "Value": "; ".join(audit.get("active_criteria", selected_reasons))},
+                {"Metric": "Selection scope", "Value": "Selected sources are a starting evidence sample from the retrieved candidates, not an exhaustive literature review."},
                 {"Metric": "Synthesis summary", "Value": str(synthesis_text)},
             ])
             with pd.ExcelWriter(absolute_xlsx_path, engine='openpyxl') as writer:
@@ -192,8 +286,11 @@ class ResearchPipeline:
 
                 pd.DataFrame([
                     {"Parameter Key": "Target Topic Criteria Input", "Value": str(query)},
-                    {"Parameter Key": "Total Verification Ingest Matches", "Value": len(included_papers)},
-                    {"Parameter Key": "Total Scrubbed Candidates Out", "Value": len(excluded_papers)}
+                    {"Parameter Key": "Requested Source Cap", "Value": max_sources},
+                    {"Parameter Key": "Candidates Retrieved", "Value": audit.get("candidates_retrieved", len(included_papers) + len(excluded_papers))},
+                    {"Parameter Key": "Candidates Reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
+                    {"Parameter Key": "Active Criteria", "Value": "; ".join(audit.get("active_criteria", selected_reasons))},
+                    {"Parameter Key": "Review Scope", "Value": "Starting evidence sample; not an exhaustive review."},
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
             format_research_workbook(absolute_xlsx_path)
         except Exception as e:
@@ -225,19 +322,105 @@ class ResearchPipeline:
         }
         return dossier
 
+    def _inclusion_reason(self, source: Dict[str, Any]) -> str:
+        matched = ", ".join(source.get("_matched_terms") or []) or "topic terms"
+        return self._audit_facts(source, f"matched {matched}")
+
+    @classmethod
+    def _topic_relevance(cls, query: str, source: Dict[str, Any]):
+        terms = [
+            token for token in re.findall(r"[a-z0-9]+", str(query or "").casefold())
+            if len(token) > 1 and token not in cls._STOP_WORDS
+        ]
+        terms = list(dict.fromkeys(terms))
+        title = str(source.get("title") or "").casefold()
+        abstract = str(source.get("abstract") or "").casefold()
+        keywords = source.get("keywords") or source.get("subject") or []
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        keyword_text = " ".join(str(item) for item in keywords).casefold()
+        matched = [
+            term for term in terms
+            if term in title or term in abstract or term in keyword_text
+        ]
+        if not terms:
+            return 0.0, []
+        weighted = sum(
+            3 if term in title else 2 if term in keyword_text else 1
+            for term in matched
+        )
+        return weighted / (3 * len(terms)), matched
+
     @staticmethod
-    def _inclusion_reason(source: Dict[str, Any], selected_reasons: List[str]) -> str:
-        if selected_reasons[0] == "Peer-reviewed or journal-associated source" and source.get("is_peer_reviewed"):
-            return selected_reasons[0]
-        if selected_reasons[0] == "Cited source with usable metadata" and source.get("citation_count", 0) > 0:
-            return selected_reasons[0]
-        if selected_reasons[0] == "Accessible abstract or full-text evidence" and source.get("abstract"):
-            return selected_reasons[0]
-        if len(selected_reasons) > 1 and selected_reasons[1] == "Cited source with usable metadata" and source.get("citation_count", 0) > 0:
-            return selected_reasons[1]
-        if len(selected_reasons) > 1 and selected_reasons[1] == "Peer-reviewed or journal-associated source" and source.get("is_peer_reviewed"):
-            return selected_reasons[1]
-        return selected_reasons[-1]
+    def _duplicate_key(source: Dict[str, Any]) -> str:
+        doi = str(source.get("doi") or "").casefold().strip()
+        if doi:
+            return f"doi:{doi}"
+        title = re.sub(r"\W+", " ", str(source.get("title") or "").casefold()).strip()
+        return f"title:{title}" if title else ""
+
+    @staticmethod
+    def _has_usable_research_record(source: Dict[str, Any]) -> bool:
+        return CitationEngine.is_referenceable(source)
+
+    def _selection_score(self, source: Dict[str, Any], relevance: float) -> float:
+        metadata_score = 0.15 if source.get("abstract") else 0.05
+        metadata_score += 0.10 if source.get("doi") else 0.05 if source.get("url") else 0
+        metadata_score += min(self._integer(source.get("citation_count")), 100) / 2000
+        year = self._year(source)
+        recency_score = max(0, min(year - 2000, 26)) / 260 if year else 0
+        return relevance + metadata_score + recency_score
+
+    @staticmethod
+    def _integer(value: Any) -> int:
+        try:
+            return max(int(value or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _year(source: Dict[str, Any]) -> int:
+        try:
+            year = int(source.get("year"))
+            return year if 1000 <= year <= 9999 else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _source_contribution(source: Dict[str, Any]) -> str:
+        abstract = re.sub(r"\s+", " ", str(source.get("abstract") or "")).strip()
+        if abstract:
+            return abstract[:600]
+        details = [str(source.get(field) or "").strip() for field in ("title", "venue", "year", "doi", "url")]
+        details = [detail for detail in details if detail]
+        return "Metadata contribution: " + "; ".join(details[:4]) if details else "No usable abstract or source metadata supplied."
+
+    def _manual_inclusion_reason(self, source: Dict[str, Any]) -> str:
+        return self._audit_facts(source, "user-selected source for this topic", user_provided=True)
+
+    def _audit_facts(self, source: Dict[str, Any], relevance: str, user_provided: bool = False) -> str:
+        year = self._year(source)
+        recency = f"Published {year}" if year else "No verified publication year"
+        identifier = "DOI" if source.get("doi") else "URL" if source.get("url") else "no DOI/URL"
+        quality = (
+            "user-provided metadata retained for review"
+            if user_provided
+            else f"record has {identifier}"
+        )
+        citations = self._integer(source.get("citation_count"))
+        if citations:
+            quality += f" and {citations} provider-reported citations"
+        evidence = "abstract available" if source.get("abstract") else "metadata-only contribution"
+        return f"Relevant: {relevance}. Recency: {recency}. Quality: {quality}. Evidence: {evidence}."
+
+    @staticmethod
+    def _title_label(source: Dict[str, Any]) -> str:
+        return str(source.get("title") or "untitled provider record").strip()[:180]
+
+    @staticmethod
+    def _remove_ranking_fields(source: Dict[str, Any]) -> None:
+        for field in ("_relevance_score", "_matched_terms", "_selection_score"):
+            source.pop(field, None)
 
     @staticmethod
     def _derive_core_themes(query: str, synthesis: str, sources: List[Dict[str, Any]]) -> List[str]:

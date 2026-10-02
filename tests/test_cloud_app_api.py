@@ -85,6 +85,42 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     assert result["dossier_download"]["remaining"] == 3
 
 
+def test_cloud_scan_preserves_the_complete_topic_at_pipeline_boundary(monkeypatch):
+    class Pipeline:
+        def run_research(self, **kwargs):
+            self.query = kwargs["query"]
+            Path(kwargs["output_directory"], "scan.xlsx").write_bytes(b"workbook")
+            return {
+                "status": "success", "query": self.query, "included": [], "excluded": [],
+                "discovery_report_name": "scan.xlsx",
+            }
+
+    class Database:
+        def request(self, *args, **kwargs):
+            return []
+
+        def upload_storage_object(self, *args):
+            return None
+
+        def insert(self, table, values):
+            return {"id": values.get("id", "saved-dossier-id")}
+
+    pipeline = Pipeline()
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
+    monkeypatch.setattr(cloud_app, "pipeline", pipeline)
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+
+    result = asyncio.run(cloud_app.execute_cloud_scan(
+        cloud_app.ScanRequest(topic="Token optimization", max_sources=1),
+        authorization="Bearer token",
+    ))
+
+    assert pipeline.query == "Token optimization"
+    assert result["query"] == "Token optimization"
+
+
 def test_scan_records_privacy_preserving_operational_events(monkeypatch):
     class Pipeline:
         def run_research(self, **kwargs):

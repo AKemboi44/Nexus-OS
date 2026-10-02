@@ -2,23 +2,41 @@ from typing import List, Dict, Any
 
 
 class ResearchDossier:
-    def __init__(self, query: str):
+    def __init__(
+        self,
+        query: str,
+        abstract: str = "",
+        included_sources: List[Any] = None,
+        excluded_sources: List[Any] = None,
+        evidence_summary: List[str] = None,
+        themes: List[str] = None,
+        contradictions: List[str] = None,
+        research_gaps: List[str] = None,
+        research_areas: List[str] = None,
+        opportunity_areas: List[str] = None,
+        problems_to_solve: List[str] = None,
+        scoring_summary: List[str] = None,
+        decision_rationales: List[str] = None,
+        quality_report: Dict[str, Any] = None,
+        provenance: List[Dict[str, Any]] = None,
+        **kwargs
+    ):
         self.query = query
-        self.abstract = ""
-        self.included_sources: List[Any] = []
-        self.excluded_sources: List[Any] = []
-        self.evidence_summary: List[str] = []
-        self.themes: List[str] = []
-        self.contradictions: List[str] = []  # Added for comprehensive Phase 5 analysis
-        self.research_gaps: List[str] = []   # Added for explicit structural tracking
-        self.research_areas: List[str] = []
-        self.opportunity_areas: List[str] = []  # Added for venture/monetization strategy mapping
-        self.problems_to_solve: List[str] = []
-        self.scoring_summary: List[str] = []
-        self.decision_rationales: List[str] = []
-        self.quality_report: Dict[str, Any] = {}
-        self.provenance: List[Dict[str, Any]] = []
-        self.report_data: Dict[str, Any] = {}
+        self.abstract = abstract or ""
+        self.included_sources = included_sources if included_sources is not None else []
+        self.excluded_sources = excluded_sources if excluded_sources is not None else []
+        self.evidence_summary = evidence_summary if evidence_summary is not None else []
+        self.themes = themes if themes is not None else []
+        self.contradictions = contradictions if contradictions is not None else []
+        self.research_gaps = research_gaps if research_gaps is not None else []
+        self.research_areas = research_areas if research_areas is not None else []
+        self.opportunity_areas = opportunity_areas if opportunity_areas is not None else []
+        self.problems_to_solve = problems_to_solve if problems_to_solve is not None else []
+        self.scoring_summary = scoring_summary if scoring_summary is not None else []
+        self.decision_rationales = decision_rationales if decision_rationales is not None else []
+        self.quality_report = quality_report if quality_report is not None else {}
+        self.provenance = provenance if provenance is not None else []
+        self.report_data: Dict[str, Any] = kwargs
 
     def to_dict(self):
         return {

@@ -9,6 +9,7 @@ node_modules/
 package-lock.json
 *.xlsx
 *.docx
+*.sqlite3
 extension/dist/
 native_host/
 ROADMAP_v1_0_0.md
