@@ -82,6 +82,9 @@ class ScribeResearchAgent:
         self._editorial_synthesis_complete = False
         self._proposal_draft = None
         self._proposal_validation_failure = None
+        self.telemetry_attempts = 0
+        self.telemetry_fallback_used = False
+        self.telemetry_correction_used = False
         load_dotenv()
         claude_api_key = os.getenv("CLAUDE_API_KEY")
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -606,6 +609,7 @@ class ScribeResearchAgent:
                     f"({self._proposal_validation_failure or 'unknown constraint'}). "
                     "Requesting one concise corrective draft."
                 )
+                self.telemetry_correction_used = True
                 corrected_draft = self._generate_proposal_json(
                     "The previous JSON response failed this validation requirement: "
                     f"{self._proposal_validation_failure or 'a required report section was invalid'}. "
@@ -697,6 +701,7 @@ class ScribeResearchAgent:
         )
 
     def _generate_content(self, contents, config=None):
+        self.telemetry_attempts += 1
         if self.provider == "anthropic":
             settings = config or {}
             max_tokens = int(
@@ -749,6 +754,7 @@ class ScribeResearchAgent:
                 stop_reason=getattr(response, "stop_reason", None),
             )
             if result.stop_reason == "max_tokens" and self.gemini_client:
+                self.telemetry_fallback_used = True
                 print(
                     "[Scribe Editorial Notice]: Claude reached its output limit. "
                     f"Completing the report with Gemini model {self.gemini_model}."
@@ -777,6 +783,7 @@ class ScribeResearchAgent:
             f"(status={status_code}, details={claude_error}). "
             f"Falling back to Gemini model {self.gemini_model}."
         )
+        self.telemetry_fallback_used = True
         return self._generate_with_gemini(contents, config)
 
     def _generate_with_gemini(self, contents, config=None):

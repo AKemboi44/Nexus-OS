@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 from uuid import UUID, uuid4
 from urllib.parse import quote
@@ -151,6 +152,107 @@ DOCX_CONTENT_TYPE = (
 )
 
 
+def record_backend_analytics(
+    event_name: str,
+    user_id: str,
+    properties: Dict[str, Any],
+) -> None:
+    """Persist only aggregate backend telemetry without affecting the request."""
+    try:
+        analytics.record(
+            event_name=event_name,
+            user_id=user_id,
+            session_id="backend",
+            properties=properties,
+        )
+    except Exception:
+        logger.exception("Could not persist backend analytics event %s.", event_name)
+
+
+def elapsed_milliseconds(started_at: float) -> int:
+    return max(0, int((time.monotonic() - started_at) * 1000))
+
+
+def normalized_error_category(error: Exception) -> str:
+    if isinstance(error, ReportSynthesisError):
+        return "quality_or_provider"
+    if isinstance(error, HTTPException):
+        return "client_request" if 400 <= error.status_code < 500 else "service_unavailable"
+    if isinstance(error, (SupabaseRequestError, RuntimeError)):
+        return "dependency_failure"
+    return "internal_error"
+
+
+def privacy_safe_analytics_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Reject free-form content before it can reach the durable telemetry store."""
+    allowed_string_keys = {
+        "provider", "plan", "payment_type", "status", "event_type", "error_code",
+        "error_category", "domain_category", "report_type", "provider_selected",
+        "model_selected", "outcome_category",
+    }
+    sensitive_keys = {
+        "topic", "prompt", "query", "source", "sources", "title", "abstract",
+        "text", "content", "message", "detail", "description",
+    }
+    safe_context = {}
+    for key, value in context.items():
+        normalized_key = str(key).strip().lower()
+        if (
+            normalized_key in sensitive_keys
+            or any(part in normalized_key for part in ("prompt", "topic", "source", "content"))
+            or isinstance(value, (dict, list))
+        ):
+            raise ValueError("Telemetry context may only contain non-sensitive counters, IDs, and categories.")
+        if isinstance(value, str) and (
+            normalized_key not in allowed_string_keys
+            and not normalized_key.endswith(("_id", "_hash"))
+        ):
+            raise ValueError("Telemetry context may only contain non-sensitive counters, IDs, and categories.")
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            raise ValueError("Telemetry context may only contain non-sensitive counters, IDs, and categories.")
+        safe_context[normalized_key[:80]] = value
+    return safe_context
+
+
+def source_metadata_metrics(sources: Any) -> Dict[str, int]:
+    if not isinstance(sources, list):
+        return {"reviewed_count": 0, "metadata_complete_count": 0}
+    complete_count = sum(
+        isinstance(source, dict)
+        and bool(source.get("title"))
+        and bool(source.get("authors"))
+        and bool(source.get("year"))
+        and bool(source.get("venue") or source.get("doi") or source.get("url"))
+        for source in sources
+    )
+    return {
+        "reviewed_count": len(sources),
+        "metadata_complete_count": complete_count,
+    }
+
+
+def scribe_telemetry(scribe: Any) -> Dict[str, Any]:
+    """Extract non-content report signals exposed by the report generator."""
+    attempts = getattr(scribe, "telemetry_attempts", None)
+    telemetry = {
+        "provider_selected": str(getattr(scribe, "provider", "unknown") or "unknown")[:40],
+        "model_selected": str(getattr(scribe, "model", "unknown") or "unknown")[:120],
+        "provider_attempt_count": (
+            min(max(attempts, 0), 10) if type(attempts) is int else None
+        ),
+        "provider_fallback_used": bool(getattr(scribe, "telemetry_fallback_used", False)),
+        "validation_correction_used": bool(getattr(scribe, "telemetry_correction_used", False)),
+    }
+    if telemetry["provider_selected"] == "anthropic":
+        try:
+            telemetry["configured_output_token_limit"] = min(
+                max(int(scribe._claude_output_token_limit()), 1), 8192
+            )
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return telemetry
+
+
 def is_dossier_download_unlimited(user: Dict[str, Any]) -> bool:
     return (
         str(user.get("email") or "").strip().lower() in DOSSIER_DOWNLOAD_WHITELIST
@@ -282,6 +384,18 @@ async def execute_cloud_scan(
         raise HTTPException(status_code=400, detail="max_sources must be between 1 and 100.")
     if (payload.max_sources or 0) > 20 and not entitlements.is_active(str(user["id"])):
         raise HTTPException(status_code=403, detail="Research scans above 20 sources require an active subscription.")
+    user_id = supabase_user_id(user)
+    started_at = time.monotonic()
+    record_backend_analytics(
+        "scan_started",
+        user_id,
+        {
+            "requested_count": payload.max_sources or 0,
+            "uploaded_source_count": len(payload.uploaded_sources),
+            "inclusion_rule_count": len(payload.selected_inclusion_reasons),
+            "domain_category": str(payload.domain or "scholarly")[:40],
+        },
+    )
     try:
         uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain or "scholarly")
         dossier_bytes = None
@@ -311,10 +425,22 @@ async def execute_cloud_scan(
             result_data["excel_report_saved_at"] = dossier_name
             result_data["discovery_report_directory"] = None
     except HTTPException:
+        record_backend_analytics(
+            "scan_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request"},
+        )
         raise
     except Exception as error:
+        record_backend_analytics(
+            "scan_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error)},
+        )
         raise HTTPException(status_code=500, detail=str(error)) from error
     if not isinstance(result_data, dict):
+        record_backend_analytics(
+            "scan_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "invalid_result"},
+        )
         raise HTTPException(status_code=500, detail="Research pipeline returned an invalid result.")
     try:
         database = require_supabase_database()
@@ -378,10 +504,40 @@ async def execute_cloud_scan(
         response_data["research_run_id"] = run_record["id"]
         response_data["saved_dossier_id"] = dossier_record["id"]
         response_data.pop("excel_dossier_storage_path", None)
+        source_metrics = source_metadata_metrics(
+            (result_data.get("included") or []) + (result_data.get("excluded") or [])
+        )
+        completion_properties = {
+            "duration_ms": elapsed_milliseconds(started_at),
+            "requested_count": payload.max_sources or 0,
+            "included_count": len(result_data.get("included") or []),
+            "excluded_count": len(result_data.get("excluded") or []),
+            **source_metrics,
+        }
+        record_backend_analytics("scan_completed", user_id, completion_properties)
+        record_backend_analytics(
+            "excel_export_completed",
+            user_id,
+            {
+                "duration_ms": completion_properties["duration_ms"],
+                "included_count": completion_properties["included_count"],
+                "excluded_count": completion_properties["excluded_count"],
+                "cache_hit": False,
+                "outcome_category": "stored",
+            },
+        )
         return response_data
     except HTTPException:
+        record_backend_analytics(
+            "scan_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request"},
+        )
         raise
     except Exception as error:
+        record_backend_analytics(
+            "scan_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error)},
+        )
         raise HTTPException(status_code=503, detail="Research completed but could not be saved.") from error
 
 
@@ -391,7 +547,9 @@ async def download_research_dossier(
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
+    started_at = time.monotonic()
     user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
     require_api_access(x_api_key)
     database = require_supabase_database()
     rows = database.request(
@@ -420,8 +578,18 @@ async def download_research_dossier(
     try:
         dossier_bytes = database.download_storage_object(DOSSIER_STORAGE_BUCKET, storage_path)
     except Exception as error:
+        record_backend_analytics(
+            "excel_download_failed",
+            user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "cache_hit": True, "error_category": "dependency_failure"},
+        )
         raise HTTPException(status_code=503, detail="The saved Excel dossier is unavailable.") from error
     if not dossier_bytes:
+        record_backend_analytics(
+            "excel_download_failed",
+            user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "cache_hit": True, "error_category": "empty_document"},
+        )
         raise HTTPException(status_code=503, detail="The saved Excel dossier is empty.")
 
     if is_dossier_download_unlimited(user):
@@ -435,15 +603,25 @@ async def download_research_dossier(
             )
             downloads_remaining = int(downloads_remaining)
         except Exception as error:
+            record_backend_analytics(
+                "excel_download_failed",
+                user_id,
+                {"duration_ms": elapsed_milliseconds(started_at), "cache_hit": True, "error_category": "dependency_failure"},
+            )
             raise HTTPException(status_code=503, detail="Could not verify dossier download allowance.") from error
         if downloads_remaining < 0:
+            record_backend_analytics(
+                "excel_download_failed",
+                user_id,
+                {"duration_ms": elapsed_milliseconds(started_at), "cache_hit": True, "error_category": "quota_exhausted"},
+            )
             raise HTTPException(
                 status_code=403,
                 detail="You have used all 3 free Excel dossier downloads. Upgrade your plan for more downloads.",
             )
         download_status = {"unlimited": False, "remaining": downloads_remaining}
 
-    return Response(
+    response = Response(
         content=dossier_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
@@ -453,6 +631,17 @@ async def download_research_dossier(
             ),
         },
     )
+    record_backend_analytics(
+        "excel_download_completed",
+        user_id,
+        {
+            "duration_ms": elapsed_milliseconds(started_at),
+            "cache_hit": True,
+            "outcome_category": "downloaded",
+            "quota_limited": not download_status["unlimited"],
+        },
+    )
+    return response
 
 
 @app.post("/v1/reports")
@@ -470,6 +659,19 @@ async def generate_research_report(
         raise HTTPException(status_code=400, detail="Unsupported report type.")
     if payload.report_type == "full_starter" and not entitlements.is_active(str(user["id"])):
         raise HTTPException(status_code=403, detail="The Complete Literature Review is available to paid users.")
+    user_id = supabase_user_id(user)
+    started_at = time.monotonic()
+    record_backend_analytics(
+        "report_started",
+        user_id,
+        {
+            "report_type": payload.report_type,
+            "included_source_count": len(payload.included_sources),
+            "uploaded_source_count": len(payload.uploaded_sources),
+            "domain_category": str(payload.domain or "scholarly")[:40],
+        },
+    )
+    scribe = None
     try:
         included_sources = list(payload.included_sources)
         uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain)
@@ -524,11 +726,26 @@ async def generate_research_report(
             )
             cached_document = None
         if cached_document:
-            return cached_report_response(
+            response = cached_report_response(
                 cached_document,
                 cache_key,
                 payload.report_type,
             )
+            record_backend_analytics(
+                "report_completed",
+                user_id,
+                {
+                    "duration_ms": elapsed_milliseconds(started_at),
+                    "report_type": payload.report_type,
+                    "cache_hit": True,
+                    "included_source_count": len(included_sources),
+                    "quality_available": False,
+                    "provider_attempt_count": 0,
+                    "provider_fallback_used": False,
+                    "validation_correction_used": False,
+                },
+            )
+            return response
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 
@@ -578,7 +795,7 @@ async def generate_research_report(
                     supabase_user_id(user),
                     error,
                 )
-            return {
+            response = {
                 "status": "success",
                 "action": "docx_generation_complete",
                 "document_name": report_path.name,
@@ -588,13 +805,62 @@ async def generate_research_report(
                 "cache_hit": False,
                 "report_cache_id": Path(cache_key).parent.name,
             }
+            telemetry = scribe_telemetry(scribe)
+            quality_report = dossier.quality_report
+            record_backend_analytics(
+                "report_completed",
+                user_id,
+                {
+                    "duration_ms": elapsed_milliseconds(started_at),
+                    "report_type": payload.report_type,
+                    "cache_hit": False,
+                    "included_source_count": len(included_sources),
+                    "quality_available": bool(quality_report),
+                    "quality_passed": (
+                        bool(quality_report.get("passed", True))
+                        if isinstance(quality_report, dict) else None
+                    ),
+                    **telemetry,
+                },
+            )
+            return response
     except HTTPException:
+        record_backend_analytics(
+            "report_failed",
+            user_id,
+            {
+                "duration_ms": elapsed_milliseconds(started_at),
+                "report_type": payload.report_type,
+                "error_category": "client_request",
+                **(scribe_telemetry(scribe) if scribe else {}),
+            },
+        )
         raise
     except ReportSynthesisError as error:
         logger.warning("Word report failed its synthesis quality gate: %s", error)
+        record_backend_analytics(
+            "report_failed",
+            user_id,
+            {
+                "duration_ms": elapsed_milliseconds(started_at),
+                "report_type": payload.report_type,
+                "error_category": "quality_or_provider",
+                **(scribe_telemetry(scribe) if scribe else {}),
+            },
+        )
         raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
         logger.exception("Word report generation failed for report type %s.", payload.report_type)
+        record_backend_analytics(
+            "report_failed",
+            user_id,
+            {
+                "duration_ms": elapsed_milliseconds(started_at),
+                "report_type": payload.report_type,
+                "error_category": normalized_error_category(error),
+                **(scribe_telemetry(scribe) if scribe else {}),
+            },
+        )
         raise HTTPException(status_code=500, detail="Report generation failed.") from error
 
 
@@ -605,7 +871,9 @@ async def download_cached_research_report(
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
+    started_at = time.monotonic()
     user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
     require_api_access(x_api_key)
     if report_type not in {"proposal", "full_starter"}:
         raise HTTPException(status_code=400, detail="Unsupported report type.")
@@ -621,12 +889,20 @@ async def download_cached_research_report(
         )
     except SupabaseRequestError as error:
         if error.status_code == 404:
+            record_backend_analytics(
+                "report_cache_redownload_failed", user_id,
+                {"duration_ms": elapsed_milliseconds(started_at), "report_type": report_type, "error_category": "not_found"},
+            )
             raise HTTPException(status_code=404, detail="Cached report not found.") from error
         logger.warning(
             "Could not download cached %s report for user %s: %s",
             report_type,
             supabase_user_id(user),
             error,
+        )
+        record_backend_analytics(
+            "report_cache_redownload_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "report_type": report_type, "error_category": "dependency_failure"},
         )
         raise HTTPException(status_code=503, detail="Cached report download is unavailable.") from error
     except RuntimeError as error:
@@ -636,8 +912,23 @@ async def download_cached_research_report(
             supabase_user_id(user),
             error,
         )
+        record_backend_analytics(
+            "report_cache_redownload_failed", user_id,
+            {"duration_ms": elapsed_milliseconds(started_at), "report_type": report_type, "error_category": "dependency_failure"},
+        )
         raise HTTPException(status_code=503, detail="Cached report download is unavailable.") from error
-    return cached_report_response(document_bytes, cache_key, report_type)
+    response = cached_report_response(document_bytes, cache_key, report_type)
+    record_backend_analytics(
+        "report_cache_redownload_completed",
+        user_id,
+        {
+            "duration_ms": elapsed_milliseconds(started_at),
+            "report_type": report_type,
+            "cache_hit": True,
+            "outcome_category": "downloaded",
+        },
+    )
+    return response
 
 
 @app.get("/v1/research")
@@ -839,11 +1130,14 @@ async def log_telemetry_event(
             event_name=event.event,
             user_id=supabase_user_id(user),
             session_id=event.session_id or "unknown",
-            properties=event.context,
+            properties=privacy_safe_analytics_context(event.context),
             occurred_at=event.timestamp,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+    except Exception:
+        logger.exception("Could not persist client analytics event %s.", event.event)
+        return {"status": "accepted"}
     return {"status": "logged"}
 
 
@@ -864,24 +1158,21 @@ async def create_paypal_order(
     user_id = supabase_user_id(user)
     try:
         order = paypal.create_order(payload.plan, user_id)
-        analytics.record(
-            "checkout_started",
-            user_id,
-            properties={"provider": "paypal", "plan": payload.plan, "order_id": order.get("id")},
+        record_backend_analytics(
+            "checkout_started", user_id,
+            {"provider": "paypal", "plan": payload.plan, "order_id": order.get("id")},
         )
         return order
     except (RuntimeError, ValueError) as error:
-        analytics.record(
-            "payment_failed",
-            user_id,
-            properties={"provider": "paypal", "error_code": "CONFIGURATION", "message": str(error)},
+        record_backend_analytics(
+            "payment_failed", user_id,
+            {"provider": "paypal", "error_code": "CONFIGURATION"},
         )
         raise HTTPException(status_code=503, detail=str(error))
     except Exception as error:
-        analytics.record(
-            "payment_failed",
-            user_id,
-            properties={"provider": "paypal", "error_code": "PAYPAL_API_ERROR", "message": str(error)},
+        record_backend_analytics(
+            "payment_failed", user_id,
+            {"provider": "paypal", "error_code": "PAYPAL_API_ERROR"},
         )
         raise HTTPException(status_code=502, detail="PayPal order creation failed.")
 
@@ -897,10 +1188,9 @@ async def create_paypal_subscription(
     user_id = supabase_user_id(user)
     try:
         subscription = paypal.create_subscription(payload.plan, user_id)
-        analytics.record(
-            "checkout_started",
-            user_id,
-            properties={
+        record_backend_analytics(
+            "checkout_started", user_id,
+            {
                 "provider": "paypal",
                 "payment_type": "subscription",
                 "plan": payload.plan,
@@ -917,17 +1207,15 @@ async def create_paypal_subscription(
             )
         return subscription
     except (RuntimeError, ValueError) as error:
-        analytics.record(
-            "payment_failed",
-            user_id,
-            properties={"provider": "paypal", "error_code": "CONFIGURATION", "message": str(error)},
+        record_backend_analytics(
+            "payment_failed", user_id,
+            {"provider": "paypal", "error_code": "CONFIGURATION"},
         )
         raise HTTPException(status_code=503, detail=str(error))
     except Exception:
-        analytics.record(
-            "payment_failed",
-            user_id,
-            properties={"provider": "paypal", "error_code": "PAYPAL_API_ERROR"},
+        record_backend_analytics(
+            "payment_failed", user_id,
+            {"provider": "paypal", "error_code": "PAYPAL_API_ERROR"},
         )
         raise HTTPException(status_code=502, detail="PayPal subscription creation failed.")
 
@@ -956,17 +1244,15 @@ async def capture_paypal_order(
                     "COMPLETED",
                     plan=(purchase_units[0].get("reference_id") if purchase_units else None),
                 )
-        analytics.record(
-            event_name,
-            user_id,
-            properties={"provider": "paypal", "order_id": payload.order_id, "status": status},
+        record_backend_analytics(
+            event_name, user_id,
+            {"provider": "paypal", "order_id": payload.order_id, "status": status},
         )
         return result
     except Exception:
-        analytics.record(
-            "payment_failed",
-            user_id,
-            properties={
+        record_backend_analytics(
+            "payment_failed", user_id,
+            {
                 "provider": "paypal",
                 "error_code": "CAPTURE_FAILED",
                 "order_id": payload.order_id,
@@ -1033,10 +1319,10 @@ async def paypal_webhook(request: Request):
             status,
             plan=resource.get("plan_id"),
         )
-    analytics.record(
+    record_backend_analytics(
         "paypal_webhook_received",
         user_id or "anonymous",
-        properties={"event_type": event_type, "provider_id": provider_id, "status": status},
+        {"event_type": event_type, "provider_id": provider_id, "status": status},
     )
     return {"status": "processed"}
 
