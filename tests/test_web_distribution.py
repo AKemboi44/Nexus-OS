@@ -83,6 +83,24 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert ".status-callout.success" in css
 
 
+def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
+    website = ROOT / "website"
+    html = (website / "index.html").read_text(encoding="utf-8")
+    js = (website / "app.js").read_text(encoding="utf-8")
+    css = (website / "styles.css").read_text(encoding="utf-8")
+
+    for count_id in ("reviewedCount", "includedCount", "excludedCount"):
+        assert f'id="{count_id}"' in html
+    assert "sources reviewed" in html
+    assert "included</span>" in html
+    assert "filtered</span>" in html
+    assert "included.length + excluded.length" in js
+    assert "topic[0].toLocaleUpperCase() + topic.slice(1)" in js
+    assert ".reviewed-stat strong" in css
+    assert ".included-stat strong" in css
+    assert ".filtered-stat strong" in css
+
+
 def test_website_includes_original_section_art_and_visible_background_motion():
     website = ROOT / "website"
     css = (website / "styles.css").read_text(encoding="utf-8")

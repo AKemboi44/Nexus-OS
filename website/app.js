@@ -366,12 +366,15 @@
     function renderResult(data) {
         activeResult = data;
         byId('scanResults').hidden = false;
-        byId('resultTitle').textContent = data.query || 'Research evidence';
+        const topic = String(data.query || '').trim();
+        byId('resultTitle').textContent = topic
+            ? topic[0].toLocaleUpperCase() + topic.slice(1)
+            : 'Research evidence';
         const included = Array.isArray(data.included) ? data.included : [];
         const excluded = Array.isArray(data.excluded) ? data.excluded : [];
-        byId('resultSummary').textContent = `${included.length} sources included · ${excluded.length} candidates filtered`;
-        byId('includedCount').textContent = `(${included.length})`;
-        byId('excludedCount').textContent = `(${excluded.length})`;
+        byId('reviewedCount').textContent = String(included.length + excluded.length);
+        byId('includedCount').textContent = String(included.length);
+        byId('excludedCount').textContent = String(excluded.length);
         byId('includedSources').replaceChildren(...included.map(source => makeSourceCard(source, true)));
         byId('excludedSources').replaceChildren(...excluded.map(source => makeSourceCard(source, false)));
         byId('fullReport').hidden = !paid;
