@@ -102,6 +102,17 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
+    assert 'href="/styles.css?v=20261002-2"' in html
+    assert 'src="/app.js?v=20261002-2"' in html
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+
+
+def test_website_revalidates_html_to_avoid_mixed_cached_scan_assets():
+    website = ROOT / "website"
+    headers = (website / "_headers").read_text(encoding="utf-8")
+
+    assert "/index.html\n  Cache-Control: no-cache, no-store, must-revalidate" in headers
+    assert "/\n  Cache-Control: no-cache, no-store, must-revalidate" in headers
 
 
 def test_website_includes_original_section_art_and_visible_background_motion():

@@ -5,3 +5,9 @@
   Strict-Transport-Security: max-age=31536000
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://mdjgrtkjjcwmhuhpsjsk.supabase.co https://nexus-os-production-2e14.up.railway.app; base-uri 'self'; form-action 'self'; frame-src 'none'; object-src 'none'; frame-ancestors 'none'
+
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
