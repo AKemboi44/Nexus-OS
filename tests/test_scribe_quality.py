@@ -463,6 +463,26 @@ def test_proposal_validation_accepts_concise_complete_draft():
     assert agent._validate_proposal_draft(draft, source_ids) is not None
 
 
+def test_proposal_validation_defaults_missing_required_evidence_to_source():
+    agent = ScribeResearchAgent()
+    source_ids = {"S1": {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}}
+    paragraphs = agent._validate_proposal_paragraphs(
+        [{
+            "text": (
+                "The supplied evidence identifies a bounded pattern across the reviewed settings. "
+                "This pattern provides a focused basis for the proposed investigation. "
+                "The source descriptions indicate that context and measurement may shape its interpretation. "
+                "Additional data would be needed to establish whether the relationship generalizes across populations."
+            ),
+        }],
+        source_ids,
+        require_evidence=True,
+    )
+
+    assert paragraphs is not None
+    assert paragraphs[0]["evidence_ids"] == ["S1"]
+
+
 def test_proposal_editor_fails_closed_if_model_is_unavailable_or_invalid():
     agent = ScribeResearchAgent()
     agent.client = None
