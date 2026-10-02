@@ -228,10 +228,18 @@ class ResearchPipeline:
         else:
             synthesis_text = "### Multi-Engine Analysis\nNo relevant data points returned."
 
-        dossier = DossierGenerator().generate_comprehensive_dossier(
-            query=query,
-            included_sources=included_papers,
-        )
+        try:
+            dossier = DossierGenerator().generate_comprehensive_dossier(
+                query=query,
+                included_sources=included_papers,
+            )
+        except Exception as e:
+            # Audit generation must not fail even if synthesis provider is degraded/unavailable
+            dossier = ResearchDossier(query=query)
+            dossier.included_sources = included_papers
+            dossier.themes = [f"Evidence concentration around {query}."]
+            dossier.research_areas = [f"Examine patterns and methods represented in the included sources for {query}."]
+            dossier.opportunity_areas = [f"Extend research on {query} with broader empirical validation."]
         dossier.evidence_summary = [p.get('abstract', 'No description.') for p in included_papers]
 
         filename = f"research_audit_{clean_filename(query)}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"

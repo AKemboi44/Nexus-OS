@@ -636,7 +636,7 @@ def test_proposal_quota_errors_return_safe_actionable_message(capsys):
     assert "Provider quota or rate limit" in capsys.readouterr().out
 
 
-def test_scribe_exports_labeled_deterministic_fallback_after_provider_quota(tmp_path, monkeypatch):
+def test_scribe_raises_limit_error_without_fallback_after_provider_quota(tmp_path, monkeypatch):
     source = {
         "authors": ["Jane Doe"],
         "year": 2024,
@@ -670,24 +670,19 @@ def test_scribe_exports_labeled_deterministic_fallback_after_provider_quota(tmp_
         quality_report={"passed": True},
     )
 
-    report_path = agent.generate_apa_dossier_report(
-        "quota-safe report",
-        [source],
-        dossier=dossier,
-        output_directory=str(tmp_path),
-    )
+    with pytest.raises((ReportProviderLimitError, ReportSynthesisError)):
+        agent.generate_apa_dossier_report(
+            "quota-safe report",
+            [source],
+            dossier=dossier,
+            output_directory=str(tmp_path),
+        )
 
-    assert models.calls == 1
-    assert agent.fallback_mode == "deterministic_evidence_fallback"
-    text = "\n".join(paragraph.text for paragraph in Document(report_path).paragraphs)
-    assert "Evidence-Grounded Fallback (Non-AI-Synthesized)" in text
-    assert "does not contain AI-generated synthesis" in text
-    assert "Prepared from validated source records (Non-AI-Synthesized)" in text
-    assert "Prepared with Nexus Research AI" not in text
-    assert "(Doe, 2024)" in text
+    assert models.calls >= 1
+    assert agent.fallback_mode is None
 
 
-def test_scribe_replaces_ai_abstract_when_later_provider_call_hits_quota(tmp_path, monkeypatch):
+def test_scribe_raises_limit_error_when_later_provider_call_hits_quota(tmp_path, monkeypatch):
     source = {
         "authors": ["Jane Doe"],
         "year": 2024,
@@ -724,19 +719,15 @@ def test_scribe_replaces_ai_abstract_when_later_provider_call_hits_quota(tmp_pat
         quality_report={"passed": True},
     )
 
-    report_path = agent.generate_apa_dossier_report(
-        "quota-safe report",
-        [source],
-        dossier=dossier,
-        output_directory=str(tmp_path),
-    )
+    with pytest.raises((ReportProviderLimitError, ReportSynthesisError)):
+        agent.generate_apa_dossier_report(
+            "quota-safe report",
+            [source],
+            dossier=dossier,
+            output_directory=str(tmp_path),
+        )
 
-    text = "\n".join(paragraph.text for paragraph in Document(report_path).paragraphs)
-    assert models.calls == 2
-    assert agent.fallback_mode == "deterministic_evidence_fallback"
-    assert "aiabstractword0" not in text
-    assert "Prepared with Nexus Research AI" not in text
-    assert "Prepared from validated source records (Non-AI-Synthesized)" in text
+    assert agent.fallback_mode is None
 
 
 def test_scribe_does_not_fallback_for_non_quota_provider_failures(tmp_path):

@@ -25,7 +25,11 @@ from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
 from app.research.spelling import normalize_topic_spelling
-from app.agents.scribe_agent import ReportSynthesisError
+from app.agents.scribe_agent import ReportSynthesisError, ReportProviderLimitError
+from app.reports.queue_config import default_queue_config, ReportQueueConfig
+from app.reports.report_queue import global_queue_manager, QueuedReportJob
+from app.notifications.notification_service import NotificationService
+from app.synthesis.providers import SynthesisProviderError, DegradationLogger
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -766,40 +770,39 @@ async def generate_research_report(
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 
-        dossier = DossierGenerator().generate_comprehensive_dossier(
-            query=topic,
-            included_sources=included_sources,
-            domain=payload.domain,
-            report_type=payload.report_type,
-        )
-        scribe = ScribeResearchAgent()
-        with tempfile.TemporaryDirectory(prefix="nexus-report-") as report_directory:
-            if payload.report_type == "full_starter":
-                scribe.generate_complete_literature_review(
-                    topic=topic,
-                    included_sources=included_sources,
-                    dossier=dossier,
-                    domain=payload.domain,
-                    output_directory=report_directory,
-                )
-            else:
-                scribe.generate_apa_dossier_report(
-                    topic=topic,
-                    included_sources=included_sources,
-                    dossier=dossier,
-                    domain=payload.domain,
-                    output_directory=report_directory,
-                )
-            report_root = Path(report_directory).resolve(strict=True)
-            report_files = list(report_root.glob("*.docx"))
-            if len(report_files) != 1:
-                raise RuntimeError("Report generation did not produce exactly one document.")
-            report_path = report_files[0].resolve(strict=True)
-            if report_path.parent != report_root or not report_path.is_file():
-                raise RuntimeError("Generated report escaped its temporary output directory.")
-            document_bytes = report_path.read_bytes()
-            degraded = bool(scribe.fallback_mode)
-            if not degraded:
+        try:
+            dossier = DossierGenerator().generate_comprehensive_dossier(
+                query=topic,
+                included_sources=included_sources,
+                domain=payload.domain,
+                report_type=payload.report_type,
+            )
+            scribe = ScribeResearchAgent()
+            with tempfile.TemporaryDirectory(prefix="nexus-report-") as report_directory:
+                if payload.report_type == "full_starter":
+                    scribe.generate_complete_literature_review(
+                        topic=topic,
+                        included_sources=included_sources,
+                        dossier=dossier,
+                        domain=payload.domain,
+                        output_directory=report_directory,
+                    )
+                else:
+                    scribe.generate_apa_dossier_report(
+                        topic=topic,
+                        included_sources=included_sources,
+                        dossier=dossier,
+                        domain=payload.domain,
+                        output_directory=report_directory,
+                    )
+                report_root = Path(report_directory).resolve(strict=True)
+                report_files = list(report_root.glob("*.docx"))
+                if len(report_files) != 1:
+                    raise RuntimeError("Report generation did not produce exactly one document.")
+                report_path = report_files[0].resolve(strict=True)
+                if report_path.parent != report_root or not report_path.is_file():
+                    raise RuntimeError("Generated report escaped its temporary output directory.")
+                document_bytes = report_path.read_bytes()
                 try:
                     database.upload_storage_object(
                         DOSSIER_STORAGE_BUCKET,
@@ -814,44 +817,73 @@ async def generate_research_report(
                         supabase_user_id(user),
                         error,
                     )
-            response = {
-                "status": "degraded" if degraded else "success",
-                "action": (
-                    "evidence_grounded_fallback_docx"
-                    if degraded else "docx_generation_complete"
-                ),
-                "generation_mode": (
-                    scribe.fallback_mode if degraded else "ai_synthesized"
-                ),
-                "degraded": degraded,
-                "document_name": report_path.name,
-                "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-                "report_type": payload.report_type,
-                "quality_report": jsonable_encoder(dossier.quality_report),
-                "cache_hit": False,
-                "report_cache_id": None if degraded else report_cache_id(cache_key),
-                "report_cache_version": None if degraded else REPORT_CACHE_VERSION,
-            }
-            telemetry = scribe_telemetry(scribe)
-            quality_report = dossier.quality_report
+                response = {
+                    "status": "ready",
+                    "action": "docx_generation_complete",
+                    "generation_mode": "ai_synthesized",
+                    "degraded": False,
+                    "document_name": report_path.name,
+                    "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+                    "report_type": payload.report_type,
+                    "quality_report": jsonable_encoder(dossier.quality_report),
+                    "cache_hit": False,
+                    "report_cache_id": report_cache_id(cache_key),
+                    "report_cache_version": REPORT_CACHE_VERSION,
+                }
+                telemetry = scribe_telemetry(scribe)
+                quality_report = dossier.quality_report
+                record_backend_analytics(
+                    "report_completed",
+                    user_id,
+                    {
+                        "duration_ms": elapsed_milliseconds(started_at),
+                        "report_type": payload.report_type,
+                        "cache_hit": False,
+                        "included_source_count": len(included_sources),
+                        "quality_available": bool(quality_report),
+                        "quality_passed": (
+                            bool(quality_report.get("passed", True))
+                            if isinstance(quality_report, dict) else None
+                        ),
+                        "outcome_category": "ai_synthesized",
+                        **telemetry,
+                    },
+                )
+                return response
+        except (ReportProviderLimitError, SynthesisProviderError) as provider_err:
+            logger.warning("Synthesis provider failed on submit, enqueueing report request: %s", provider_err)
+            job = global_queue_manager.enqueue(
+                user_id=user_id,
+                topic=topic,
+                report_type=payload.report_type,
+                domain=payload.domain,
+                included_sources=included_sources,
+                initial_error=str(provider_err),
+                user_email=user.get("email"),
+            )
             record_backend_analytics(
-                "report_degraded_completed" if degraded else "report_completed",
+                "report_queued",
                 user_id,
                 {
                     "duration_ms": elapsed_milliseconds(started_at),
                     "report_type": payload.report_type,
-                    "cache_hit": False,
-                    "included_source_count": len(included_sources),
-                    "quality_available": bool(quality_report),
-                    "quality_passed": (
-                        bool(quality_report.get("passed", True))
-                        if isinstance(quality_report, dict) else None
-                    ),
-                    "outcome_category": "evidence_grounded_fallback" if degraded else "ai_synthesized",
-                    **telemetry,
+                    "job_id": job.id,
+                    "estimated_wait": default_queue_config.estimated_wait_range,
+                    "error_reason": str(provider_err),
                 },
             )
-            return response
+            return {
+                "status": "queued",
+                "action": "report_queued_pending",
+                "job_id": job.id,
+                "report_id": job.id,
+                "topic": topic,
+                "report_type": payload.report_type,
+                "estimated_wait": default_queue_config.estimated_wait_range,
+                "message": f"Report synthesis request queued ({default_queue_config.estimated_wait_range}).",
+                "created_at": job.created_at,
+                "degraded": False,
+            }
     except HTTPException:
         record_backend_analytics(
             "report_failed",
@@ -961,6 +993,95 @@ async def download_cached_research_report(
         },
     )
     return response
+
+
+@app.get("/v1/reports/queue")
+@app.get("/api/reports/queue")
+async def list_report_queue_jobs(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
+    require_api_access(x_api_key)
+    jobs = global_queue_manager.list_jobs(user_id=user_id)
+    return {"jobs": [j.to_dict() for j in jobs]}
+
+
+@app.get("/v1/reports/queue/{job_id}")
+@app.get("/api/reports/queue/{job_id}")
+async def get_report_queue_job_status(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
+    require_api_access(x_api_key)
+    job = global_queue_manager.get_job(job_id)
+    if not job or job.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Queued report job not found.")
+    return job.to_dict()
+
+
+@app.post("/v1/reports/{job_id}/retry")
+@app.post("/api/reports/{job_id}/retry")
+async def retry_queued_report(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
+    require_api_access(x_api_key)
+    job = global_queue_manager.get_job(job_id)
+    if not job or job.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Queued report job not found.")
+    global_queue_manager.retry_job(job_id)
+    return {
+        "status": "queued",
+        "job_id": job.id,
+        "topic": job.topic,
+        "message": f"Report retry queued ({default_queue_config.estimated_wait_range}).",
+        "estimated_wait": default_queue_config.estimated_wait_range,
+    }
+
+
+@app.get("/v1/reports/queue/{job_id}/download")
+@app.get("/api/reports/queue/{job_id}/download")
+async def download_ready_queued_report(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
+    require_api_access(x_api_key)
+    job = global_queue_manager.get_job(job_id)
+    if not job or job.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Queued report job not found.")
+    if job.status != "ready" or not job.document_base64:
+        raise HTTPException(status_code=400, detail=f"Report is not ready for download (current status: {job.status}).")
+    doc_bytes = base64.b64decode(job.document_base64)
+    filename = job.document_name or f"{job.report_type}-report.docx"
+    return Response(
+        content=doc_bytes,
+        media_type=DOCX_CONTENT_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/v1/notifications")
+@app.get("/api/notifications")
+async def list_user_notifications(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    user_id = supabase_user_id(user)
+    require_api_access(x_api_key)
+    notifications = NotificationService.get_user_notifications(user_id)
+    return {"notifications": notifications}
 
 
 @app.get("/v1/research")
