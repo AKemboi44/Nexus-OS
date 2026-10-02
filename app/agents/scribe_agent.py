@@ -92,11 +92,7 @@ class ScribeResearchAgent:
         author_p = doc.add_paragraph()
         author_p.alignment = 1
         author_p.paragraph_format.space_before = Pt(24)
-        author_p.add_run(
-            "Abraham Kiptoo Kemboi\n"
-            "Nexus Research AI Collective Core\n"
-            "Post-MVP Automation Node Suite"
-        )
+        author_p.add_run("Prepared with Nexus Research AI")
 
         doc.add_page_break()
         return self._write_synthesis_body(
