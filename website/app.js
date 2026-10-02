@@ -185,12 +185,42 @@
         return response;
     }
 
+    function extractErrorMessage(payload, status) {
+        if (!payload) return `Request failed (${status}).`;
+        if (typeof payload === 'string') return payload;
+        if (typeof payload.detail === 'string') return payload.detail;
+        if (payload.detail && typeof payload.detail === 'object') {
+            if (Array.isArray(payload.detail)) {
+                const msgs = payload.detail.map(d => (d && typeof d === 'object') ? (d.msg || d.message || JSON.stringify(d)) : String(d)).filter(Boolean);
+                if (msgs.length) return msgs.join(', ');
+            } else if (payload.detail.message) {
+                return String(payload.detail.message);
+            } else if (payload.detail.detail) {
+                return String(payload.detail.detail);
+            }
+        }
+        if (typeof payload.message === 'string') return payload.message;
+        if (typeof payload.error === 'string') return payload.error;
+        if (typeof payload === 'object') {
+            if (payload.message && typeof payload.message === 'object') {
+                return extractErrorMessage(payload.message, status);
+            }
+        }
+        try {
+            return JSON.stringify(payload);
+        } catch (_) {
+            return `Request failed (${status}).`;
+        }
+    }
+
     async function apiJson(path, options = {}) {
         const response = await apiFetch(path, options);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-            const error = new Error(payload.detail || payload.message || `Request failed (${response.status}).`);
+            const message = extractErrorMessage(payload, response.status);
+            const error = new Error(message);
             error.status = response.status;
+            error.payload = payload;
             throw error;
         }
         return payload;
@@ -199,7 +229,7 @@
     async function refreshEntitlement() {
         const response = await apiFetch(`/v1/entitlements/${encodeURIComponent(session.user.id)}`);
         const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.detail || 'Could not refresh subscription status.');
+        if (!response.ok) throw new Error(extractErrorMessage(result, response.status) || 'Could not refresh subscription status.');
         paid = response.ok && Boolean(result.active);
         document.querySelectorAll('[data-paid-only]').forEach(option => {
             option.disabled = !paid;
@@ -621,7 +651,7 @@
             const response = await apiFetch(`/v1/research/${encodeURIComponent(activeResult.research_run_id)}/dossier`);
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
-                throw new Error(error.detail || `Download failed (${response.status}).`);
+                throw new Error(extractErrorMessage(error, response.status) || `Download failed (${response.status}).`);
             }
             safeDownload(await response.blob(), activeResult.discovery_report_name || 'research-dossier.xlsx');
             const remaining = response.headers.get('X-Dossier-Downloads-Remaining');
@@ -834,6 +864,9 @@
         } catch (error) {
             failActivityProgress('scan', 'Evidence scan stopped before completion.');
             setMessage(scanStatus, error.message, 'error');
+            if (error.status === 403 || error.payload?.detail?.requires_bundle) {
+                if (!paid) byId('upgradePlan').hidden = false;
+            }
         } finally {
             button.disabled = false;
         }

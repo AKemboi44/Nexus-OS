@@ -416,6 +416,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     refreshEntitlements();
 
+    function extractErrorMessage(payload, status) {
+        if (!payload) return `Request failed (${status || 'unknown'}).`;
+        if (typeof payload === 'string') return payload;
+        if (typeof payload.detail === 'string') return payload.detail;
+        if (payload.detail && typeof payload.detail === 'object') {
+            if (Array.isArray(payload.detail)) {
+                const msgs = payload.detail.map(d => (d && typeof d === 'object') ? (d.msg || d.message || JSON.stringify(d)) : String(d)).filter(Boolean);
+                if (msgs.length) return msgs.join(', ');
+            } else if (payload.detail.message) {
+                return String(payload.detail.message);
+            } else if (payload.detail.detail) {
+                return String(payload.detail.detail);
+            }
+        }
+        if (typeof payload.message === 'string') return payload.message;
+        if (typeof payload.error === 'string') return payload.error;
+        if (typeof payload === 'object') {
+            if (payload.message && typeof payload.message === 'object') {
+                return extractErrorMessage(payload.message, status);
+            }
+        }
+        try {
+            return JSON.stringify(payload);
+        } catch (_) {
+            return `Request failed (${status || 'unknown'}).`;
+        }
+    }
+
     let currentRoutingSessionToken = "idle";
     async function sendBackgroundRequest(request) {
         const isReport = request.action === 'trigger_docx_generation';
@@ -444,9 +472,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
-                const requestError = new Error(data?.detail || data?.message ||
-                    `Research API request failed (${response.status}).`);
+                const message = extractErrorMessage(data, response.status);
+                const requestError = new Error(message);
                 requestError.status = response.status;
+                requestError.payload = data;
                 throw requestError;
             }
             if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -801,7 +830,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.status === 'error') {
             reportProcessingActive = false;
             const isReportRequest = lastRequestContext?.action === 'trigger_docx_generation';
-            const message = data.message || 'Processing failed.';
+            const message = (data.message && typeof data.message === 'object')
+                ? extractErrorMessage(data.message, data.status_code || 500)
+                : (data.message || 'Processing failed.');
             if (isReportRequest && draftStatus) {
                 draftStatus.className = 'error';
                 draftStatus.textContent = message;
