@@ -109,6 +109,19 @@ def test_scribe_replaces_garbled_repetitive_abstract_with_clean_fallback():
     assert len(abstract.split()) >= 100
 
 
+def test_scribe_prose_cleanup_handles_long_repeated_input():
+    repeated_dash = "claim" + ("--" * 10000) + "supported"
+    repeated_words = ("evidence " * 10000).strip()
+
+    cleaned = ScribeResearchAgent._clean_prose(
+        f"{repeated_dash}; {repeated_words}"
+    )
+
+    assert "--" not in cleaned
+    assert "evidence evidence" not in cleaned
+    assert cleaned.endswith("evidence")
+
+
 def test_scribe_formats_publication_style_abstract_with_keywords():
     agent = ScribeResearchAgent()
     agent.client = None
