@@ -520,7 +520,7 @@ class ScribeResearchAgent:
                 f"details={error})"
             )
             raise ReportSynthesisError(
-                f"The configured report model ({self.model or 'gemini-3.6-flash'}) returned invalid JSON after a fresh structured-output retry. Verify Railway is using the latest deployment and, for Claude, that CLAUDE_MODEL supports structured outputs. Increase CLAUDE_MAX_OUTPUT_TOKENS only if logs show the response stopped at max_tokens."
+                str(error)
             ) from error
         except Exception as error:
             if isinstance(error, ReportSynthesisError):
@@ -699,6 +699,7 @@ class ScribeResearchAgent:
             "model": selected_model,
         }
         last_error = None
+        last_response_details = None
         for attempt in range(2):
             generation_config["model"] = selected_model if attempt == 0 else default_model
             retry_prompt = prompt if attempt == 0 else (
@@ -712,15 +713,25 @@ class ScribeResearchAgent:
                 config=generation_config,
             )
             response_text = str(getattr(response, "text", "") or "").strip()
-            if getattr(response, "stop_reason", None) == "max_tokens":
-                raise ReportSynthesisError(
-                    "The report model stopped before completing the proposal. Increase CLAUDE_MAX_OUTPUT_TOKENS and retry."
-                )
+            stop_reason = getattr(response, "stop_reason", None)
             try:
                 return self._parse_proposal_json(response_text)
             except ValueError as error:
                 last_error = error
-        raise ValueError(f"JSON repair failed: {last_error}") from last_error
+                last_response_details = (
+                    f"model={generation_config['model']}, stop_reason={stop_reason or 'unknown'}, "
+                    f"response_characters={len(response_text)}, parse_error={error}"
+                )
+                if stop_reason == "max_tokens":
+                    raise ReportSynthesisError(
+                        f"The report model stopped at its output limit ({last_response_details}). "
+                        "Increase CLAUDE_MAX_OUTPUT_TOKENS and retry."
+                    ) from error
+        raise ValueError(
+            f"The report model returned invalid JSON after a structured-output retry "
+            f"({last_response_details}). Verify the Railway deployment and Claude model "
+            "configuration. Increase CLAUDE_MAX_OUTPUT_TOKENS only when stop_reason is max_tokens."
+        ) from last_error
 
     @staticmethod
     def _parse_proposal_json(response_text):

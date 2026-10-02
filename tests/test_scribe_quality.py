@@ -545,6 +545,23 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     assert requested_models == ["custom-claude-model", "claude-sonnet-4-5-20250929"]
 
 
+def test_claude_invalid_json_reports_retry_diagnostics_without_blind_token_advice():
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    agent.model = "claude-sonnet-4-5-20250929"
+    agent._generate_content = lambda **kwargs: SimpleNamespace(
+        text='{"partial":',
+        stop_reason="end_turn",
+    )
+
+    with pytest.raises(ValueError) as error:
+        agent._generate_proposal_json("Original schema")
+
+    assert "stop_reason=end_turn" in str(error.value)
+    assert "response_characters=11" in str(error.value)
+    assert "CLAUDE_MAX_OUTPUT_TOKENS only when stop_reason is max_tokens" in str(error.value)
+
+
 def test_proposal_editor_explains_claude_output_limit():
     agent = ScribeResearchAgent()
     agent.client = object()
