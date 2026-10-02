@@ -5,6 +5,7 @@ import re
 import json
 import time
 from types import SimpleNamespace
+from importlib.metadata import PackageNotFoundError, version
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -40,6 +41,13 @@ class ScribeResearchAgent:
                 self.client = anthropic.Anthropic(api_key=claude_api_key)
                 self.provider = "anthropic"
                 self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+                try:
+                    sdk_version = version("anthropic")
+                except PackageNotFoundError:
+                    sdk_version = "unknown"
+                print(
+                    f"[Scribe Editorial Notice]: Anthropic SDK version={sdk_version}."
+                )
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Claude editor unavailable: {error}")
         elif gemini_api_key:
@@ -535,8 +543,55 @@ class ScribeResearchAgent:
                 ) from error
             print(f"[Scribe Proposal Warning]: Proposal synthesis unavailable: {error}")
             raise ReportSynthesisError(
-                "The proposal language model could not complete the report. Please retry shortly."
+                self._provider_failure_message(error)
             ) from error
+
+    def _provider_failure_message(self, error):
+        if self.provider != "anthropic":
+            return (
+                f"The {self.provider or 'configured'} proposal model could not complete the report "
+                f"({type(error).__name__}). Check the report service logs and retry."
+            )
+
+        status_code = getattr(error, "status_code", None)
+        if status_code is None:
+            response = getattr(error, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if status_code == 401:
+            return "Claude rejected the API key. Verify CLAUDE_API_KEY in the Railway API service."
+        if status_code == 403:
+            return (
+                f"Claude denied access to model {self.model or 'claude-sonnet-5-5'}. "
+                "Check model access and workspace permissions for the configured API key."
+            )
+        if status_code == 404:
+            return (
+                f"Claude could not find model {self.model or 'claude-sonnet-5-5'}. "
+                "Set CLAUDE_MODEL to a model enabled for this API key."
+            )
+        if status_code == 400:
+            return (
+                "Claude rejected the report request (HTTP 400). Verify that the Anthropic SDK "
+                "dependency is current and that the configured model supports structured outputs; "
+                "the specific provider error is recorded in Railway logs."
+            )
+        if status_code == 429:
+            return (
+                "Claude is at its API rate or usage limit. Check Anthropic Console usage, "
+                "rate limits, and billing, then retry."
+            )
+        if status_code == 529 or (isinstance(status_code, int) and status_code >= 500):
+            return "Claude is temporarily unavailable. Retry the report shortly."
+        if isinstance(error, (TypeError, AttributeError)):
+            return (
+                "The installed Anthropic SDK is incompatible with the Claude report request. "
+                "Redeploy so Railway installs the required anthropic>=1.9.0 dependency."
+            )
+        return (
+            f"The Claude report request failed ({type(error).__name__}"
+            f"{f', HTTP {status_code}' if status_code else ''}). "
+            "Check the Claude API error in Railway logs and verify the model configuration."
+        )
 
     def _generate_content(self, contents, config=None):
         if self.provider == "anthropic":
