@@ -1936,6 +1936,7 @@ class ScribeResearchAgent:
         if (
             not body
             or self._has_unusable_abstract_marker(body)
+            or self._has_non_synthesis_abstract_disclaimer(body)
             or "synthesis unavailable" in body.lower()
             or (source_is_corrupt and not edited)
             or self._has_repeated_word_corruption(body)
@@ -1961,6 +1962,18 @@ class ScribeResearchAgent:
             or "synthesis generation service failed" in normalized
             or "no usable content was recoverable" in normalized
         )
+
+    @staticmethod
+    def _has_non_synthesis_abstract_disclaimer(text):
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+        return any(marker in normalized for marker in (
+            "source records provided are severely corrupted",
+            "source records are severely corrupted",
+            "unsafe to synthesize a coherent research abstract",
+            "corrupted abstracts lack sufficient clarity",
+            "reliable synthesis would require access to uncorrupted source materials",
+            "readers should consult the original publications directly",
+        ))
 
     def _editorial_abstract(self, text, topic, sources):
         if not self.client or not text or self._editorial_calls >= 5:

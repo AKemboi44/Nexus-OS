@@ -146,6 +146,32 @@ def test_scribe_replaces_cautious_abstract_error_marker_with_evidence_fallback()
     )
 
 
+def test_scribe_replaces_source_quality_disclaimer_abstract_with_evidence_fallback():
+    agent = ScribeResearchAgent()
+    agent.client = None
+    abstract = agent._format_abstract(
+        "The source records provided are severely corrupted with extensive word repetition and "
+        "fragmented abstracts, making it unsafe to synthesize a coherent research abstract on "
+        "contextual intent classification and temporal intent decay models. While the collection "
+        "includes relevant studies, the corrupted abstracts lack sufficient clarity to accurately "
+        "represent their methods, findings, or conclusions. Readers should consult the original "
+        "publications directly to obtain accurate information about these studies.",
+        "contextual intent classification",
+        [{
+            "title": "Evidence",
+            "authors": ["Author"],
+            "year": 2024,
+            "venue": "Journal of Evidence",
+        }],
+    )
+
+    assert "source records provided are severely corrupted" not in abstract.lower()
+    assert "unsafe to synthesize" not in abstract.lower()
+    assert abstract.startswith(
+        "This report examines contextual intent classification through a structured review"
+    )
+
+
 def test_scribe_prose_cleanup_handles_long_repeated_input():
     repeated_dash = "claim" + ("--" * 10000) + "supported"
     repeated_words = ("evidence " * 10000).strip()
