@@ -619,20 +619,8 @@
         const button = byId('reDownloadReport');
         button.disabled = true;
         try {
-            if (!lastReportDownload.documentBase64) {
-                const cached = await apiJson(
-                    `/v1/reports/cache/${encodeURIComponent(lastReportDownload.cacheId)}?report_type=${encodeURIComponent(lastReportDownload.reportType)}`
-                );
-                lastReportDownload.documentBase64 = cached.document_base64;
-                lastReportDownload.documentName = cached.document_name;
-            }
-            safeDownload(
-                base64ToBlob(
-                    lastReportDownload.documentBase64,
-                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                ),
-                lastReportDownload.documentName
-            );
+            const cacheDownloadUrl = `/v1/reports/cache/${encodeURIComponent(lastReportDownload.cacheId)}/download?report_type=${encodeURIComponent(lastReportDownload.reportType)}`;
+            await downloadReportDirectly(cacheDownloadUrl, lastReportDownload.documentName);
             setMessage(reportStatus, 'Your previously generated Word report was downloaded.', 'success');
         } catch (error) {
             setMessage(reportStatus, error.message, 'error');
@@ -782,6 +770,54 @@
         byId('reportProgressLabel').textContent = 'Report generation stopped before completion.';
     }
 
+    async function downloadReportDirectly(downloadUrl, filename) {
+        const response = await apiFetch(downloadUrl);
+        if (!response.ok) {
+            const errJson = await response.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(errJson, response.status) || `Report download failed (${response.status}).`);
+        }
+        const blob = await response.blob();
+        safeDownload(blob, filename || 'nexus-research-report.docx');
+    }
+
+    async function pollReportJob(jobId, runReference, reportType) {
+        const maxAttempts = 60;
+        const intervalMs = 2500;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+            
+            const statusResponse = await apiFetch(`/v1/reports/${encodeURIComponent(jobId)}/status`);
+            if (!statusResponse.ok) {
+                const errJson = await statusResponse.json().catch(() => ({}));
+                throw new Error(extractErrorMessage(errJson, statusResponse.status) || 'Failed to check report status.');
+            }
+
+            const job = await statusResponse.json();
+
+            if (job.status === 'completed' || job.status === 'ready') {
+                const downloadUrl = job.download_url || `/v1/reports/${encodeURIComponent(jobId)}/download`;
+                const filename = job.document_name || `${reportType}-report.docx`;
+                await downloadReportDirectly(downloadUrl, filename);
+                return job;
+            }
+
+            if (job.status === 'failed') {
+                const failureErr = new Error(job.error_message || job.error_reason || 'Report generation could not be completed.');
+                failureErr.jobId = jobId;
+                throw failureErr;
+            }
+
+            // Update UI progress while waiting
+            const progressPercent = Math.min(95, 30 + Math.floor((attempt / maxAttempts) * 65));
+            setReportProgress(progressPercent, `Synthesizing report… (${job.estimated_wait || 'in queue'})`);
+        }
+
+        const timeoutErr = new Error('Report synthesis timed out. Your request is queued and will be ready shortly.');
+        timeoutErr.jobId = jobId;
+        throw timeoutErr;
+    }
+
     async function generateReport(reportType) {
         if (!activeResult) return;
         if (reportType === 'full_starter' && !paid) {
@@ -794,8 +830,11 @@
         setMessage(reportStatus, 'Preparing your Word report…');
         byId('reportStatus').classList.add('status-callout');
         startReportProgress(reportType);
+        
+        const runRef = activeResult.research_run_id || (Math.random().toString(36).substring(2, 10));
+
         try {
-            const report = await apiJson('/v1/reports', {
+            const reportResponse = await apiJson('/v1/reports', {
                 method: 'POST',
                 body: JSON.stringify({
                     topic: activeResult.query || byId('topic').value.trim(),
@@ -806,43 +845,76 @@
                 })
             });
 
-            if (report.status === 'queued' || report.action === 'report_queued_pending' || (!report.document_base64 && report.message)) {
-                finishReportProgress('Report synthesis request queued.');
-                setMessage(
-                    reportStatus,
-                    report.message || 'Report synthesis request queued (usually under 20 minutes). Your report will be available once synthesis completes.',
-                    'info'
-                );
+            const jobId = reportResponse.job_id || reportResponse.report_id || reportResponse.id;
+            const filename = reportResponse.document_name || `${reportType}-report.docx`;
+
+            // If immediate download is ready
+            if (reportResponse.status === 'ready' || reportResponse.status === 'success' || reportResponse.action === 'docx_generation_complete' || reportResponse.action === 'cached_docx_download') {
+                const downloadUrl = reportResponse.download_url || (reportResponse.report_cache_id ? `/v1/reports/cache/${encodeURIComponent(reportResponse.report_cache_id)}/download?report_type=${reportType}` : null);
+                
+                if (downloadUrl) {
+                    await downloadReportDirectly(downloadUrl, filename);
+                } else if (reportResponse.document_base64) {
+                    safeDownload(
+                        base64ToBlob(reportResponse.document_base64, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+                        filename
+                    );
+                }
+
+                rememberReportDownload(reportResponse);
+
+                if (reportResponse.degraded) {
+                    finishReportProgress('Limited evidence-grounded fallback downloaded.');
+                    setMessage(
+                        reportStatus,
+                        'Limited evidence-grounded fallback downloaded. It was created from validated source metadata because AI providers are temporarily at capacity. Your dossier is safe.',
+                        'error'
+                    );
+                } else {
+                    finishReportProgress('Report ready and downloaded.');
+                    setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
+                }
                 byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
                 return;
             }
 
-            safeDownload(
-                base64ToBlob(report.document_base64, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-                report.document_name || 'nexus-research-report.docx'
-            );
-            rememberReportDownload(report);
-            if (report.degraded) {
-                finishReportProgress('Limited evidence-grounded fallback downloaded.');
+            // If job is queued or in-progress, poll for completion
+            if (reportResponse.status === 'queued' || reportResponse.action === 'report_queued_pending' || jobId) {
                 setMessage(
                     reportStatus,
-                    'Limited evidence-grounded fallback downloaded. It is not AI-synthesized and was created only from your validated source metadata and dossier records because all configured AI providers are temporarily quota/rate-limited. It was not saved as an AI report; generate again later for the full AI-synthesized report.',
-                    'error'
+                    reportResponse.message || 'Report synthesis request queued. Generating document…',
+                    'info'
                 );
-            } else {
+                
+                const completedJob = await pollReportJob(jobId, runRef, reportType);
+                rememberReportDownload(completedJob);
                 finishReportProgress('Report ready and downloaded.');
-                setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
+                setMessage(reportStatus, 'Your Word report was synthesized and downloaded.', 'success');
+                byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
+                return;
             }
-            byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
+
+            throw new Error(reportResponse.message || 'Report could not be generated.');
+
         } catch (error) {
             failReportProgress();
-            setMessage(
-                reportStatus,
-                error.status === 503
-                    ? `${error.message} Your research is still saved; please retry in a few minutes.`
-                    : error.message,
-                'error'
-            );
+            const referenceId = error.jobId || runRef;
+            
+            // Build user-friendly error card HTML
+            const errorMessageHtml = `
+                <div class="report-error-card">
+                    <strong>Report generation couldn't be completed.</strong>
+                    <p style="margin: 6px 0 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</p>
+                    <div style="font-size: 0.85em; opacity: 0.85; margin-bottom: 8px;">Reference: <code>${referenceId}</code></div>
+                    <button type="button" class="button secondary small" onclick="window.NexusUI ? window.NexusUI.retryReport('${reportType}') : null">Try Again</button>
+                </div>
+            `;
+            
+            if (reportStatus) {
+                reportStatus.className = 'form-message error is-error';
+                reportStatus.innerHTML = errorMessageHtml;
+                reportStatus.hidden = false;
+            }
         } finally {
             button.disabled = false;
         }
@@ -1088,6 +1160,9 @@
         document.querySelectorAll('[data-plan]').forEach(button => {
             button.addEventListener('click', () => startSubscription(button.dataset.plan));
         });
+        window.NexusUI = {
+            retryReport: (type) => generateReport(type || 'proposal')
+        };
         byId('downloadExcel').addEventListener('click', downloadExcel);
         byId('proposalReport').addEventListener('click', () => generateReport('proposal'));
         byId('fullReport').addEventListener('click', () => generateReport('full_starter'));

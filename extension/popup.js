@@ -837,9 +837,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const message = (data.message && typeof data.message === 'object')
                 ? extractErrorMessage(data.message, data.status_code || 500)
                 : (data.message || 'Processing failed.');
+            const referenceId = data.job_id || data.run_id || (lastRequestContext?.topic ? Math.random().toString(36).substring(2, 10) : 'nexus_err');
+            
             if (isReportRequest && draftStatus) {
                 draftStatus.className = 'error';
-                draftStatus.textContent = message;
+                draftStatus.innerHTML = `
+                    <div>
+                        <strong>Report generation couldn't be completed.</strong>
+                        <div style="margin: 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</div>
+                        <div style="font-size: 0.85em; opacity: 0.85;">Reference: <code>${referenceId}</code></div>
+                    </div>
+                `;
                 draftStatus.style.display = 'block';
                 if (upgradeFromReportBtn) {
                     upgradeFromReportBtn.style.display = data.status_code === 403 ? 'block' : 'none';
@@ -860,7 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sProgContainer) sProgContainer.style.display = 'none';
             sendAnalytics(
                 isReportRequest ? 'report_failed' : 'scan_failed',
-                {message, status_code: data.status_code || null}
+                {message, status_code: data.status_code || null, reference_id: referenceId}
             );
             currentRoutingSessionToken = "idle";
             return;

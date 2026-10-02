@@ -70,21 +70,30 @@ class QueuedReportJob:
         self.priority = priority if priority != 0 else (10 if is_paid else 0)
 
     def to_dict(self) -> dict:
+        is_completed = (self.status == "ready" or self.status == "completed")
+        is_failed = (self.status == "failed")
         return {
             "id": self.id,
+            "job_id": self.id,
+            "report_id": self.id,
             "user_id": self.user_id,
             "topic": self.topic,
             "report_type": self.report_type,
             "domain": self.domain,
             "custom_prompt": self.custom_prompt,
             "included_sources_count": len(self.included_sources),
-            "status": self.status,
+            "status": "completed" if is_completed else self.status,
+            "raw_status": self.status,
+            "is_completed": is_completed,
+            "is_failed": is_failed,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "attempts": self.attempts,
             "error_reason": self.error_reason,
+            "error_message": self.error_reason,
             "document_name": self.document_name,
             "has_document": bool(self.document_base64),
+            "download_url": f"/v1/reports/{self.id}/download" if is_completed else None,
             "audit_storage_path": self.audit_storage_path,
             "audit_filename": self.audit_filename,
             "estimated_wait": self.estimated_wait,

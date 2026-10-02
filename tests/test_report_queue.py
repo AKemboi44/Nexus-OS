@@ -170,3 +170,20 @@ def test_manual_retry_job_re_enqueues():
     queue.retry_job(job.id)
     assert queue.get_job(job.id).status == "queued"
     assert queue.get_job(job.id).attempts == 0
+
+
+def test_job_to_dict_standard_status_and_download_url():
+    queue = ReportQueueManager()
+    job = queue.enqueue(user_id="user-xyz", topic="Async Architecture")
+    d = job.to_dict()
+    assert d["status"] == "queued"
+    assert d["is_completed"] is False
+    assert d["download_url"] is None
+
+    # Mark ready / completed
+    queue.mark_ready(job.id, b"fake_docx_bytes", "async-report.docx")
+    d_ready = job.to_dict()
+    assert d_ready["status"] == "completed"
+    assert d_ready["is_completed"] is True
+    assert d_ready["download_url"] == f"/v1/reports/{job.id}/download"
+    assert d_ready["document_name"] == "async-report.docx"

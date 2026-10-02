@@ -337,6 +337,7 @@ def cached_report_response(
     cache_key: str,
     report_type: str,
 ) -> Dict[str, Any]:
+    cache_id = report_cache_id(cache_key)
     return {
         "status": "success",
         "action": "cached_docx_download",
@@ -344,9 +345,11 @@ def cached_report_response(
         "degraded": False,
         "document_name": Path(cache_key).name,
         "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+        "download_url": f"/v1/reports/cache/{cache_id}?report_type={report_type}",
+        "report_id": cache_id,
         "report_type": report_type,
         "cache_hit": True,
-        "report_cache_id": report_cache_id(cache_key),
+        "report_cache_id": cache_id,
         "report_cache_version": REPORT_CACHE_VERSION,
     }
 
@@ -920,6 +923,7 @@ async def generate_research_report(
                         supabase_user_id(user),
                         error,
                     )
+                cache_id_val = report_cache_id(cache_key)
                 response = {
                     "status": "ready",
                     "action": "docx_generation_complete",
@@ -927,10 +931,12 @@ async def generate_research_report(
                     "degraded": False,
                     "document_name": report_path.name,
                     "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+                    "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
+                    "report_id": cache_id_val,
                     "report_type": payload.report_type,
                     "quality_report": jsonable_encoder(dossier.quality_report),
                     "cache_hit": False,
-                    "report_cache_id": report_cache_id(cache_key),
+                    "report_cache_id": cache_id_val,
                     "report_cache_version": REPORT_CACHE_VERSION,
                 }
                 telemetry = scribe_telemetry(scribe)
@@ -1034,9 +1040,11 @@ async def generate_research_report(
 
 
 @app.get("/v1/reports/cache/{cache_id}")
+@app.get("/api/reports/cache/{cache_id}")
 async def download_cached_research_report(
     cache_id: str,
     report_type: str = "proposal",
+    download: bool = False,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
@@ -1090,7 +1098,7 @@ async def download_cached_research_report(
             {"duration_ms": elapsed_milliseconds(started_at), "report_type": report_type, "error_category": "dependency_failure"},
         )
         raise HTTPException(status_code=503, detail="Cached report download is unavailable.") from error
-    response = cached_report_response(document_bytes, cache_key, report_type)
+    
     record_backend_analytics(
         "report_cache_redownload_completed",
         user_id,
@@ -1101,7 +1109,32 @@ async def download_cached_research_report(
             "outcome_category": "downloaded",
         },
     )
-    return response
+    
+    if download:
+        filename = f"{report_type}-report.docx"
+        return Response(
+            content=document_bytes,
+            media_type=DOCX_CONTENT_TYPE,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    return cached_report_response(document_bytes, cache_key, report_type)
+
+
+@app.get("/v1/reports/cache/{cache_id}/download")
+@app.get("/api/reports/cache/{cache_id}/download")
+async def download_cached_research_report_file(
+    cache_id: str,
+    report_type: str = "proposal",
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    return await download_cached_research_report(
+        cache_id=cache_id,
+        report_type=report_type,
+        download=True,
+        authorization=authorization,
+        x_api_key=x_api_key,
+    )
 
 
 @app.get("/v1/reports/queue")
@@ -1154,6 +1187,26 @@ async def retry_queued_report(
         "message": f"Report retry queued ({default_queue_config.estimated_wait_range}).",
         "estimated_wait": default_queue_config.estimated_wait_range,
     }
+
+
+@app.get("/v1/reports/{job_id}/status")
+@app.get("/api/reports/{job_id}/status")
+async def get_report_job_status_alias(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    return await get_report_queue_job_status(job_id=job_id, authorization=authorization, x_api_key=x_api_key)
+
+
+@app.get("/v1/reports/{job_id}/download")
+@app.get("/api/reports/{job_id}/download")
+async def download_report_job_alias(
+    job_id: str,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    return await download_ready_queued_report(job_id=job_id, authorization=authorization, x_api_key=x_api_key)
 
 
 @app.get("/v1/reports/queue/{job_id}/download")
