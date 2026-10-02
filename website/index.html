@@ -8,7 +8,7 @@
   <title>Nexus Research AI — Evidence, made clearer</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="canonical" href="https://www.brisklightai.com/">
-  <link rel="stylesheet" href="/styles.css?v=20261002-4">
+  <link rel="stylesheet" href="/styles.css?v=20261002-6">
 </head>
 <body>
   <header class="site-header">
@@ -158,6 +158,10 @@
           <div class="deliverables-intro"><span class="deliverables-icon" aria-hidden="true">✦</span><div><strong>Your research deliverables</strong><span>Download and use the evidence from this scan.</span></div></div>
           <div class="result-actions"><button class="button button-export button-excel" id="downloadExcel" type="button"><span aria-hidden="true">▦</span><span><strong>Download Excel dossier</strong><small>Full source audit · .xlsx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-proposal" id="proposalReport" type="button"><span aria-hidden="true">▤</span><span><strong>Download proposal report</strong><small>Structured research report · .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-full" id="fullReport" type="button"><span aria-hidden="true">▤</span><span><strong>Complete literature review</strong><small>Full cited review · paid</small></span><span class="export-arrow" aria-hidden="true">↗</span></button></div>
           <p class="form-message status-callout" id="reportStatus" role="status" aria-live="polite"></p>
+          <div class="report-progress" id="reportProgress" hidden>
+            <div class="report-progress-ring" id="reportProgressRing" role="progressbar" aria-label="Estimated report generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="reportProgressPercent">0%</span></div>
+            <div><strong id="reportProgressLabel">Preparing report</strong><span>Estimated progress while the report is generated.</span></div>
+          </div>
         </div>
         <div class="results-columns"><section class="evidence-panel included-panel"><h4><span class="panel-indicator">✓</span> Included evidence<small>Passed your review criteria</small></h4><div id="includedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="includedPagination" hidden><span id="includedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="includedPrev" type="button" aria-label="Previous included sources page">←</button><button class="button button-outline library-page-button" id="includedNext" type="button" aria-label="Next included sources page">→</button></div></div></section><section class="evidence-panel filtered-panel"><h4><span class="panel-indicator">–</span> Filtered candidates<small>Excluded or below the selected criteria</small></h4><div id="excludedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="excludedPagination" hidden><span id="excludedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="excludedPrev" type="button" aria-label="Previous filtered sources page">←</button><button class="button button-outline library-page-button" id="excludedNext" type="button" aria-label="Next filtered sources page">→</button></div></div></section></div>
       </section>
@@ -209,6 +213,6 @@
     <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
     <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
   </footer>
-  <script src="/app.js?v=20261002-5" defer></script>
+  <script src="/app.js?v=20261002-6" defer></script>
 </body>
 </html>

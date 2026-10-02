@@ -188,7 +188,11 @@
     async function apiJson(path, options = {}) {
         const response = await apiFetch(path, options);
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.detail || payload.message || `Request failed (${response.status}).`);
+        if (!response.ok) {
+            const error = new Error(payload.detail || payload.message || `Request failed (${response.status}).`);
+            error.status = response.status;
+            throw error;
+        }
         return payload;
     }
 
@@ -522,6 +526,62 @@
         }
     }
 
+    let reportProgressTimer = null;
+
+    function setReportProgress(percent, label) {
+        const normalizedPercent = Math.min(100, Math.max(0, Math.round(percent)));
+        const progress = byId('reportProgress');
+        const ring = byId('reportProgressRing');
+        ring.style.setProperty('--report-progress', `${normalizedPercent}%`);
+        ring.setAttribute('aria-valuenow', String(normalizedPercent));
+        byId('reportProgressPercent').textContent = `${normalizedPercent}%`;
+        byId('reportProgressLabel').textContent = label;
+        progress.hidden = false;
+    }
+
+    function stopReportProgress() {
+        if (reportProgressTimer !== null) {
+            clearInterval(reportProgressTimer);
+            reportProgressTimer = null;
+        }
+    }
+
+    function startReportProgress(reportType) {
+        stopReportProgress();
+        const progress = byId('reportProgress');
+        progress.classList.remove('is-error', 'is-complete');
+        const startedAt = Date.now();
+        const reportName = reportType === 'full_starter' ? 'literature review' : 'proposal report';
+        const update = () => {
+            const elapsedSeconds = (Date.now() - startedAt) / 1000;
+            const percent = Math.min(92, 8 + Math.sqrt(elapsedSeconds) * 10);
+            const label = elapsedSeconds < 8
+                ? `Preparing evidence for your ${reportName}`
+                : elapsedSeconds < 30
+                    ? `Drafting your ${reportName}`
+                    : 'Validating the synthesis and formatting your document';
+            setReportProgress(percent, label);
+        };
+        update();
+        reportProgressTimer = setInterval(update, 1000);
+    }
+
+    function finishReportProgress(label) {
+        stopReportProgress();
+        const progress = byId('reportProgress');
+        progress.classList.remove('is-error');
+        progress.classList.add('is-complete');
+        setReportProgress(100, label);
+    }
+
+    function failReportProgress() {
+        stopReportProgress();
+        const progress = byId('reportProgress');
+        progress.classList.remove('is-complete');
+        progress.classList.add('is-error');
+        byId('reportProgressLabel').textContent = 'Report generation stopped before completion.';
+    }
+
     async function generateReport(reportType) {
         if (!activeResult) return;
         if (reportType === 'full_starter' && !paid) {
@@ -533,6 +593,7 @@
         button.disabled = true;
         setMessage(reportStatus, 'Preparing your Word report…');
         byId('reportStatus').classList.add('status-callout');
+        startReportProgress(reportType);
         try {
             const report = await apiJson('/v1/reports', {
                 method: 'POST',
@@ -548,10 +609,18 @@
                 base64ToBlob(report.document_base64, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
                 report.document_name || 'nexus-research-report.docx'
             );
+            finishReportProgress('Report ready and downloaded.');
             setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
-            setMessage(reportStatus, error.message, 'error');
+            failReportProgress();
+            setMessage(
+                reportStatus,
+                error.status === 503
+                    ? 'The report service is temporarily unavailable. Your research is still saved; please retry in a few minutes.'
+                    : error.message,
+                'error'
+            );
         } finally {
             button.disabled = false;
         }

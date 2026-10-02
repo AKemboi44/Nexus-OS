@@ -93,6 +93,11 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert "function cleanDisplayedSourceText(text)" in js
     assert "cleanDisplayedSourceText(source.abstract).slice(0, 380)" in js
     assert "cleanDisplayedSourceText(source.abstract).slice(0, 240)" in js
+    assert 'id="reportProgress"' in html
+    assert 'role="progressbar"' in html
+    assert "function startReportProgress(reportType)" in js
+    assert "error.status === 503" in js
+    assert ".report-progress-ring" in css
 
 
 def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
@@ -114,8 +119,8 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
-    assert 'href="/styles.css?v=20261002-4"' in html
-    assert 'src="/app.js?v=20261002-5"' in html
+    assert 'href="/styles.css?v=20261002-6"' in html
+    assert 'src="/app.js?v=20261002-6"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
 
 
