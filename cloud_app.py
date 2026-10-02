@@ -393,7 +393,8 @@ async def execute_cloud_scan(
 ):
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
-    if not payload.topic.strip():
+    topic = payload.topic.strip()
+    if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
     if not 1 <= (payload.max_sources or 0) <= 100:
         raise HTTPException(status_code=400, detail="max_sources must be between 1 and 100.")
@@ -416,7 +417,7 @@ async def execute_cloud_scan(
         dossier_bytes = None
         with tempfile.TemporaryDirectory(prefix="nexus-dossier-") as dossier_directory:
             result_data = pipeline.run_research(
-                query=payload.topic,
+                query=topic,
                 max_sources=payload.max_sources,
                 additional_sources=uploaded_sources,
                 selected_inclusion_reasons=payload.selected_inclusion_reasons,
@@ -477,7 +478,7 @@ async def execute_cloud_scan(
                 {
                     "id": str(run_id),
                     "user_id": supabase_user_id(user),
-                    "query": payload.topic.strip(),
+                    "query": topic,
                     "result": result_data,
                 },
             )
@@ -487,10 +488,10 @@ async def execute_cloud_scan(
                 "saved_dossiers",
                 {
                     "user_id": supabase_user_id(user),
-                    "title": payload.topic.strip()[:200] or "Research dossier",
+                    "title": topic[:200] or "Research dossier",
                     "payload": {
                         "research_run_id": run_record["id"],
-                        "query": payload.topic.strip(),
+                        "query": topic,
                         "status": result_data.get("status"),
                         "discovery_report_name": result_data.get("discovery_report_name"),
                         "included_count": len(included_sources) if isinstance(included_sources, list) else 0,

@@ -450,7 +450,7 @@
         byId('scanResults').hidden = false;
         const topic = String(data.query || '').trim();
         byId('resultTitle').textContent = topic
-            ? topic[0].toLocaleUpperCase() + topic.slice(1)
+            ? topic.replace(/^./u, character => character.toLocaleUpperCase())
             : 'Research evidence';
         resultIncludedSources = Array.isArray(data.included) ? data.included : [];
         resultExcludedSources = Array.isArray(data.excluded) ? data.excluded : [];

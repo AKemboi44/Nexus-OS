@@ -14,6 +14,23 @@ class DossierGenerator:
         self.client = genai.Client(api_key=api_key) if api_key else None
         self.quality_gate = PublicationQualityGate()
 
+    def generate(self, query: str, included_sources: list = None,
+                 excluded_sources: list = None, evidence_summary: list = None,
+                 themes: list = None, scoring_summary: list = None,
+                 decision_rationales: list = None, **kwargs) -> ResearchDossier:
+        dossier = self.generate_comprehensive_dossier(query=query, included_sources=included_sources or [], **kwargs)
+        if excluded_sources is not None:
+            dossier.excluded_sources = excluded_sources
+        if evidence_summary is not None:
+            dossier.evidence_summary = evidence_summary
+        if themes is not None:
+            dossier.themes = themes
+        if scoring_summary is not None:
+            dossier.scoring_summary = scoring_summary
+        if decision_rationales is not None:
+            dossier.decision_rationales = decision_rationales
+        return dossier
+
     def generate_comprehensive_dossier(self, query: str, included_sources: list,
                                        custom_prompt: str = None,
                                        domain: str = "scholarly",
