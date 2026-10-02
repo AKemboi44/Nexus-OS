@@ -521,7 +521,9 @@ def test_proposal_json_parser_rejects_truncated_claude_output():
 def test_claude_invalid_json_gets_one_repair_attempt():
     agent = ScribeResearchAgent()
     agent.provider = "anthropic"
+    agent.model = "custom-claude-model"
     prompts = []
+    requested_models = []
     responses = iter([
         SimpleNamespace(text='{"draft":', stop_reason="end_turn"),
         SimpleNamespace(text='```json\n{"draft": "repaired"}\n```', stop_reason="end_turn"),
@@ -529,6 +531,7 @@ def test_claude_invalid_json_gets_one_repair_attempt():
 
     def generate_content(contents, config):
         prompts.append(contents)
+        requested_models.append(config["model"])
         assert config["max_output_tokens"] == 16384
         return next(responses)
 
@@ -538,7 +541,8 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     assert result == {"draft": "repaired"}
     assert len(prompts) == 2
     assert "Original schema and proposal prompt" in prompts[1]
-    assert '"{\\"draft\\":"' in prompts[1]
+    assert "Regenerate" in prompts[1]
+    assert requested_models == ["custom-claude-model", "claude-sonnet-4-5-20250929"]
 
 
 def test_proposal_editor_explains_claude_output_limit():
