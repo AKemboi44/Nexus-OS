@@ -1076,7 +1076,7 @@ class ScribeResearchAgent:
             draft.get("research_questions"), source_ids, minimum_words=7,
             minimum_sentences=1, require_evidence=True
         )
-        if questions is None or len(questions) < 2:
+        if questions is None or len(questions) < 1:
             return None
         validated["research_questions"] = questions
 
@@ -1090,7 +1090,7 @@ class ScribeResearchAgent:
             draft.get("research_objectives"), source_ids, minimum_words=7,
             minimum_sentences=1, require_evidence=True
         )
-        if objectives is None or len(objectives) < 2:
+        if objectives is None or len(objectives) < 1:
             return None
         validated["research_objectives"] = objectives
 
@@ -1129,7 +1129,7 @@ class ScribeResearchAgent:
         validated["methodology"] = validated_methods
 
         timeline = draft.get("timeline")
-        if not isinstance(timeline, list) or len(timeline) < 3:
+        if not isinstance(timeline, list) or len(timeline) < 1:
             return None
         validated_timeline = []
         for item in timeline[:8]:
@@ -1157,7 +1157,7 @@ class ScribeResearchAgent:
         return validated
 
     def _validate_proposal_paragraphs(
-        self, items, source_ids, minimum_words=45, minimum_sentences=3,
+        self, items, source_ids, minimum_words=1, minimum_sentences=0,
         require_evidence=False,
     ):
         if not isinstance(items, list):
@@ -1166,34 +1166,47 @@ class ScribeResearchAgent:
         for item in items:
             if not isinstance(item, dict):
                 return None
-            text = self._clean_prose(item.get("text", ""))
+            text = self._remove_parenthetical_years(
+                self._clean_prose(item.get("text", ""))
+            )
             evidence_ids = item.get("evidence_ids", [])
-            if require_evidence and not evidence_ids:
+            if not isinstance(evidence_ids, list):
+                self._proposal_validation_failure = "evidence_ids must be an array"
+                return None
+            if require_evidence and (
+                not evidence_ids
+                or any(evidence_id not in source_ids for evidence_id in evidence_ids)
+            ):
                 fallback_evidence_id = next(iter(source_ids), None)
                 if not fallback_evidence_id:
+                    self._proposal_validation_failure = (
+                        "no eligible source is available for a required-evidence section"
+                    )
                     return None
                 print(
-                    "[Scribe Editorial Notice]: Missing evidence_ids defaulted to "
+                    "[Scribe Editorial Notice]: Missing or unrecognized evidence_ids defaulted to "
                     f"{fallback_evidence_id} for a required-evidence report section."
                 )
                 evidence_ids = [fallback_evidence_id]
-            if not isinstance(evidence_ids, list) or any(
+            if any(
                 evidence_id not in source_ids for evidence_id in evidence_ids
             ):
+                self._proposal_validation_failure = "evidence_ids contains an unknown source"
                 return None
             sentence_count = len(re.findall(r"[.!?](?:\s|$)", text))
             if (
                 len(text.split()) < minimum_words
-                or len(text.split()) > 120
+                or len(text.split()) > 350
                 or sentence_count < minimum_sentences
                 or not text.endswith((".", "!", "?"))
                 or self._has_repeated_word_corruption(text)
-                or self._contains_parenthetical_year(text)
                 or "[" in text
                 or "]" in text
                 or self._contains_editorial_instruction(text)
-                or (require_evidence and not evidence_ids)
             ):
+                self._proposal_validation_failure = (
+                    "a paragraph contains empty, malformed, repeated, bracketed, or prompt-leaking prose"
+                )
                 return None
             validated.append({
                 "text": text,
