@@ -75,12 +75,21 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert 'id="historySearch"' in html
     assert 'id="historyDateFilter"' in html
     assert "LIBRARY_PAGE_SIZE = 5" in js
+    assert "HISTORY_PAGE_SIZE = 3" in js
+    assert "filteredRuns.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE)" in js
     assert "Free accounts can choose up to 3 criteria. Upgrade to select up to 5." in js
     assert "function displayName(email)" in js
     assert "mailto:support@brisklightai.com" in js
     assert "WhatsApp support is coming soon" in js
     assert "prefers-reduced-motion: reduce" in css
     assert ".status-callout.success" in css
+    assert 'id="includedPagination"' in html
+    assert 'id="excludedPagination"' in html
+    assert "RESULT_PAGE_SIZE = 3" in js
+    assert ".library-page-button:hover:not(:disabled)" in css
+    assert ".library-page-button:focus-visible" in css
+    assert "function renderEvidencePage(included)" in js
+    assert "sources.slice(start, start + RESULT_PAGE_SIZE)" in js
 
 
 def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
@@ -94,7 +103,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert "Sources Reviewed" in html
     assert "Sources Included" in html
     assert "Sources Filtered Out" in html
-    assert "included.length + excluded.length" in js
+    assert "resultIncludedSources.length + resultExcludedSources.length" in js
     assert "if (counter) counter.textContent = String(count)" in js
     assert "if (resultSummary)" in js
     assert "topic[0].toLocaleUpperCase() + topic.slice(1)" in js
@@ -102,8 +111,8 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
-    assert 'href="/styles.css?v=20261002-2"' in html
-    assert 'src="/app.js?v=20261002-2"' in html
+    assert 'href="/styles.css?v=20261002-4"' in html
+    assert 'src="/app.js?v=20261002-4"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
 
 

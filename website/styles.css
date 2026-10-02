@@ -135,9 +135,12 @@ body { font-size: 16px; }
 .library-controls input, .library-controls select, .library-search { width: 100%; min-width: 0; height: 42px; padding: 0 11px; border: 1px solid #dfe5ef; border-radius: 8px; color: var(--ink); background: #fff; font-size: 12px; }
 .library-search { margin-bottom: 8px; }
 .library-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0 3px; color: #68758b; font-size: 11px; }
+.evidence-pagination { padding-top: 12px; }
 .library-pagination > div { display: flex; gap: 7px; }
-.library-page-button { min-height: 34px; min-width: 38px; padding: 0 8px; font-size: 14px; }
-.library-page-button:disabled { opacity: .45; cursor: not-allowed; }
+.library-page-button { min-height: 40px; min-width: 44px; padding: 0 10px; border: 1px solid #315ee8; color: #2448be; background: #fff; font-size: 17px; font-weight: 800; box-shadow: 0 2px 6px #233b681c; }
+.library-page-button:hover:not(:disabled) { color: #fff; background: #315ee8; box-shadow: 0 3px 9px #315ee83b; }
+.library-page-button:focus-visible { outline: 3px solid #315ee866; outline-offset: 2px; }
+.library-page-button:disabled { border-color: #bdc8dc; color: #77839a; background: #f1f3f7; opacity: 1; cursor: not-allowed; box-shadow: none; }
 .saved-source-abstract { display: -webkit-box; overflow: hidden; margin: 6px 0 0; color: #65738a; font-size: 11px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .saved-source-actions { display: flex; gap: 14px; margin-top: 7px; }
 .saved-source-actions a, .saved-source-actions button { padding: 0; border: 0; color: #315ee8; background: transparent; font-size: 11px; font-weight: 700; }

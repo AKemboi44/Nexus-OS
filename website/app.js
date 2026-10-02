@@ -8,6 +8,8 @@
     const FREE_MAX_SOURCES = 20;
     const FREE_MAX_CRITERIA = 3;
     const LIBRARY_PAGE_SIZE = 5;
+    const HISTORY_PAGE_SIZE = 3;
+    const RESULT_PAGE_SIZE = 3;
     const SESSION_TICK_MARGIN_SECONDS = 60;
 
     const byId = id => document.getElementById(id);
@@ -24,6 +26,10 @@
     let savedSources = [];
     let historyPage = 0;
     let sourcesPage = 0;
+    let resultIncludedSources = [];
+    let resultExcludedSources = [];
+    let includedSourcesPage = 0;
+    let excludedSourcesPage = 0;
 
     function setMessage(element, message, type = '') {
         if (!element) return;
@@ -234,9 +240,9 @@
             return;
         }
         const dossierByRun = new Map(savedDossiers.map(item => [item.payload?.research_run_id, item]));
-        const totalPages = Math.ceil(filteredRuns.length / LIBRARY_PAGE_SIZE);
+        const totalPages = Math.ceil(filteredRuns.length / HISTORY_PAGE_SIZE);
         historyPage = Math.min(historyPage, totalPages - 1);
-        const pageRuns = filteredRuns.slice(historyPage * LIBRARY_PAGE_SIZE, (historyPage + 1) * LIBRARY_PAGE_SIZE);
+        const pageRuns = filteredRuns.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
         pageRuns.forEach(run => {
             const item = document.createElement('article');
             item.className = 'history-item';
@@ -249,7 +255,7 @@
             open.addEventListener('click', () => loadRun(run.id));
             container.appendChild(item);
         });
-        byId('historyPagination').hidden = filteredRuns.length <= LIBRARY_PAGE_SIZE;
+        byId('historyPagination').hidden = filteredRuns.length <= HISTORY_PAGE_SIZE;
         byId('historyPageLabel').textContent = `${historyPage + 1} / ${totalPages} · ${filteredRuns.length} scans`;
         byId('historyPrev').disabled = historyPage === 0;
         byId('historyNext').disabled = historyPage >= totalPages - 1;
@@ -363,6 +369,34 @@
         return card;
     }
 
+    function renderEvidencePage(included) {
+        const sources = included ? resultIncludedSources : resultExcludedSources;
+        const listId = included ? 'includedSources' : 'excludedSources';
+        const paginationId = included ? 'includedPagination' : 'excludedPagination';
+        const labelId = included ? 'includedPageLabel' : 'excludedPageLabel';
+        const previousId = included ? 'includedPrev' : 'excludedPrev';
+        const nextId = included ? 'includedNext' : 'excludedNext';
+        const totalPages = Math.max(1, Math.ceil(sources.length / RESULT_PAGE_SIZE));
+        const currentPage = Math.min(
+            included ? includedSourcesPage : excludedSourcesPage,
+            totalPages - 1
+        );
+        if (included) includedSourcesPage = currentPage;
+        else excludedSourcesPage = currentPage;
+
+        const start = currentPage * RESULT_PAGE_SIZE;
+        byId(listId).replaceChildren(
+            ...sources.slice(start, start + RESULT_PAGE_SIZE).map(source => makeSourceCard(source, included))
+        );
+
+        const pagination = byId(paginationId);
+        pagination.hidden = sources.length <= RESULT_PAGE_SIZE;
+        byId(labelId).textContent =
+            `Showing ${sources.length ? start + 1 : 0}-${Math.min(start + RESULT_PAGE_SIZE, sources.length)} of ${sources.length}`;
+        byId(previousId).disabled = currentPage === 0;
+        byId(nextId).disabled = currentPage >= totalPages - 1;
+    }
+
     function renderResult(data) {
         activeResult = data;
         byId('scanResults').hidden = false;
@@ -370,23 +404,25 @@
         byId('resultTitle').textContent = topic
             ? topic[0].toLocaleUpperCase() + topic.slice(1)
             : 'Research evidence';
-        const included = Array.isArray(data.included) ? data.included : [];
-        const excluded = Array.isArray(data.excluded) ? data.excluded : [];
-        const reviewedCount = included.length + excluded.length;
+        resultIncludedSources = Array.isArray(data.included) ? data.included : [];
+        resultExcludedSources = Array.isArray(data.excluded) ? data.excluded : [];
+        includedSourcesPage = 0;
+        excludedSourcesPage = 0;
+        const reviewedCount = resultIncludedSources.length + resultExcludedSources.length;
         const resultSummary = byId('resultSummary');
         if (resultSummary) {
-            resultSummary.textContent = `${included.length} sources included · ${excluded.length} candidates filtered`;
+            resultSummary.textContent = `${resultIncludedSources.length} sources included · ${resultExcludedSources.length} candidates filtered`;
         }
         [
             ['reviewedCount', reviewedCount],
-            ['includedCount', included.length],
-            ['excludedCount', excluded.length]
+            ['includedCount', resultIncludedSources.length],
+            ['excludedCount', resultExcludedSources.length]
         ].forEach(([id, count]) => {
             const counter = byId(id);
             if (counter) counter.textContent = String(count);
         });
-        byId('includedSources').replaceChildren(...included.map(source => makeSourceCard(source, true)));
-        byId('excludedSources').replaceChildren(...excluded.map(source => makeSourceCard(source, false)));
+        renderEvidencePage(true);
+        renderEvidencePage(false);
         byId('fullReport').hidden = !paid;
         setMessage(reportStatus, '');
         byId('scanResults').scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -670,6 +706,22 @@
         byId('sourceSearch').addEventListener('input', () => { sourcesPage = 0; renderSavedSources(); });
         byId('sourcePrev').addEventListener('click', () => { sourcesPage = Math.max(0, sourcesPage - 1); renderSavedSources(); });
         byId('sourceNext').addEventListener('click', () => { sourcesPage += 1; renderSavedSources(); });
+        byId('includedPrev').addEventListener('click', () => {
+            includedSourcesPage = Math.max(0, includedSourcesPage - 1);
+            renderEvidencePage(true);
+        });
+        byId('includedNext').addEventListener('click', () => {
+            includedSourcesPage += 1;
+            renderEvidencePage(true);
+        });
+        byId('excludedPrev').addEventListener('click', () => {
+            excludedSourcesPage = Math.max(0, excludedSourcesPage - 1);
+            renderEvidencePage(false);
+        });
+        byId('excludedNext').addEventListener('click', () => {
+            excludedSourcesPage += 1;
+            renderEvidencePage(false);
+        });
         byId('contactForm').addEventListener('submit', sendContactEmail);
         byId('whatsappContact').addEventListener('click', () => {
             byId('whatsappHint').textContent = 'WhatsApp support is coming soon. Please use the contact form for now.';
