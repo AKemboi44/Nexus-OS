@@ -501,24 +501,7 @@ class ScribeResearchAgent:
         )
         try:
             self._editorial_calls += 1
-            response = self._generate_content(
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "max_output_tokens": (
-                        int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384"))
-                        if self.provider == "anthropic"
-                        else 8192
-                    ),
-                    "temperature": 0.2,
-                },
-            )
-            response_text = str(getattr(response, "text", "") or "").strip()
-            if getattr(response, "stop_reason", None) == "max_tokens":
-                raise ReportSynthesisError(
-                    "The report model stopped before completing the proposal. Increase CLAUDE_MAX_OUTPUT_TOKENS and retry."
-                )
-            draft = self._parse_proposal_json(response_text)
+            draft = self._generate_proposal_json(prompt)
             self._proposal_draft = self._validate_proposal_draft(draft, source_ids)
             self._editorial_synthesis_complete = self._proposal_draft is not None
             if not self._proposal_draft:
@@ -529,10 +512,10 @@ class ScribeResearchAgent:
             print(
                 "[Scribe Proposal Warning]: Invalid proposal response "
                 f"(provider={self.provider or 'gemini'}, "
-                f"characters={len(response_text) if 'response_text' in locals() else 0}): {error}"
+                f"details={error})"
             )
             raise ReportSynthesisError(
-                "The proposal language model returned malformed output. Please retry report generation."
+                "The report model returned invalid JSON after a repair attempt. Please retry; if the problem persists, increase CLAUDE_MAX_OUTPUT_TOKENS."
             ) from error
         except Exception as error:
             if isinstance(error, ReportSynthesisError):
@@ -591,23 +574,52 @@ class ScribeResearchAgent:
             contents=contents,
         )
 
+    def _generate_proposal_json(self, prompt):
+        output_limit = (
+            int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384"))
+            if self.provider == "anthropic"
+            else 8192
+        )
+        generation_config = {
+            "response_mime_type": "application/json",
+            "max_output_tokens": output_limit,
+            "temperature": 0.2,
+        }
+        repair_prompt = prompt
+        last_error = None
+        for attempt in range(2):
+            response = self._generate_content(
+                contents=repair_prompt,
+                config=generation_config,
+            )
+            response_text = str(getattr(response, "text", "") or "").strip()
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                raise ReportSynthesisError(
+                    "The report model stopped before completing the proposal. Increase CLAUDE_MAX_OUTPUT_TOKENS and retry."
+                )
+            try:
+                return self._parse_proposal_json(response_text)
+            except ValueError as error:
+                last_error = error
+                if attempt == 0:
+                    repair_prompt = (
+                        "Repair the following model-generated response into one complete, valid JSON object "
+                        "that follows the exact schema and content requirements in the original request. "
+                        "Preserve the draft's supported content without adding claims. Return only the JSON "
+                        "object; do not use Markdown fences or explanatory text. If the response was cut off, "
+                        "complete the missing structure conservatively using the original request.\n\n"
+                        f"Original request:\n{prompt}\n\n"
+                        f"Malformed response, encoded as a JSON string:\n{json.dumps(response_text, ensure_ascii=False)}"
+                    )
+        raise ValueError(f"JSON repair failed: {last_error}") from last_error
+
     @staticmethod
     def _parse_proposal_json(response_text):
         text = str(response_text or "").strip()
         if not text:
             raise ValueError("The model returned an empty response.")
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(
-                lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:]
-            ).strip()
-        try:
-            parsed = json.loads(text)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
+        text = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
+        text = text.replace("```", "").strip()
         opening = text.find("{")
         if opening < 0:
             raise ValueError("No JSON object was present in the model response.")
@@ -631,11 +643,46 @@ class ScribeResearchAgent:
             elif character == "}":
                 depth -= 1
                 if depth == 0:
-                    parsed = json.loads(text[opening:index + 1])
+                    candidate = ScribeResearchAgent._remove_json_trailing_commas(
+                        text[opening:index + 1]
+                    )
+                    parsed = json.loads(candidate)
                     if isinstance(parsed, dict):
                         return parsed
                     break
         raise ValueError("The model response did not contain a complete JSON object.")
+
+    @staticmethod
+    def _remove_json_trailing_commas(text):
+        result = []
+        in_string = False
+        escaped = False
+        index = 0
+        while index < len(text):
+            character = text[index]
+            if in_string:
+                result.append(character)
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                index += 1
+                continue
+            if character == '"':
+                in_string = True
+                result.append(character)
+            elif character == ",":
+                next_index = index + 1
+                while next_index < len(text) and text[next_index].isspace():
+                    next_index += 1
+                if next_index >= len(text) or text[next_index] not in "}]":
+                    result.append(character)
+            else:
+                result.append(character)
+            index += 1
+        return "".join(result)
 
     def _validate_proposal_draft(self, draft, source_ids):
         if not isinstance(draft, dict):
