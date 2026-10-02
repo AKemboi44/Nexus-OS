@@ -85,6 +85,8 @@ class ScribeResearchAgent:
         self.telemetry_attempts = 0
         self.telemetry_fallback_used = False
         self.telemetry_correction_used = False
+        self.telemetry_last_provider = None
+        self.telemetry_last_model = None
         load_dotenv()
         claude_api_key = os.getenv("CLAUDE_API_KEY")
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -655,6 +657,12 @@ class ScribeResearchAgent:
                 "429", "resource_exhausted", "quota", "rate_limit_error",
                 "rate limit", "overloaded_error",
             )):
+                print(
+                    "[Scribe Proposal Warning]: Provider quota or rate limit "
+                    f"(provider={self.telemetry_last_provider or self.provider or 'unknown'}, "
+                    f"model={self.telemetry_last_model or self.model or 'unknown'}, "
+                    f"fallback_used={self.telemetry_fallback_used}, details={error})."
+                )
                 raise ReportSynthesisError(
                     "The configured report model is temporarily at its request limit. Retry later or check the provider's quota and billing settings."
                 ) from error
@@ -725,6 +733,8 @@ class ScribeResearchAgent:
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": contents}],
             }
+            self.telemetry_last_provider = "anthropic"
+            self.telemetry_last_model = request["model"]
             if settings.get("response_mime_type") == "application/json":
                 request["output_config"] = {
                     "format": {
@@ -802,6 +812,8 @@ class ScribeResearchAgent:
         else:
             client = self.gemini_client
             model = self.gemini_model or "gemini-3.6-flash"
+        self.telemetry_last_provider = "gemini"
+        self.telemetry_last_model = model
         return client.models.generate_content(
             model=model,
             contents=contents,

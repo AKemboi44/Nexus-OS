@@ -53,6 +53,15 @@ Without them, local development retains the existing SQLite stores; user-facing
 cloud API endpoints still require Supabase authentication and database
 configuration.
 
+### Research-provider configuration
+
+Set `SEMANTIC_SCHOLAR_API_KEY` in the Railway API service to use Semantic
+Scholar's authenticated API tier and avoid the public endpoint's low request
+limit. Configure both `CLAUDE_API_KEY` and `GEMINI_API_KEY` (or
+`GOOGLE_API_KEY`) for report-generation failover. Railway logs identify the
+provider and model when either report provider returns a quota or rate-limit
+error; replenish that provider's quota or billing before retrying.
+
 The authenticated API supports:
 
 - `POST /v1/scan` to run and save a research scan.

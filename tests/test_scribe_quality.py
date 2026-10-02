@@ -621,7 +621,7 @@ def test_proposal_editor_requests_one_corrective_draft_after_validation_failure(
     assert agent._proposal_draft == {"introduction": []}
 
 
-def test_proposal_quota_errors_return_safe_actionable_message():
+def test_proposal_quota_errors_return_safe_actionable_message(capsys):
     agent = ScribeResearchAgent()
     source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
 
@@ -632,6 +632,8 @@ def test_proposal_quota_errors_return_safe_actionable_message():
     agent.client = SimpleNamespace(models=QuotaModels())
     with pytest.raises(ReportSynthesisError, match="temporarily at its request limit"):
         agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
+
+    assert "Provider quota or rate limit" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
