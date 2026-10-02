@@ -617,7 +617,7 @@
             setMessage(
                 reportStatus,
                 error.status === 503
-                    ? 'The report service is temporarily unavailable. Your research is still saved; please retry in a few minutes.'
+                    ? `${error.message} Your research is still saved; please retry in a few minutes.`
                     : error.message,
                 'error'
             );
