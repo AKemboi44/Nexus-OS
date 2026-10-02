@@ -220,6 +220,40 @@
         return element;
     }
 
+    function cleanDisplayedSourceText(text) {
+        const value = String(text || '');
+        const words = Array.from(value.matchAll(/[A-Za-z0-9][A-Za-z0-9'’-]*/g));
+        if (words.length < 2) return value;
+
+        const output = [];
+        let cursor = 0;
+        let index = 0;
+        while (index < words.length) {
+            const first = words[index];
+            let lastIndex = index;
+            while (lastIndex + 1 < words.length) {
+                const following = words[lastIndex + 1];
+                const separator = value.slice(
+                    words[lastIndex].index + words[lastIndex][0].length,
+                    following.index
+                );
+                if (
+                    following[0].toLocaleLowerCase() !== first[0].toLocaleLowerCase()
+                    || !/^\s+$/.test(separator)
+                ) {
+                    break;
+                }
+                lastIndex += 1;
+            }
+
+            output.push(value.slice(cursor, first.index), first[0]);
+            cursor = words[lastIndex].index + words[lastIndex][0].length;
+            index = lastIndex + 1;
+        }
+        output.push(value.slice(cursor));
+        return output.join('');
+    }
+
     function renderHistory() {
         const container = byId('historyList');
         container.replaceChildren();
@@ -309,7 +343,14 @@
             row.appendChild(title);
             appendText(row, 'small', [source.authors?.slice?.(0, 2).join(', '), source.year, source.venue || source.journal]
                 .filter(Boolean).join(' · '));
-            if (source.abstract) appendText(row, 'p', source.abstract.slice(0, 240), 'saved-source-abstract');
+            if (source.abstract) {
+                appendText(
+                    row,
+                    'p',
+                    cleanDisplayedSourceText(source.abstract).slice(0, 240),
+                    'saved-source-abstract'
+                );
+            }
             const actions = appendText(row, 'div', '', 'saved-source-actions');
             if (source.url && /^https?:\/\//i.test(source.url)) {
                 const open = appendText(actions, 'a', 'Open source ↗');
@@ -344,7 +385,9 @@
         const meta = [source.authors?.slice?.(0, 2).join(', '), source.year, source.venue || source.journal]
             .filter(Boolean).join(' · ');
         appendText(card, 'p', meta || (included ? 'Included in this review.' : source.exclusion_reason || 'Filtered by the scan.'));
-        if (source.abstract) appendText(card, 'p', source.abstract.slice(0, 380));
+        if (source.abstract) {
+            appendText(card, 'p', cleanDisplayedSourceText(source.abstract).slice(0, 380));
+        }
         if (source.url && /^https?:\/\//i.test(source.url)) {
             const link = appendText(card, 'a', 'View source ↗');
             link.href = source.url;

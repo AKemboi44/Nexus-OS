@@ -3,7 +3,9 @@ import json
 from types import SimpleNamespace
 from docx import Document
 from docx.shared import Inches
+import pytest
 from app.synthesis.citation_engine import CitationEngine
+from app.agents.scribe_agent import ReportSynthesisError
 
 
 def test_scribe_deduplicates_section_items():
@@ -30,6 +32,7 @@ def test_scribe_does_not_append_repeated_citation_or_template_prose():
             "title": "Research quality study",
             "authors": ["Abdar"],
             "year": 2021,
+            "venue": "Journal of Applied Research",
             "abstract": "This study provides enough evidence detail for a grounded paragraph about research quality and implementation.",
         }
     ]
@@ -52,6 +55,7 @@ def test_scribe_paragraph_is_concise_and_evidence_bounded():
             "title": "Research quality study",
             "authors": ["Abdar"],
             "year": 2021,
+            "venue": "Journal of Applied Research",
             "abstract": "This study provides enough evidence detail for a grounded paragraph about research quality and implementation.",
         }
     ]
@@ -84,6 +88,7 @@ def test_scribe_keeps_long_claims_focused_without_stock_padding():
             "title": "A very long source title describing an extensive multi-dimensional investigation of research quality, implementation, measurement, and transferability",
             "authors": ["Abdar"],
             "year": 2021,
+            "venue": "Journal of Applied Research",
             "abstract": "This study provides enough evidence detail for a grounded paragraph about research quality and implementation.",
         }
     ]
@@ -201,6 +206,37 @@ def test_apa_reference_sorting_is_alphabetical_by_first_author():
     assert [source["title"] for source in ordered] == ["Earlier", "Later"]
 
 
+def test_sources_without_complete_reference_metadata_are_not_referenceable():
+    sources = [
+        {"authors": [], "year": 2021, "title": "No author", "venue": "Journal"},
+        {"authors": ["Unknown Contributor"], "year": 2021, "title": "Placeholder", "url": "https://example.org"},
+        {"authors": ["[Author information unavailable]"], "year": 2021, "title": "Placeholder", "venue": "Journal"},
+        {"authors": ["Jane Doe"], "year": 2021, "title": "No publication", "venue": "Unknown Source"},
+        {"authors": ["Jane Doe"], "year": None, "title": "No year", "url": "https://example.org"},
+        {"authors": ["Jane Doe"], "year": 2021, "title": "Valid", "venue": "Journal"},
+    ]
+
+    valid = CitationEngine.referenceable_sources(sources)
+
+    assert len(valid) == 1
+    assert valid[0]["title"] == "Valid"
+    assert CitationEngine.generate_apa_7th(sources[0]) == ""
+    assert CitationEngine.generate_apa_7th(sources[1]) == ""
+    assert not CitationEngine.is_referenceable({
+        "authors": ["Jane Doe"],
+        "year": 2021,
+        "title": "Local file",
+        "url": "file:///source.pdf",
+    })
+    mixed_author_source = {
+        "authors": ["Jane Doe", "[Author information unavailable]"],
+        "year": 2021,
+        "title": "Valid",
+        "venue": "Journal",
+    }
+    assert CitationEngine.generate_apa_7th(mixed_author_source).startswith("Doe, J. (2021).")
+
+
 def test_proposal_editor_generates_full_grounded_structure_and_citations():
     agent = ScribeResearchAgent()
     source = {
@@ -232,13 +268,15 @@ def test_proposal_editor_generates_full_grounded_structure_and_citations():
         "comparison groups, and the indicators used to define research quality before data collection begins. "
         "The supplied records do not identify a target population or a validated measurement instrument. "
         "These choices should remain explicit design decisions, not be presented as facts established by the "
-        "reviewed study. [Specify the study population and setting.]"
+        "reviewed study. The target study population and setting therefore remain decisions for the researcher."
     )
 
     class FakeModels:
-        def generate_content(self, model, contents):
+        def generate_content(self, model, contents, config):
             assert "expert academic research consultant and scholar" in contents
-            assert "zero" not in contents.lower() or "FACTUAL INTEGRITY" in contents
+            assert "never use square brackets" in contents
+            assert config["response_mime_type"] == "application/json"
+            assert config["temperature"] == 0.2
             assert "research-quality measures across institutional settings" in contents
             lit = {
                 key: [paragraph(developed), paragraph(developed)]
@@ -278,7 +316,8 @@ def test_proposal_editor_generates_full_grounded_structure_and_citations():
                         "that directly addresses research quality across institutional settings. "
                         "The chosen framework should clarify rather than predetermine the proposed analysis. "
                         "This decision requires a focused search beyond the abstracts supplied here. "
-                        "[Add a verified peer-reviewed source for the selected framework.]",
+                        "The supplied records do not identify that theoretical source, so the framework "
+                        "cannot yet be selected responsibly.",
                         [],
                     ),
                 ],
@@ -308,6 +347,7 @@ def test_proposal_editor_generates_full_grounded_structure_and_citations():
     assert agent._proposal_draft is not None
     assert agent._editorial_synthesis_complete
     assert agent._validate_proposal_draft(agent._proposal_draft, {}) is None
+    assert "using the included sources" not in str(agent._proposal_draft).lower()
 
     document = Document()
     agent._write_proposal_sections(
@@ -343,8 +383,58 @@ def test_proposal_editor_generates_full_grounded_structure_and_citations():
     ):
         assert heading in text
     assert "(Kumar, 2024)" in text
+    assert "[" not in text
+    assert "using the included sources" not in text.lower()
     assert all(paragraph.paragraph_format.first_line_indent == 0 for paragraph in paragraphs)
     assert sum(paragraph.text.startswith("Phase ") for paragraph in paragraphs) == 4
+
+
+def test_proposal_validation_rejects_prompt_leakage_and_square_brackets():
+    agent = ScribeResearchAgent()
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+    draft = {
+        "introduction": [{"text": "Develop a specific evidence-supported problem. " * 20, "evidence_ids": ["S1"]}],
+    }
+
+    assert agent._validate_proposal_paragraphs(
+        [{"text": "Add a verified citation and synthesize this point with the full text before reuse. " * 12, "evidence_ids": ["S1"]}],
+        {"S1": source},
+    ) is None
+    assert agent._validate_proposal_paragraphs(
+        [{"text": "The available evidence indicates a bounded relationship. " * 12 + "[Add details.]",
+          "evidence_ids": ["S1"]}],
+        {"S1": source},
+    ) is None
+
+
+def test_proposal_editor_fails_closed_if_model_is_unavailable_or_invalid():
+    agent = ScribeResearchAgent()
+    agent.client = None
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+
+    with pytest.raises(ReportSynthesisError, match="language model is unavailable"):
+        agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
+
+    class InvalidModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text='{"introduction":"incomplete"}')
+
+    agent.client = SimpleNamespace(models=InvalidModels())
+    with pytest.raises(ReportSynthesisError, match="incomplete or invalid sections"):
+        agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
+
+
+def test_proposal_quota_errors_return_safe_actionable_message():
+    agent = ScribeResearchAgent()
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+
+    class QuotaModels:
+        def generate_content(self, **kwargs):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED raw provider detail")
+
+    agent.client = SimpleNamespace(models=QuotaModels())
+    with pytest.raises(ReportSynthesisError, match="temporarily at its request limit"):
+        agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
 
 
 def test_scribe_quotes_direct_topic_references_in_report_body_only():
@@ -498,6 +588,7 @@ def test_report_editorial_synthesis_expands_each_theme_from_source_evidence():
         "title": "Research quality study",
         "authors": ["Abdar"],
         "year": 2021,
+        "venue": "Journal of Applied Research",
         "abstract": "The study examines research quality and implementation across multiple settings.",
     }
 
