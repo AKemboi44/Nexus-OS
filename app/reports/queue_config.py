@@ -6,10 +6,10 @@ from pydantic import BaseModel, Field
 class ReportQueueConfig(BaseModel):
     """Configuration for queued report synthesis and retries."""
     estimated_wait_range: str = Field(
-        default_factory=lambda: os.getenv("REPORT_ESTIMATED_WAIT_RANGE", "usually under 20 minutes")
+        default_factory=lambda: os.getenv("REPORT_QUEUE_ESTIMATE", os.getenv("REPORT_ESTIMATED_WAIT_RANGE", "usually under 20 minutes"))
     )
     max_retries: int = Field(
-        default_factory=lambda: int(os.getenv("REPORT_MAX_RETRIES", "3"))
+        default_factory=lambda: int(os.getenv("REPORT_MAX_ATTEMPTS", os.getenv("REPORT_MAX_RETRIES", "3")))
     )
     initial_backoff_seconds: float = Field(
         default_factory=lambda: float(os.getenv("REPORT_INITIAL_BACKOFF_SECONDS", "2.0"))
