@@ -101,6 +101,20 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".filtered-stat strong" in css
 
 
+def test_website_includes_original_section_art_and_visible_background_motion():
+    website = ROOT / "website"
+    css = (website / "styles.css").read_text(encoding="utf-8")
+
+    for asset in ("evidence-network.svg", "research-layers.svg"):
+        image = website / "images" / asset
+        assert image.is_file()
+        assert image.read_text(encoding="utf-8").startswith("<svg")
+        assert f"/images/{asset}" in css
+    assert "hero-art-drift" in css
+    assert "section-art-drift" in css
+    assert "prefers-reduced-motion: reduce" in css
+
+
 def test_generated_report_does_not_include_personal_account_name():
     with tempfile.TemporaryDirectory() as output_directory:
         report_path = ScribeResearchAgent().generate_apa_dossier_report(

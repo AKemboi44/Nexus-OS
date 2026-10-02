@@ -236,6 +236,35 @@ def test_cloud_scan_rejects_more_than_free_source_limit_for_free_users(monkeypat
     assert error.value.status_code == 403
 
 
+def test_word_report_failure_is_logged_with_original_exception(monkeypatch, caplog):
+    from app.reports.dossier_generator import DossierGenerator
+
+    def fail_generation(self, **kwargs):
+        raise RuntimeError("editorial service unavailable")
+
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(
+        DossierGenerator,
+        "generate_comprehensive_dossier",
+        fail_generation,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(cloud_app.generate_research_report(
+            cloud_app.ReportRequest(
+                topic="Research quality",
+                included_sources=[{"title": "Evidence", "authors": ["Author"], "year": 2024}],
+            ),
+            authorization="******",
+        ))
+
+    assert error.value.status_code == 500
+    assert error.value.detail == "Report generation failed."
+    assert "Word report generation failed for report type proposal." in caplog.text
+    assert "editorial service unavailable" in caplog.text
+
+
 def test_uploaded_source_rejects_invalid_base64():
     with pytest.raises(HTTPException) as error:
         cloud_app.parse_uploaded_sources(

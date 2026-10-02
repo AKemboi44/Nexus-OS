@@ -14,6 +14,8 @@ if project_root not in sys.path:
 from models.research_dossier import ResearchDossier
 from app.synthesis.insight_engine import InsightEngine
 from app.research.publication_quality import PublicationQualityGate
+from app.reports.dossier_generator import DossierGenerator
+from app.reports.excel_formatting import format_research_workbook
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -127,16 +129,18 @@ class ResearchPipeline:
                 excluded_papers.append(source)
         included_papers = included_papers[:max_sources + len(additional_sources or [])]
 
-        dossier = ResearchDossier(query=query)
-        dossier.included_sources = included_papers
-        dossier.evidence_summary = [p.get('abstract', 'No description.') for p in included_papers]
-
         evidence_blocks = [{'id': p['uid'], 'content': p.get('abstract', '')} for p in included_papers]
         if evidence_blocks:
             insight_obj = self.insight_engine.generate_insight(query, evidence_blocks)
             synthesis_text = insight_obj.insight
         else:
             synthesis_text = "### Multi-Engine Analysis\nNo relevant data points returned."
+
+        dossier = DossierGenerator().generate_comprehensive_dossier(
+            query=query,
+            included_sources=included_papers,
+        )
+        dossier.evidence_summary = [p.get('abstract', 'No description.') for p in included_papers]
 
         filename = f"research_audit_{clean_filename(query)}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
         working_dir = output_directory or r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os"
@@ -150,7 +154,7 @@ class ResearchPipeline:
             if not df_exc.empty and "__provider_origin__" in df_exc.columns: df_exc = df_exc.drop(
                 columns=["__provider_origin__"])
 
-            core_themes = self._derive_core_themes(query, synthesis_text, included_papers)
+            core_themes = dossier.themes or self._derive_core_themes(query, synthesis_text, included_papers)
             summary = pd.DataFrame([
                 {"Metric": "Research topic", "Value": query},
                 {"Metric": "Domain", "Value": "scholarly"},
@@ -175,11 +179,23 @@ class ResearchPipeline:
                     pd.DataFrame([{"Message": "Empty"}]).to_excel(writer, sheet_name='Excluded Candidates',
                                                                   index=False)
 
+                pd.DataFrame({
+                    "Research Areas": dossier.research_areas or [
+                        "No evidence-based future research recommendations were generated."
+                    ]
+                }).to_excel(writer, sheet_name="Research Areas", index=False)
+                pd.DataFrame({
+                    "Research Opportunities": dossier.opportunity_areas or [
+                        "No topic-specific research opportunities were generated."
+                    ]
+                }).to_excel(writer, sheet_name="Research Opportunities", index=False)
+
                 pd.DataFrame([
                     {"Parameter Key": "Target Topic Criteria Input", "Value": str(query)},
                     {"Parameter Key": "Total Verification Ingest Matches", "Value": len(included_papers)},
                     {"Parameter Key": "Total Scrubbed Candidates Out", "Value": len(excluded_papers)}
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
+            format_research_workbook(absolute_xlsx_path)
         except Exception as e:
             print(f"[Excel Error]: {str(e)}", file=sys.stderr)
 
@@ -189,20 +205,6 @@ class ResearchPipeline:
         gate = PublicationQualityGate()
         quality_report = gate.validate_dossier(dossier, included_papers)
 
-        dossier.abstract = str(synthesis_text)
-        dossier.themes = self._derive_core_themes(query, synthesis_text, included_papers)
-        dossier.contradictions = [
-            "Claims become more credible when they align with the strongest, most methodologically transparent sources."
-        ]
-        dossier.research_gaps = [
-            "Additional evidence is needed to validate the strongest findings across broader contexts and populations."
-        ]
-        dossier.opportunity_areas = [
-            "A stronger publication-grade synthesis should expand validation, define boundary conditions, and compare implementation settings."
-        ]
-        dossier.problems_to_solve = [
-            "Clarify which findings hold across contexts and which require more explicit methodological validation."
-        ]
         dossier.quality_report = quality_report
         dossier.report_data = {
             "status": "success",

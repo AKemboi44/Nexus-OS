@@ -3,6 +3,7 @@ import re
 import time
 import pandas as pd
 from .base_agent import BaseAgent
+from app.reports.excel_formatting import format_research_workbook
 
 
 class SquireAgent(BaseAgent):
@@ -20,6 +21,7 @@ class SquireAgent(BaseAgent):
         themes = getattr(dossier, 'themes', [])
         contradictions = getattr(dossier, 'contradictions', [])
         gaps = getattr(dossier, 'research_gaps', getattr(dossier, 'identified_gaps', []))
+        research_areas = getattr(dossier, 'research_areas', [])
         opportunities = getattr(dossier, 'opportunity_areas', [])
 
         # =========================================================================
@@ -80,6 +82,11 @@ class SquireAgent(BaseAgent):
         df_gaps = pd.DataFrame({"Structural Research Gaps": gaps if gaps else ["No tracked research gaps discovered."]})
         df_opportunities = pd.DataFrame(
             {"Opportunity Areas": opportunities if opportunities else ["No strategic opportunity areas mapped."]})
+        df_research_areas = pd.DataFrame({
+            "Evidence-Based Research Areas": research_areas or [
+                "No evidence-based future research recommendations were generated."
+            ]
+        })
 
         # 3. Encapsulate workbook saving logic
         def write_excel_safely(path):
@@ -89,7 +96,9 @@ class SquireAgent(BaseAgent):
                 df_sources_audit.to_excel(writer, sheet_name='Ingested Sources Audit', index=False)
                 df_contradictions.to_excel(writer, sheet_name='Contradictions', index=False)
                 df_gaps.to_excel(writer, sheet_name='Research Gaps', index=False)
+                df_research_areas.to_excel(writer, sheet_name='Research Areas', index=False)
                 df_opportunities.to_excel(writer, sheet_name='Strategic Opportunities', index=False)
+            format_research_workbook(path)
 
         try:
             write_excel_safely(export_path)

@@ -8,6 +8,7 @@ class DummyDossier:
         self.themes = ["Theme one"]
         self.contradictions = ["Contradiction one"]
         self.research_gaps = ["Gap one"]
+        self.research_areas = ["Research recommendation one"]
         self.opportunity_areas = ["Opportunity one"]
         self.problems_to_solve = ["Problem one"]
 
@@ -47,6 +48,8 @@ def test_generation_contract_requires_publication_sections():
     assert "ABSTRACT" in prompt
     assert "KEY THEMES" in prompt
     assert "RESEARCH GAPS" in prompt
+    assert "RESEARCH AREAS" in prompt
+    assert "grammatical, publication-quality academic prose" in prompt
     assert "PUBLICATION-QUALITY" in prompt.upper()
 
 

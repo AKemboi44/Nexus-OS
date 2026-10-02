@@ -476,6 +476,7 @@ async def generate_research_report(
     except HTTPException:
         raise
     except Exception as error:
+        logger.exception("Word report generation failed for report type %s.", payload.report_type)
         raise HTTPException(status_code=500, detail="Report generation failed.") from error
 
 

@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List, Any
 from google import genai
 from dotenv import load_dotenv
@@ -57,8 +58,11 @@ class DossierGenerator:
             dossier.research_gaps = [
                 "The available source set does not fully resolve the methods, populations, or contexts that remain under-studied."
             ]
+            dossier.research_areas = [
+                f"Compare how the findings on {query} vary across the populations, settings, and methods represented in the included sources."
+            ]
             dossier.opportunity_areas = [
-                "Future work can test the reported findings in broader settings with transparent, reproducible evaluation."
+                f"Assess where the findings on {query} could inform a focused follow-up study or practical intervention, then validate that use with transparent measures."
             ]
             dossier.problems_to_solve = [
                 f"Determine which interventions most reliably address the documented challenges in {query}."
@@ -91,8 +95,11 @@ class DossierGenerator:
             dossier.research_gaps = [
                 "The available evidence does not fully resolve the methods, populations, or contexts that remain under-studied."
             ]
+            dossier.research_areas = [
+                f"Compare how the findings on {query} vary across the populations, settings, and methods represented in the included sources."
+            ]
             dossier.opportunity_areas = [
-                "Future work can test the reported findings in broader settings with transparent, reproducible evaluation."
+                f"Assess where the findings on {query} could inform a focused follow-up study or practical intervention, then validate that use with transparent measures."
             ]
             dossier.problems_to_solve = [
                 f"Determine which interventions most reliably address the documented challenges in {query}."
@@ -132,6 +139,10 @@ class DossierGenerator:
             dossier.research_gaps = [
                 "The current evidence base does not fully resolve methodological limitations, boundary conditions, or under-studied contexts."
             ]
+        if not getattr(dossier, "research_areas", []):
+            dossier.research_areas = [
+                f"Test whether findings about {query} hold across the populations and settings represented in the included sources."
+            ]
         if not getattr(dossier, "opportunity_areas", []):
             dossier.opportunity_areas = [
                 "Research can be extended through more transparent measurement, broader validation, and clearer practical translation."
@@ -150,27 +161,29 @@ class DossierGenerator:
                 continue
 
             # Simple header matching state switches
-            if "KEY THEMES" in line.upper():
-                current_section = "themes"
-                continue
-            elif "ABSTRACT" in line.upper():
-                current_section = "abstract"
-                continue
-            elif "CONTRADICTIONS" in line.upper():
-                current_section = "contradictions"
-                continue
-            elif "RESEARCH GAPS" in line.upper():
-                current_section = "gaps"
-                continue
-            elif "OPPORTUNITY AREAS" in line.upper():
-                current_section = "opportunities"
-                continue
-            elif "PROBLEMS TO SOLVE" in line.upper():
-                current_section = "problems"
-                continue
+            section_match = re.match(
+                r"^\s*(?:#{1,6}\s*)?(ABSTRACT|KEY THEMES|CONTRADICTIONS|RESEARCH GAPS|RESEARCH AREAS|OPPORTUNITY AREAS|PROBLEMS TO SOLVE)\b\s*:?\s*(.*)$",
+                line,
+                flags=re.I,
+            )
+            if section_match:
+                section_name, section_content = section_match.groups()
+                section_key = section_name.upper()
+                current_section = {
+                    "ABSTRACT": "abstract",
+                    "KEY THEMES": "themes",
+                    "CONTRADICTIONS": "contradictions",
+                    "RESEARCH GAPS": "gaps",
+                    "RESEARCH AREAS": "research_areas",
+                    "OPPORTUNITY AREAS": "opportunities",
+                    "PROBLEMS TO SOLVE": "problems",
+                }[section_key]
+                line = section_content.strip()
+                if not line:
+                    continue
 
-            # Populate lines clean of markdown list characters
-            clean_line = line.lstrip('-*•1234567890. ')
+            # Populate lines clean of markdown list characters.
+            clean_line = line.lstrip("-*•1234567890. ").strip()
             if clean_line and current_section:
                 if current_section == "abstract":
                     dossier.abstract = f"{dossier.abstract} {clean_line}".strip()
@@ -180,6 +193,8 @@ class DossierGenerator:
                     dossier.contradictions.append(clean_line)
                 elif current_section == "gaps":
                     dossier.research_gaps.append(clean_line)
+                elif current_section == "research_areas":
+                    dossier.research_areas.append(clean_line)
                 elif current_section == "opportunities":
                     dossier.opportunity_areas.append(clean_line)
                 elif current_section == "problems":
