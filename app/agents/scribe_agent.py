@@ -39,7 +39,7 @@ class ScribeResearchAgent:
                 import anthropic
                 self.client = anthropic.Anthropic(api_key=claude_api_key)
                 self.provider = "anthropic"
-                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Claude editor unavailable: {error}")
         elif gemini_api_key:
@@ -550,7 +550,7 @@ class ScribeResearchAgent:
             request = {
                 "model": settings.get(
                     "model",
-                    self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+                    self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
                 ),
                 "max_tokens": max_tokens,
                 "temperature": settings.get("temperature", 0.2),
@@ -686,7 +686,7 @@ class ScribeResearchAgent:
 
     def _generate_proposal_json(self, prompt):
         default_model = (
-            "claude-sonnet-4-5-20250929"
+            "claude-sonnet-5-5"
             if self.provider == "anthropic"
             else "gemini-3.6-flash"
         )
