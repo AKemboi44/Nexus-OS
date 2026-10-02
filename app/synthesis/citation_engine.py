@@ -1,8 +1,71 @@
+import re
 from typing import Dict, Any
+from urllib.parse import urlsplit
+
 
 class CitationEngine:
-    @staticmethod
-    def _authors(source: Dict[str, Any]) -> list[str]:
+    INVALID_METADATA = {
+        "",
+        "n/a",
+        "na",
+        "none",
+        "unknown",
+        "unknown author",
+        "unknown contributor",
+        "unknown source",
+        "untitled",
+        "untitled work",
+    }
+
+    @classmethod
+    def is_referenceable(cls, source: Dict[str, Any]) -> bool:
+        authors = cls._authors(source)
+        valid_authors = [
+            author for author in authors
+            if not cls._is_missing_metadata(author)
+        ]
+        title = str(source.get("title") or "").strip()
+        if not valid_authors or cls._is_missing_metadata(title):
+            return False
+
+        year = str(source.get("year") or "").strip()
+        if not year.isdigit() or len(year) != 4:
+            return False
+
+        venue = str(source.get("venue") or source.get("journal") or "").strip()
+        valid_venue = not cls._is_missing_metadata(venue)
+        doi = str(source.get("doi") or "").strip()
+        url = str(source.get("url") or "").strip()
+        valid_doi = bool(re.fullmatch(r"10\.\d{4,9}/\S+", doi.strip())) if doi else False
+        parsed_url = urlsplit(url) if url else None
+        valid_url = bool(
+            parsed_url
+            and parsed_url.scheme.lower() in {"http", "https"}
+            and parsed_url.netloc
+        )
+        valid_identifier = valid_doi or valid_url
+        return valid_venue or valid_identifier
+
+    @classmethod
+    def _is_missing_metadata(cls, value: str) -> bool:
+        normalized = str(value or "").casefold().strip(" []().")
+        return (
+            normalized in cls.INVALID_METADATA
+            or "unavailable" in normalized
+            or normalized.startswith(("unknown", "untitled", "not provided", "not available"))
+        )
+
+    @classmethod
+    def referenceable_sources(cls, sources):
+        return [
+            source for source in (sources or [])
+            if cls.is_referenceable(
+                source if isinstance(source, dict) else vars(source)
+            )
+        ]
+
+    @classmethod
+    def _authors(cls, source: Dict[str, Any]) -> list[str]:
         authors = source.get("authors") or []
         if isinstance(authors, str):
             authors = [author.strip() for author in authors.split(";") if author.strip()]
@@ -12,7 +75,11 @@ class CitationEngine:
                 authors = [author.strip() for author in authors[0].split(" & ") if author.strip()]
             if len(authors) == 1 and authors[0].count(",") > 1:
                 authors = [author.strip() for author in authors[0].split(",") if author.strip()]
-        return [str(author).strip() for author in authors if str(author).strip()]
+        return [
+            str(author).strip()
+            for author in authors
+            if str(author).strip() and not cls._is_missing_metadata(author)
+        ]
 
     @staticmethod
     def _format_author(author: str) -> str:
@@ -35,7 +102,7 @@ class CitationEngine:
     @classmethod
     def _format_authors(cls, authors: list[str]) -> str:
         if not authors:
-            return "[Author information unavailable]"
+            return ""
         formatted = [cls._format_author(author) for author in authors]
         if len(formatted) > 20:
             formatted = [*formatted[:19], "...", formatted[-1]]
@@ -46,9 +113,11 @@ class CitationEngine:
     @staticmethod
     def generate_apa_7th(source: Dict[str, Any]) -> str:
         """Format available source metadata as an APA 7 reference without inventing fields."""
+        if not CitationEngine.is_referenceable(source):
+            return ""
         authors_list = CitationEngine._authors(source)
-        year = source.get("year") or "n.d."
-        title = source.get("title") or "Untitled Work"
+        year = str(source["year"]).strip()
+        title = str(source["title"]).strip()
         venue = source.get("venue") or source.get("journal") or ""
         volume = source.get("volume")
         issue = source.get("issue")

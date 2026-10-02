@@ -19,6 +19,8 @@ from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
 from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
+from app.synthesis.citation_engine import CitationEngine
+from app.agents.scribe_agent import ReportSynthesisError
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -431,6 +433,15 @@ async def generate_research_report(
             elif hasattr(research_result, "model_dump"):
                 research_result = research_result.model_dump()
             included_sources = research_result.get("included", [])
+        included_sources = CitationEngine.referenceable_sources(included_sources)
+        if not included_sources:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No included sources have enough publication metadata for a traceable report. "
+                    "Each source needs an author, title, year, and publication venue or valid DOI/URL."
+                ),
+            )
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 
@@ -475,6 +486,9 @@ async def generate_research_report(
             }
     except HTTPException:
         raise
+    except ReportSynthesisError as error:
+        logger.warning("Word report failed its synthesis quality gate: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
         logger.exception("Word report generation failed for report type %s.", payload.report_type)
         raise HTTPException(status_code=500, detail="Report generation failed.") from error

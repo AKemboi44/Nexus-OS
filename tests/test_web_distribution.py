@@ -6,9 +6,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from docx import Document
+import pytest
 
-from app.agents.scribe_agent import ScribeResearchAgent
+from app.agents.scribe_agent import ReportSynthesisError, ScribeResearchAgent
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +90,9 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert ".library-page-button:focus-visible" in css
     assert "function renderEvidencePage(included)" in js
     assert "sources.slice(start, start + RESULT_PAGE_SIZE)" in js
+    assert "function cleanDisplayedSourceText(text)" in js
+    assert "cleanDisplayedSourceText(source.abstract).slice(0, 380)" in js
+    assert "cleanDisplayedSourceText(source.abstract).slice(0, 240)" in js
 
 
 def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
@@ -112,7 +115,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
     assert 'href="/styles.css?v=20261002-4"' in html
-    assert 'src="/app.js?v=20261002-4"' in html
+    assert 'src="/app.js?v=20261002-5"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
 
 
@@ -138,16 +141,13 @@ def test_website_includes_original_section_art_and_visible_background_motion():
     assert "prefers-reduced-motion: reduce" in css
 
 
-def test_generated_report_does_not_include_personal_account_name():
+def test_generated_report_without_referenceable_sources_fails_closed():
     with tempfile.TemporaryDirectory() as output_directory:
-        report_path = ScribeResearchAgent().generate_apa_dossier_report(
-            topic="Evidence based testing",
-            included_sources=[],
-            output_directory=output_directory,
-        )
-        document = Document(report_path)
-        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        with pytest.raises(ReportSynthesisError, match="requires sources"):
+            ScribeResearchAgent().generate_apa_dossier_report(
+                topic="Evidence based testing",
+                included_sources=[],
+                output_directory=output_directory,
+            )
 
-    assert "Prepared with Nexus Research AI" in text
-    assert "Abraham" not in text
-    assert "Akiptoo" not in text
+    assert not list(Path(output_directory).glob("*.docx"))

@@ -254,7 +254,12 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
         asyncio.run(cloud_app.generate_research_report(
             cloud_app.ReportRequest(
                 topic="Research quality",
-                included_sources=[{"title": "Evidence", "authors": ["Author"], "year": 2024}],
+                included_sources=[{
+                    "title": "Evidence",
+                    "authors": ["Author"],
+                    "year": 2024,
+                    "venue": "Journal of Evidence",
+                }],
             ),
             authorization="******",
         ))
@@ -263,6 +268,27 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
     assert error.value.detail == "Report generation failed."
     assert "Word report generation failed for report type proposal." in caplog.text
     assert "editorial service unavailable" in caplog.text
+
+
+def test_word_report_rejects_sources_without_citable_metadata(monkeypatch):
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(cloud_app.generate_research_report(
+            cloud_app.ReportRequest(
+                topic="Research quality",
+                included_sources=[{
+                    "title": "Evidence",
+                    "authors": ["Unknown Contributor"],
+                    "year": 2024,
+                }],
+            ),
+            authorization="******",
+        ))
+
+    assert error.value.status_code == 422
+    assert "publication metadata" in error.value.detail
 
 
 def test_uploaded_source_rejects_invalid_base64():

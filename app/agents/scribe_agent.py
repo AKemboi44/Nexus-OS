@@ -12,6 +12,10 @@ from app.research.publication_quality import PublicationQualityGate
 from dotenv import load_dotenv
 
 
+class ReportSynthesisError(RuntimeError):
+    """Raised when the proposal cannot meet its evidence and prose requirements."""
+
+
 class ScribeResearchAgent:
     """
     Advanced Academic Drafting Agent (Post-MVP Engine)
@@ -114,6 +118,11 @@ class ScribeResearchAgent:
         self._editorial_batch_attempted = False
         self._editorial_synthesis_complete = False
         self._proposal_draft = None
+        included_sources = CitationEngine.referenceable_sources(included_sources)
+        if not included_sources:
+            raise ReportSynthesisError(
+                "A report requires sources with an author, title, year, and publication venue or DOI/URL."
+            )
 
         # 2. Main Title Header (Heading 1 Level)
         h1 = doc.add_paragraph()
@@ -189,10 +198,8 @@ class ScribeResearchAgent:
             else {"score": 0.8, "passed": True}
         )
         if not quality_report.get("passed", True):
-            warning = doc.add_paragraph()
-            warning.add_run(
-                "Publication quality gate warning: the current synthesis is below minimum evidence quality threshold. "
-                "Review the source set and supported claims before submission."
+            raise ReportSynthesisError(
+                "The source synthesis did not pass publication-quality checks; no report was exported."
             )
         synthesis_complete = (
             self._proposal_draft is not None
@@ -200,16 +207,8 @@ class ScribeResearchAgent:
             else self._editorial_synthesis_complete
         )
         if not synthesis_complete:
-            warning = doc.add_paragraph()
-            editor_name = (
-                "structured proposal editor"
-                if report_type == "proposal"
-                else "section synthesis editor"
-            )
-            warning.add_run(
-                f"Editorial synthesis warning: the {editor_name} was unavailable or returned "
-                "incomplete output. This document is an evidence outline, not a submission-ready proposal; "
-                "complete the bracketed items and verify each claim against the full texts in the reference list."
+            raise ReportSynthesisError(
+                "The report editor did not produce complete, validated prose. No outline or prompt text was included."
             )
 
         # 4. References Page Layout Module (Hanging Indent)
@@ -221,6 +220,9 @@ class ScribeResearchAgent:
         ref_h.paragraph_format.space_after = Pt(12)
 
         for src in sorted(included_sources, key=self._apa_reference_sort_key):
+            source_dict = src if isinstance(src, dict) else vars(src)
+            if not CitationEngine.is_referenceable(source_dict):
+                continue
             ref_p = doc.add_paragraph()
             ref_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             ref_p.paragraph_format.line_spacing = 2.0
@@ -228,7 +230,6 @@ class ScribeResearchAgent:
             ref_p.paragraph_format.left_indent = Inches(0.5)
             ref_p.paragraph_format.first_line_indent = Inches(-0.5)
 
-            source_dict = src if isinstance(src, dict) else vars(src)
             self._add_apa_reference(ref_p, source_dict)
 
         self._quote_research_topic_references(doc, topic)
@@ -280,9 +281,11 @@ class ScribeResearchAgent:
 
     @staticmethod
     def _add_apa_reference(paragraph, source):
+        if not CitationEngine.is_referenceable(source):
+            return
         authors = CitationEngine._format_authors(CitationEngine._authors(source))
         year = source.get("year") or "n.d."
-        title = str(source.get("title") or "Untitled work").strip().rstrip(".")
+        title = str(source.get("title") or "").strip().rstrip(".")
         venue = str(source.get("venue") or source.get("journal") or "").strip().rstrip(".")
         volume = str(source.get("volume") or "").strip()
         issue = str(source.get("issue") or "").strip()
@@ -375,8 +378,15 @@ class ScribeResearchAgent:
         problems,
         domain,
     ):
-        if not self.client or not sources:
-            return
+        if not self.client:
+            raise ReportSynthesisError(
+                "The proposal language model is unavailable. Configure the report editor and retry."
+            )
+        sources = CitationEngine.referenceable_sources(sources)
+        if not sources:
+            raise ReportSynthesisError(
+                "A proposal requires sources with verified authorship and publication metadata."
+            )
 
         source_ids = {}
         source_records = []
@@ -396,7 +406,9 @@ class ScribeResearchAgent:
                     self._source_value(source, "doi", "")
                     or self._source_value(source, "url", "")
                 ),
-                "abstract": self._shorten(self._source_value(source, "abstract", ""), 220),
+                "abstract": self._shorten(
+                    self._clean_prose(self._source_value(source, "abstract", "")), 220
+                ),
             })
 
         synthesis = {
@@ -416,9 +428,9 @@ class ScribeResearchAgent:
             "FACTUAL INTEGRITY: make empirical claims only when the supplied source records support "
             "them. Do not invent findings, study designs, sample sizes, theories, citations, authors, "
             "or bibliographic details. Distinguish evidence-based synthesis from proposed research "
-            "choices. When context or evidence is missing, use a precise bracketed placeholder, such "
-            "as [Specify the study population and setting] or [Add a peer-reviewed source establishing "
-            "the selected theoretical framework]. Cite evidence only by assigning source IDs in the "
+            "choices. When context or evidence is missing, state plainly what the supplied records do "
+            "not establish and what requires verification; never use square brackets, placeholders, or "
+            "editorial instructions. Cite evidence only by assigning source IDs in the "
             "JSON evidence_ids field; citations will be formatted separately. Never write citations "
             "in the prose. Treat dossier notes as provisional claims to verify against the source "
             "records, not as established facts. If a category has no supported finding, state that "
@@ -428,7 +440,8 @@ class ScribeResearchAgent:
             "and how each gap leads to a feasible research question. Avoid generic boilerplate, "
             "repetition, unsupported causal language, and stock transitions. Use varied sentence "
             "structure, active voice, and connected paragraphs. Proposals for methods must be clearly "
-            "presented as recommendations and must expose missing design decisions as placeholders.\n\n"
+            "presented as recommendations and describe missing decisions in academic prose, without "
+            "bracketed placeholders.\n\n"
             "Return only valid JSON with exactly this schema:\n"
             "{"
             '"introduction":[{"text":"paragraph","evidence_ids":["S1"]}],'
@@ -456,14 +469,15 @@ class ScribeResearchAgent:
             "Background and in Statement of the Problem; at least two answerable research questions; "
             "two or three specific research objectives; include hypotheses only when the supplied "
             "evidence and proposed design justify them. Discuss a theoretical or conceptual framework "
-            "only if a named framework is explicitly present in the source records; otherwise use a "
-            "bracketed placeholder requesting a verified peer-reviewed framework source. "
+            "only if a named framework is explicitly present in the source records; otherwise explain "
+            "that the supplied records do not establish an appropriate framework and identify this as "
+            "a limitation of the current evidence. "
             "For every literature-review category, provide two analytical paragraphs that explicitly "
             "address the corresponding dossier notes and cite only relevant supplied sources. The "
             "literature review must cover themes, contradictions/boundary conditions, gaps, research "
             "areas, opportunities, and research problems. Methodology must have at least two paragraphs "
-            "each for design, data collection, analysis, and limitations, with concrete choices or "
-            "bracketed decisions instead of generic advice. Provide two paragraphs on significance and "
+            "each for design, data collection, analysis, and limitations, with concrete, explicitly "
+            "provisional choices instead of generic advice. Provide two paragraphs on significance and "
             "four feasible, clearly preliminary timeline phases. Keep each prose paragraph between "
             "70 and 150 words and at least four complete sentences. Questions and timeline activities "
             "may be concise.\n\n"
@@ -476,6 +490,11 @@ class ScribeResearchAgent:
             response = self.client.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "max_output_tokens": 8192,
+                    "temperature": 0.2,
+                },
             )
             response_text = str(response.text or "").strip()
             if response_text.startswith("```"):
@@ -488,11 +507,26 @@ class ScribeResearchAgent:
             self._proposal_draft = self._validate_proposal_draft(draft, source_ids)
             self._editorial_synthesis_complete = self._proposal_draft is not None
             if not self._proposal_draft:
-                print("[Scribe Proposal Warning]: The model response did not meet the proposal schema.")
+                raise ReportSynthesisError(
+                    "The proposal language model returned incomplete or invalid sections. Please retry report generation."
+                )
         except (ValueError, TypeError, AttributeError) as error:
             print(f"[Scribe Proposal Warning]: Invalid proposal response: {error}")
+            raise ReportSynthesisError(
+                "The proposal language model returned malformed output. Please retry report generation."
+            ) from error
         except Exception as error:
+            if isinstance(error, ReportSynthesisError):
+                raise
+            error_message = str(error).casefold()
+            if "429" in error_message or "resource_exhausted" in error_message or "quota" in error_message:
+                raise ReportSynthesisError(
+                    "The proposal language model is temporarily at its request limit. Retry later or configure a higher-quota API plan."
+                ) from error
             print(f"[Scribe Proposal Warning]: Proposal synthesis unavailable: {error}")
+            raise ReportSynthesisError(
+                "The proposal language model could not complete the report. Please retry shortly."
+            ) from error
 
     def _validate_proposal_draft(self, draft, source_ids):
         if not isinstance(draft, dict):
@@ -580,7 +614,15 @@ class ScribeResearchAgent:
             phase = self._clean_prose(item.get("phase", ""))
             duration = self._clean_prose(item.get("duration", ""))
             activities = self._clean_prose(item.get("activities", ""))
-            if not phase or not duration or len(activities.split()) < 5:
+            timeline_text = f"{phase} {duration} {activities}"
+            if (
+                not phase
+                or not duration
+                or len(activities.split()) < 5
+                or "[" in timeline_text
+                or "]" in timeline_text
+                or self._contains_editorial_instruction(timeline_text)
+            ):
                 return None
             validated_timeline.append({
                 "phase": phase,
@@ -611,9 +653,12 @@ class ScribeResearchAgent:
                 len(text.split()) < minimum_words
                 or len(text.split()) > 190
                 or sentence_count < minimum_sentences
-                or not text.endswith((".", "!", "?", "]"))
+                or not text.endswith((".", "!", "?"))
                 or self._has_repeated_word_corruption(text)
                 or self._contains_parenthetical_year(text)
+                or "[" in text
+                or "]" in text
+                or self._contains_editorial_instruction(text)
                 or (require_evidence and not evidence_ids)
             ):
                 return None
@@ -622,6 +667,20 @@ class ScribeResearchAgent:
                 "evidence_ids": list(dict.fromkeys(evidence_ids)),
             })
         return validated
+
+    @staticmethod
+    def _contains_editorial_instruction(text):
+        lowered = text.casefold()
+        phrases = (
+            "add a verified citation",
+            "synthesize this point with the full text",
+            "before reuse",
+            "using the included sources",
+            "specify and justify the design",
+            "write specific, achievable objectives",
+            "develop a specific, evidence-supported",
+        )
+        return any(phrase in lowered for phrase in phrases)
 
     @staticmethod
     def _contains_parenthetical_year(text):
@@ -648,83 +707,8 @@ class ScribeResearchAgent:
         if self._proposal_draft:
             self._write_structured_proposal(doc, self._proposal_draft, sources)
             return
-
-        self._add_heading(doc, "Introduction and Background")
-        self._add_body_paragraph(
-            doc,
-            "A complete evidence-grounded proposal could not be generated because the editorial "
-            "language model was unavailable or returned an incomplete response. The notes below "
-            "are a source outline only; they should not be treated as a finished research argument. "
-            "Use the reference list and full texts to establish the field context, verify the reported gap, and "
-            "complete each bracketed research-design decision before submission.",
-            first_line_indent=0,
-        )
-        self._add_heading(doc, "Statement of the Problem")
-        self._add_body_paragraph(
-            doc,
-            f"[Develop a specific, evidence-supported problem statement for “{topic}” using the "
-            "included sources. Identify the affected population or setting, the documented "
-            "consequence, and the unresolved issue without assuming facts not present in the sources.]",
-            first_line_indent=0,
-        )
-        self._add_heading(doc, "Research Questions and Hypotheses")
-        self._add_body_paragraph(
-            doc,
-            f"[Formulate answerable research questions for “{topic}” after confirming the population, "
-            "setting, constructs, and study design. State hypotheses only if supported by the reviewed "
-            "theory and evidence.]",
-            first_line_indent=0,
-        )
-        self._add_heading(doc, "Research Objectives")
-        self._add_body_paragraph(
-            doc,
-            f"[Write specific, achievable objectives for “{topic}” that align with the finalized "
-            "research questions and are supported by the verified evidence base.]",
-            first_line_indent=0,
-        )
-        sections = [
-            ("Key Themes", themes),
-            ("Contradictions and Boundary Conditions", contradictions),
-            ("Research Gaps", gaps),
-            ("Research Areas", research_areas or []),
-            ("Opportunity Areas", opportunities),
-            ("Research Problems", problems),
-        ]
-        self._add_heading(doc, "Literature Review")
-        for heading, items in sections:
-            unique_items = self._unique_items(items)
-            if not unique_items:
-                continue
-            self._add_heading(doc, heading)
-            for item in unique_items:
-                self._add_body_paragraph(
-                    doc,
-                    self._outline_evidence_note(item),
-                    first_line_indent=0,
-                )
-        self._add_heading(doc, "Methodology")
-        for heading, placeholder in (
-            ("Theoretical or Conceptual Framework", "[Add a verified theoretical or conceptual framework and peer-reviewed source, or state why no established framework is appropriate.]"),
-            ("Research Design", "[Specify and justify the design after confirming the research questions.]"),
-            ("Data Collection", "[Specify data sources, instruments, sampling, and procedures; do not infer these from abstracts.]"),
-            ("Analysis Strategy", "[Specify the analysis plan and how it will answer each research question.]"),
-            ("Limitations", "[Identify evidence and design limitations that remain after reviewing the full texts.]"),
-        ):
-            self._add_heading(doc, heading)
-            self._add_body_paragraph(doc, placeholder, first_line_indent=0)
-        self._add_heading(doc, "Significance and Implications")
-        self._add_body_paragraph(
-            doc,
-            "[Explain the study's scholarly and practical significance only after the problem, "
-            "population, and likely contribution have been verified against the cited literature.]",
-            first_line_indent=0,
-        )
-        self._add_heading(doc, "Preliminary Timeline")
-        self._add_body_paragraph(
-            doc,
-            "[Set project phases and durations after confirming the scope, approvals, access, and "
-            "available resources. The timeline is not specified by the supplied source records.]",
-            first_line_indent=0,
+        raise ReportSynthesisError(
+            "The proposal was incomplete and cannot be exported as a document."
         )
 
     def _write_structured_proposal(self, doc, draft, sources):
@@ -830,13 +814,6 @@ class ScribeResearchAgent:
                 self._remove_incomplete_fragments(text),
                 first_line_indent=first_line_indent,
             )
-
-    @staticmethod
-    def _outline_evidence_note(item):
-        return (
-            f"Source note: {item.rstrip('.!?')}. "
-            "[Add a verified citation and synthesize this point with the full text before reuse.]"
-        )
 
     def _write_full_starter_sections(self, doc, topic, sources, themes,
                                      contradictions, gaps, opportunities, problems, domain,
@@ -1739,7 +1716,8 @@ class ScribeResearchAgent:
 
     def _citation_for_sources(self, sources):
         citations = []
-        normalized_sources = sorted(sources or [], key=lambda source: self._author_surname(
+        normalized_sources = CitationEngine.referenceable_sources(sources)
+        normalized_sources = sorted(normalized_sources, key=lambda source: self._author_surname(
             self._source_value(source, "authors", "Unknown Author")
         ).lower())
         for source in normalized_sources:
@@ -1749,7 +1727,7 @@ class ScribeResearchAgent:
             year = self._source_value(source, "year", "n.d.")
             surnames = [self._author_surname(author) for author in authors]
             if not surnames:
-                author_citation = "[Author information unavailable]"
+                continue
             elif len(surnames) == 1:
                 author_citation = surnames[0]
             elif len(surnames) == 2:
