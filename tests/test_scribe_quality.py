@@ -141,6 +141,28 @@ def test_scribe_uses_academic_first_line_indentation_for_body_prose():
     assert document.paragraphs[1].paragraph_format.first_line_indent == 0
 
 
+def test_scribe_quotes_direct_topic_references_in_report_body_only():
+    document = Document()
+    document.add_paragraph("Research Proposal: Research quality")
+    document.add_paragraph("Abstract")
+    paragraph = document.add_paragraph()
+    paragraph.add_run("This report examines research quality. ")
+    paragraph.add_run("Research quality, specifically, remains important.")
+    quoted = document.add_paragraph("The topic “research quality” is already quoted.")
+    document.add_paragraph("References")
+    reference = document.add_paragraph("Author (2024). Research quality study.")
+
+    ScribeResearchAgent._quote_research_topic_references(document, "research quality")
+
+    assert paragraph.text == (
+        "This report examines “research quality”. "
+        "“Research quality”, specifically, remains important."
+    )
+    assert quoted.text == "The topic “research quality” is already quoted."
+    assert reference.text == "Author (2024). Research quality study."
+    assert document.paragraphs[0].text == "Research Proposal: Research quality"
+
+
 def test_scribe_formats_publication_style_abstract_with_keywords():
     agent = ScribeResearchAgent()
     agent.client = None

@@ -208,6 +208,7 @@ class ScribeResearchAgent:
                 "The document contains concise source-grounded notes that require further synthesis before reuse."
             )
 
+        self._quote_research_topic_references(doc, topic)
         filename_docx = (
             f"{'comprehensive_pre_research_proposal_report' if report_type == 'proposal' else 'complete_literature_review'}_{self._clean_filename(topic)}_"
             f"{time.strftime('%Y%m%d_%H%M%S')}.docx"
@@ -247,6 +248,43 @@ class ScribeResearchAgent:
             .strip()
         )
         paragraph.add_run(clean_text)
+
+    @staticmethod
+    def _quote_research_topic_references(doc, topic):
+        topic = str(topic or "").strip()
+        if not topic:
+            return
+        pattern = re.compile(rf"(?<!\w){re.escape(topic)}(?!\w)", re.IGNORECASE)
+        in_report_body = False
+        for paragraph in doc.paragraphs:
+            paragraph_text = paragraph.text.strip()
+            if paragraph_text.casefold() == "abstract":
+                in_report_body = True
+                continue
+            if paragraph_text.casefold() == "references":
+                break
+            if not in_report_body:
+                continue
+            for run in paragraph.runs:
+                run.text = ScribeResearchAgent._quote_topic_in_text(run.text, topic, pattern)
+
+    @staticmethod
+    def _quote_topic_in_text(text, topic, pattern=None):
+        if not topic:
+            return text
+        pattern = pattern or re.compile(
+            rf"(?<!\w){re.escape(topic)}(?!\w)",
+            re.IGNORECASE,
+        )
+
+        def add_quotes(match):
+            left = text[match.start() - 1:match.start()] if match.start() else ""
+            right = text[match.end():match.end() + 1]
+            if left in ('"', "'", "“", "‘") and right in ('"', "'", "”", "’"):
+                return match.group()
+            return f"“{match.group()}”"
+
+        return pattern.sub(add_quotes, text)
 
     def _write_proposal_sections(self, doc, topic, sources, themes,
                                  contradictions, gaps, opportunities, problems,
