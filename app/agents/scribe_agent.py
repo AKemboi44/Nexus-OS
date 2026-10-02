@@ -4,6 +4,7 @@ import sys
 import re
 import json
 import time
+from types import SimpleNamespace
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -504,18 +505,20 @@ class ScribeResearchAgent:
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
-                    "max_output_tokens": 8192,
+                    "max_output_tokens": (
+                        int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384"))
+                        if self.provider == "anthropic"
+                        else 8192
+                    ),
                     "temperature": 0.2,
                 },
             )
-            response_text = str(response.text or "").strip()
-            if response_text.startswith("```"):
-                response_lines = response_text.splitlines()
-                response_text = "\n".join(
-                    response_lines[1:-1] if response_lines[-1].strip() == "```"
-                    else response_lines[1:]
+            response_text = str(getattr(response, "text", "") or "").strip()
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                raise ReportSynthesisError(
+                    "The report model stopped before completing the proposal. Increase CLAUDE_MAX_OUTPUT_TOKENS and retry."
                 )
-            draft = json.loads(response_text)
+            draft = self._parse_proposal_json(response_text)
             self._proposal_draft = self._validate_proposal_draft(draft, source_ids)
             self._editorial_synthesis_complete = self._proposal_draft is not None
             if not self._proposal_draft:
@@ -523,7 +526,11 @@ class ScribeResearchAgent:
                     "The proposal language model returned incomplete or invalid sections. Please retry report generation."
                 )
         except (ValueError, TypeError, AttributeError) as error:
-            print(f"[Scribe Proposal Warning]: Invalid proposal response: {error}")
+            print(
+                "[Scribe Proposal Warning]: Invalid proposal response "
+                f"(provider={self.provider or 'gemini'}, "
+                f"characters={len(response_text) if 'response_text' in locals() else 0}): {error}"
+            )
             raise ReportSynthesisError(
                 "The proposal language model returned malformed output. Please retry report generation."
             ) from error
@@ -546,9 +553,15 @@ class ScribeResearchAgent:
     def _generate_content(self, contents, config=None):
         if self.provider == "anthropic":
             settings = config or {}
+            max_tokens = int(
+                os.getenv(
+                    "CLAUDE_MAX_OUTPUT_TOKENS",
+                    str(settings.get("max_output_tokens", 16384)),
+                )
+            )
             response = self.client.messages.create(
                 model=self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
-                max_tokens=settings.get("max_output_tokens", 8192),
+                max_tokens=max_tokens,
                 temperature=settings.get("temperature", 0.2),
                 messages=[{"role": "user", "content": contents}],
             )
@@ -556,7 +569,10 @@ class ScribeResearchAgent:
                 block.text for block in response.content
                 if getattr(block, "type", None) == "text"
             )
-            return type("ModelResponse", (), {"text": text})()
+            return SimpleNamespace(
+                text=text,
+                stop_reason=getattr(response, "stop_reason", None),
+            )
         if self.provider == "gemini":
             return self.client.models.generate_content(
                 model=self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
@@ -574,6 +590,52 @@ class ScribeResearchAgent:
             model="gemini-3.6-flash",
             contents=contents,
         )
+
+    @staticmethod
+    def _parse_proposal_json(response_text):
+        text = str(response_text or "").strip()
+        if not text:
+            raise ValueError("The model returned an empty response.")
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = "\n".join(
+                lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:]
+            ).strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        opening = text.find("{")
+        if opening < 0:
+            raise ValueError("No JSON object was present in the model response.")
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(opening, len(text)):
+            character = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                continue
+            if character == '"':
+                in_string = True
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    parsed = json.loads(text[opening:index + 1])
+                    if isinstance(parsed, dict):
+                        return parsed
+                    break
+        raise ValueError("The model response did not contain a complete JSON object.")
 
     def _validate_proposal_draft(self, draft, source_ids):
         if not isinstance(draft, dict):
