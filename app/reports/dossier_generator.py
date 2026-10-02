@@ -77,7 +77,7 @@ class DossierGenerator:
         base_prompt = self.quality_gate.build_generation_contract(query, custom_prompt, domain)
         base_prompt += f"\n\nSource Material for Extraction:\n{source_context}\n\n"
 
-        if self.client and hasattr(self.client, "models"):
+        if self.client and hasattr(self.client, "models") and hasattr(self.client.models, "generate_content"):
             # Compatibility with tests patching generator.client.models
             try:
                 response = self.client.models.generate_content(

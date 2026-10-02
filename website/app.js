@@ -497,7 +497,18 @@
     }
 
     function base64ToBlob(encoded, mimeType) {
-        const binary = atob(encoded);
+        if (!encoded || typeof encoded !== 'string') {
+            throw new Error('Report data is empty or invalid.');
+        }
+        let cleanBase64 = encoded.trim();
+        if (cleanBase64.includes(',')) {
+            cleanBase64 = cleanBase64.split(',')[1];
+        }
+        cleanBase64 = cleanBase64.replace(/\s+/g, '');
+        while (cleanBase64.length % 4 !== 0) {
+            cleanBase64 += '=';
+        }
+        const binary = atob(cleanBase64);
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
         return new Blob([bytes], {type: mimeType});

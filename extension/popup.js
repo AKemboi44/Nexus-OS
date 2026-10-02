@@ -475,7 +475,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createReportBlob(encodedReport) {
-        const binary = atob(encodedReport);
+        if (!encodedReport || typeof encodedReport !== 'string') {
+            throw new Error('Report data is empty or invalid.');
+        }
+        // Strip any whitespace, newlines, or data URI prefix if present
+        let cleanBase64 = encodedReport.trim();
+        if (cleanBase64.includes(',')) {
+            cleanBase64 = cleanBase64.split(',')[1];
+        }
+        cleanBase64 = cleanBase64.replace(/\s+/g, '');
+        // Pad with = if length % 4 != 0
+        while (cleanBase64.length % 4 !== 0) {
+            cleanBase64 += '=';
+        }
+        const binary = atob(cleanBase64);
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index++) {
             bytes[index] = binary.charCodeAt(index);

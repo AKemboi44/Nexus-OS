@@ -101,10 +101,18 @@ class GeminiSynthesisProvider(SynthesisProvider):
             raise err
         model_name = kwargs.get("model", self.model)
         try:
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
+            if hasattr(self.client, "models") and hasattr(self.client.models, "generate_content"):
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+            elif hasattr(self.client, "generate_content"):
+                response = self.client.generate_content(prompt)
+            elif hasattr(self.client, "GenerativeModel"):
+                gen_model = self.client.GenerativeModel(model_name)
+                response = gen_model.generate_content(prompt)
+            else:
+                raise AttributeError(f"Unsupported Gemini client structure: {type(self.client)}")
             return getattr(response, "text", "") or ""
         except Exception as e:
             err_str = str(e).lower()
