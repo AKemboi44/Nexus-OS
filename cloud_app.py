@@ -145,7 +145,7 @@ def require_supabase_database() -> SupabaseRestClient:
 DOSSIER_DOWNLOAD_LIMIT = 3
 DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
-REPORT_CACHE_VERSION = "5"
+REPORT_CACHE_VERSION = "6"
 REPORT_CACHE_PREFIX = "report-cache"
 DOCX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

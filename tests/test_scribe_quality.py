@@ -172,6 +172,30 @@ def test_scribe_replaces_source_quality_disclaimer_abstract_with_evidence_fallba
     )
 
 
+def test_scribe_replaces_caution_source_integrity_disclaimer_with_evidence_fallback():
+    agent = ScribeResearchAgent()
+    agent.client = None
+    abstract = agent._format_abstract(
+        "# Caution regarding source material integrity The supplied draft abstract could not be "
+        "synthesized due to service failure, and the source records provided contain severely "
+        "corrupted text with pervasive duplication and fragmentation that prevents reliable "
+        "interpretation of original content.",
+        "artificial intelligence applications",
+        [{
+            "title": "Evidence",
+            "authors": ["Author"],
+            "year": 2024,
+            "venue": "Journal of Evidence",
+        }],
+    )
+
+    assert "caution regarding source material integrity" not in abstract.lower()
+    assert "service failure" not in abstract.lower()
+    assert abstract.startswith(
+        "This report examines artificial intelligence applications through a structured review"
+    )
+
+
 def test_scribe_removes_markdown_abstract_heading_and_echoed_topic():
     agent = ScribeResearchAgent()
     agent.client = None
