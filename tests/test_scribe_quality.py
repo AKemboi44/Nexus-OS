@@ -449,7 +449,7 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
                 captured.update(kwargs)
                 return SimpleNamespace(content=[
                     SimpleNamespace(type="text", text='{"ready": true}')
-                ])
+                ], stop_reason="end_turn")
 
         messages = Messages()
 
@@ -482,6 +482,33 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
     assert captured["temperature"] == 0.2
     assert captured["messages"] == [{"role": "user", "content": "Return JSON."}]
     assert response.text == '{"ready": true}'
+
+
+def test_proposal_json_parser_accepts_fenced_and_prefaced_claude_output():
+    parsed = ScribeResearchAgent._parse_proposal_json(
+        'Here is the requested JSON:\n```json\n{"introduction": []}\n```'
+    )
+
+    assert parsed == {"introduction": []}
+
+
+def test_proposal_json_parser_rejects_truncated_claude_output():
+    with pytest.raises(ValueError, match="complete JSON object"):
+        ScribeResearchAgent._parse_proposal_json('{"introduction": [{"text": "unfinished')
+
+
+def test_proposal_editor_explains_claude_output_limit():
+    agent = ScribeResearchAgent()
+    agent.client = object()
+    agent.provider = "anthropic"
+    agent._generate_content = lambda **kwargs: SimpleNamespace(
+        text='{"introduction":',
+        stop_reason="max_tokens",
+    )
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+
+    with pytest.raises(ReportSynthesisError, match="CLAUDE_MAX_OUTPUT_TOKENS"):
+        agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
 
 
 def test_scribe_quotes_direct_topic_references_in_report_body_only():
