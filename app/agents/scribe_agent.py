@@ -498,10 +498,17 @@ class ScribeResearchAgent:
             )
 
         source_ids = {}
-        source_records = []
+        source_candidates = []
         for index, source in enumerate(sources, 1):
             source_id = f"S{index}"
             source_ids[source_id] = source
+            source_candidates.append((source_id, source, index))
+
+        source_records = []
+        for source_id, source, _ in sorted(
+            source_candidates,
+            key=lambda item: self._proposal_source_priority(item[1], item[2]),
+        )[:10]:
             source_records.append({
                 "id": source_id,
                 "authors": self._source_value(source, "authors", ""),
@@ -516,7 +523,7 @@ class ScribeResearchAgent:
                     or self._source_value(source, "url", "")
                 ),
                 "abstract": self._shorten(
-                    self._clean_prose(self._source_value(source, "abstract", "")), 160
+                    self._clean_prose(self._source_value(source, "abstract", "")), 80
                 ),
             })
 
@@ -589,7 +596,7 @@ class ScribeResearchAgent:
             "analysis, and limitations with concrete, explicitly "
             "provisional choices instead of generic advice. Provide one paragraph on significance and "
             "three feasible, clearly preliminary timeline phases. Keep each prose paragraph between "
-            "55 and 75 words and exactly three complete sentences. Questions and timeline activities "
+            "45 and 60 words and exactly two complete sentences. Questions and timeline activities "
             "may be concise.\n\n"
             f"Research topic: {topic}\nResearch domain: {domain}\n"
             f"Dossier synthesis notes: {json.dumps(synthesis, ensure_ascii=False)}\n"
@@ -911,7 +918,7 @@ class ScribeResearchAgent:
             else "gemini-3.6-flash"
         )
         selected_model = self.model or default_model
-        output_limit = self._claude_output_token_limit() if self.provider == "anthropic" else 8192
+        output_limit = self._proposal_output_token_limit()
         generation_config = {
             "response_mime_type": "application/json",
             "max_output_tokens": output_limit,
@@ -977,6 +984,48 @@ class ScribeResearchAgent:
             )
             return 8192
         return output_limit
+
+    @staticmethod
+    def _proposal_output_token_limit():
+        configured_limit = os.getenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", "3000")
+        try:
+            output_limit = int(configured_limit)
+        except ValueError:
+            print(
+                "[Scribe Editorial Notice]: Invalid CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS; "
+                "using the 3000-token concise proposal output limit."
+            )
+            return 3000
+        if output_limit < 2048:
+            print(
+                "[Scribe Editorial Notice]: CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS must be at least 2048; "
+                "using the 3000-token concise proposal output limit."
+            )
+            return 3000
+        if output_limit > 4096:
+            print(
+                "[Scribe Editorial Notice]: Capping CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS at 4096 "
+                "to control concise proposal cost."
+            )
+            return 4096
+        return output_limit
+
+    def _proposal_source_priority(self, source, index):
+        def numeric_value(name):
+            try:
+                return float(self._source_value(source, name, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        metadata_score = sum(bool(self._source_value(source, field, "")) for field in (
+            "authors", "year", "venue", "journal", "doi", "url", "abstract",
+        ))
+        relevance_score = max(
+            numeric_value("relevance_score"),
+            numeric_value("total_score"),
+            numeric_value("score"),
+        )
+        return (-relevance_score, -metadata_score, index)
 
     @staticmethod
     def _parse_proposal_json(response_text):

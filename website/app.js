@@ -503,7 +503,7 @@
         return new Blob([bytes], {type: mimeType});
     }
 
-    const REPORT_CACHE_VERSION = '6';
+    const REPORT_CACHE_VERSION = '7';
     let lastReportDownload = null;
 
     function reportDownloadStorageKey(reportType) {
