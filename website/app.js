@@ -507,6 +507,11 @@
         byId('downloadExcel').disabled = true;
         setMessage(reportStatus, 'Preparing your Excel dossier…');
         byId('reportStatus').classList.add('status-callout');
+        startActivityProgress('excel', [
+            'Locating your saved Excel dossier',
+            'Preparing the Excel download',
+            'Finalizing your dossier file',
+        ]);
         try {
             const response = await apiFetch(`/v1/research/${encodeURIComponent(activeResult.research_run_id)}/dossier`);
             if (!response.ok) {
@@ -518,12 +523,68 @@
             setMessage(reportStatus, remaining === 'unlimited'
                 ? 'Dossier downloaded. Unlimited downloads available.'
                 : `Dossier downloaded. ${remaining} of 3 free downloads remaining.`, 'success');
+            finishActivityProgress('excel', 'Excel dossier downloaded.');
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
+            failActivityProgress('excel', 'Excel dossier download stopped before completion.');
             setMessage(reportStatus, error.message, 'error');
         } finally {
             byId('downloadExcel').disabled = false;
         }
+    }
+
+    const activityProgressTimers = {};
+
+    function setActivityProgress(activity, percent, label) {
+        const normalizedPercent = Math.min(100, Math.max(0, Math.round(percent)));
+        const progress = byId(`${activity}Progress`);
+        const ring = byId(`${activity}ProgressRing`);
+        ring.style.setProperty('--report-progress', `${normalizedPercent}%`);
+        ring.setAttribute('aria-valuenow', String(normalizedPercent));
+        byId(`${activity}ProgressPercent`).textContent = `${normalizedPercent}%`;
+        byId(`${activity}ProgressLabel`).textContent = label;
+        progress.hidden = false;
+    }
+
+    function stopActivityProgress(activity) {
+        if (activityProgressTimers[activity] !== undefined) {
+            clearInterval(activityProgressTimers[activity]);
+            delete activityProgressTimers[activity];
+        }
+    }
+
+    function startActivityProgress(activity, stages) {
+        stopActivityProgress(activity);
+        const progress = byId(`${activity}Progress`);
+        progress.classList.remove('is-error', 'is-complete');
+        const startedAt = Date.now();
+        const update = () => {
+            const elapsedSeconds = (Date.now() - startedAt) / 1000;
+            const percent = Math.min(92, 8 + Math.sqrt(elapsedSeconds) * 10);
+            const stage = Math.min(
+                stages.length - 1,
+                Math.floor(elapsedSeconds / 12),
+            );
+            setActivityProgress(activity, percent, stages[stage]);
+        };
+        update();
+        activityProgressTimers[activity] = setInterval(update, 1000);
+    }
+
+    function finishActivityProgress(activity, label) {
+        stopActivityProgress(activity);
+        const progress = byId(`${activity}Progress`);
+        progress.classList.remove('is-error');
+        progress.classList.add('is-complete');
+        setActivityProgress(activity, 100, label);
+    }
+
+    function failActivityProgress(activity, label) {
+        stopActivityProgress(activity);
+        const progress = byId(`${activity}Progress`);
+        progress.classList.remove('is-complete');
+        progress.classList.add('is-error');
+        byId(`${activity}ProgressLabel`).textContent = label;
     }
 
     let reportProgressTimer = null;
@@ -634,6 +695,11 @@
         button.disabled = true;
         setMessage(scanStatus, 'Searching sources and reviewing evidence…');
         byId('scanStatus').classList.add('status-callout');
+        startActivityProgress('scan', [
+            'Discovering relevant sources',
+            'Reviewing evidence quality',
+            'Synthesizing your research results',
+        ]);
         try {
             const data = await apiJson('/v1/scan', {
                 method: 'POST',
@@ -647,9 +713,11 @@
                 })
             });
             renderResult(data);
+            finishActivityProgress('scan', 'Evidence scan complete.');
             setMessage(scanStatus, 'Scan complete. Your research was saved to your account.', 'success');
             await loadHistory();
         } catch (error) {
+            failActivityProgress('scan', 'Evidence scan stopped before completion.');
             setMessage(scanStatus, error.message, 'error');
         } finally {
             button.disabled = false;
