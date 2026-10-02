@@ -4,12 +4,14 @@ from typing import List, Dict, Any
 class ResearchDossier:
     def __init__(self, query: str):
         self.query = query
+        self.abstract = ""
         self.included_sources: List[Any] = []
         self.excluded_sources: List[Any] = []
         self.evidence_summary: List[str] = []
         self.themes: List[str] = []
         self.contradictions: List[str] = []  # Added for comprehensive Phase 5 analysis
         self.research_gaps: List[str] = []   # Added for explicit structural tracking
+        self.research_areas: List[str] = []
         self.opportunity_areas: List[str] = []  # Added for venture/monetization strategy mapping
         self.problems_to_solve: List[str] = []
         self.scoring_summary: List[str] = []
@@ -21,12 +23,14 @@ class ResearchDossier:
     def to_dict(self):
         return {
             "query": self.query,
+            "abstract": self.abstract,
             "included_sources": self.included_sources,
             "excluded_sources": self.excluded_sources,
             "evidence_summary": self.evidence_summary,
             "themes": self.themes,
             "contradictions": self.contradictions,
             "research_gaps": self.research_gaps,
+            "research_areas": self.research_areas,
             "opportunity_areas": self.opportunity_areas,
             "problems_to_solve": self.problems_to_solve,
             "quality_report": self.quality_report,
