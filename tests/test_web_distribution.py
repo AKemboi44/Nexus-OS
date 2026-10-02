@@ -128,9 +128,10 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
-    assert 'href="/styles.css?v=20261002-7"' in html
+    assert 'href="/styles.css?v=20261002-8"' in html
     assert 'src="/app.js?v=20261002-9"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert ".history-list { min-width: 0; min-height: 235px; grid-template-columns: minmax(0, 1fr);" in css
 
 
 def test_website_revalidates_html_to_avoid_mixed_cached_scan_assets():
