@@ -137,9 +137,10 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
-    assert 'href="/styles.css?v=20261002-10"' in html
+    assert 'href="/styles.css?v=20261002-11"' in html
     assert 'class="hero-filter-headline"' in html
-    assert ".hero h1.hero-filter-headline { font-size: clamp(29px, 3vw, 38px);" in css
+    assert html.count("✓ Relevance, recency, and quality checks") == 1
+    assert ".hero h1.hero-filter-headline { font-size: clamp(22px, 2.25vw, 28px);" in css
     assert 'src="/app.js?v=20261002-13"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
     assert ".history-list { min-width: 0; min-height: 235px; grid-template-columns: minmax(0, 1fr);" in css

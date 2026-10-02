@@ -92,9 +92,9 @@ body { font-size: 16px; }
 .button-large { min-height: 52px; font-size: 15px; }
 .hero { min-height: 600px; padding-top: 70px; padding-bottom: 75px; }
 .hero h1 { font-size: clamp(48px, 5.3vw, 68px); }
-.hero h1.hero-filter-headline { font-size: clamp(29px, 3vw, 38px); line-height: 1.35; letter-spacing: -1.4px; }
+.hero h1.hero-filter-headline { font-size: clamp(22px, 2.25vw, 28px); line-height: 1.45; letter-spacing: -1px; }
 @media (min-width: 641px) and (max-width: 880px) {
-  .hero h1.hero-filter-headline { font-size: 31px; }
+  .hero h1.hero-filter-headline { font-size: 25px; }
 }
 .hero-lede { font-size: 17px; line-height: 1.75; }
 .hero-proof { font-size: 12px; gap: 12px 22px; }
@@ -245,7 +245,7 @@ body { font-size: 16px; }
   .hero { min-height: auto; }
   .hero::before { inset: 2% -12vw 0; background-size: 118vw auto, auto, auto; background-position: 67% 36%, 0 0, 0 0; }
   .hero h1 { font-size: 46px; }
-  .hero h1.hero-filter-headline { font-size: 28px; }
+  .hero h1.hero-filter-headline { font-size: 22px; }
   .hero-lede { font-size: 15px; }
   .hero-proof { font-size: 11px; }
   .evidence-lines b { font-size: 10px; }
