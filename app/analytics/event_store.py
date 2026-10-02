@@ -34,8 +34,6 @@ class AnalyticsEventStore:
 
     def __init__(self, database_path: str = None):
         self.supabase = SupabaseRestClient.from_env()
-        if self.supabase:
-            return
         self.database_path = database_path or os.getenv(
             "NEXUS_ANALYTICS_DB",
             os.path.join(os.getcwd(), "nexus_analytics.sqlite3"),
@@ -223,30 +221,57 @@ class AnalyticsEventStore:
         - Side by side Variant A vs Variant B metrics
         """
         days = min(max(int(days), 1), 365)
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT event_name, user_key, session_id, occurred_at, properties_json
-                FROM analytics_events
-                WHERE occurred_at >= datetime('now', ?)
-                ORDER BY occurred_at ASC
-                """,
-                (f"-{days} days",),
-            ).fetchall()
-
         events = []
-        for r in rows:
+        if self.supabase:
             try:
-                props = json.loads(r["properties_json"]) if r["properties_json"] else {}
+                # Query analytics_events from Supabase
+                raw_rows = self.supabase.request(
+                    "GET",
+                    "analytics_events",
+                    params={
+                        "occurred_at": f"gte.now()-make_interval(days=>least(greatest({days},1),365))",
+                        "select": "event_name,user_id,session_id,occurred_at,properties",
+                        "order": "occurred_at.asc",
+                    },
+                )
+                if isinstance(raw_rows, list):
+                    for r in raw_rows:
+                        user_id_val = str(r.get("user_id") or "anonymous")
+                        events.append({
+                            "event_name": r.get("event_name"),
+                            "user_key": self._user_key(user_id_val),
+                            "session_id": r.get("session_id") or "unknown",
+                            "occurred_at": r.get("occurred_at") or "",
+                            "properties": r.get("properties") if isinstance(r.get("properties"), dict) else {},
+                        })
             except Exception:
-                props = {}
-            events.append({
-                "event_name": r["event_name"],
-                "user_key": r["user_key"],
-                "session_id": r["session_id"],
-                "occurred_at": r["occurred_at"],
-                "properties": props,
-            })
+                # Fall back to SQLite if Supabase fetch fails
+                pass
+
+        if not events:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT event_name, user_key, session_id, occurred_at, properties_json
+                    FROM analytics_events
+                    WHERE occurred_at >= datetime('now', ?)
+                    ORDER BY occurred_at ASC
+                    """,
+                    (f"-{days} days",),
+                ).fetchall()
+
+            for r in rows:
+                try:
+                    props = json.loads(r["properties_json"]) if r["properties_json"] else {}
+                except Exception:
+                    props = {}
+                events.append({
+                    "event_name": r["event_name"],
+                    "user_key": r["user_key"],
+                    "session_id": r["session_id"],
+                    "occurred_at": r["occurred_at"],
+                    "properties": props,
+                })
 
         # Group data by variant: overall, variant_a, variant_b
         def compute_group_metrics(group_events: List[Dict[str, Any]]) -> Dict[str, Any]:

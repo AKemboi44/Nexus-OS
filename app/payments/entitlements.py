@@ -13,8 +13,6 @@ class EntitlementStore:
 
     def __init__(self, database_path: str = None):
         self.supabase = SupabaseRestClient.from_env()
-        if self.supabase:
-            return
         self.database_path = database_path or os.getenv(
             "NEXUS_ENTITLEMENTS_DB",
             os.path.join(os.getcwd(), "nexus_entitlements.sqlite3"),
@@ -180,6 +178,24 @@ class EntitlementStore:
 
     def get_query_usage(self, user_key: str, period_month: Optional[str] = None) -> int:
         period = period_month or self.current_period_month()
+        if self.supabase:
+            try:
+                rows = self.supabase.request(
+                    "GET",
+                    "user_query_usage",
+                    params={
+                        "user_id": f"eq.{user_key}",
+                        "period_month": f"eq.{period}",
+                        "select": "query_count",
+                        "limit": 1,
+                    },
+                )
+                if isinstance(rows, list) and rows:
+                    return int(rows[0].get("query_count") or 0)
+                return 0
+            except Exception:
+                # Fallback to local store if Supabase fails or table not yet migrated
+                pass
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT query_count FROM user_query_usage WHERE user_key = ? AND period_month = ?",
@@ -190,6 +206,67 @@ class EntitlementStore:
     def increment_query_usage(self, user_key: str, period_month: Optional[str] = None) -> int:
         period = period_month or self.current_period_month()
         now_iso = datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            try:
+                existing_rows = self.supabase.request(
+                    "GET",
+                    "user_query_usage",
+                    params={
+                        "user_id": f"eq.{user_key}",
+                        "period_month": f"eq.{period}",
+                        "select": "query_count",
+                        "limit": 1,
+                    },
+                )
+                if isinstance(existing_rows, list) and existing_rows:
+                    new_count = int(existing_rows[0].get("query_count") or 0) + 1
+                    self.supabase.request(
+                        "PATCH",
+                        "user_query_usage",
+                        params={
+                            "user_id": f"eq.{user_key}",
+                            "period_month": f"eq.{period}",
+                        },
+                        json={
+                            "query_count": new_count,
+                            "last_queried_at": now_iso,
+                        },
+                    )
+                else:
+                    new_count = 1
+                    self.supabase.request(
+                        "POST",
+                        "user_query_usage",
+                        json={
+                            "user_id": user_key,
+                            "period_month": period,
+                            "query_count": 1,
+                            "last_queried_at": now_iso,
+                        },
+                    )
+                # Also update bundle remaining in supabase if user has bundle entitlement
+                try:
+                    entitlement = self.get(user_key)
+                    if entitlement and entitlement.get("bundle_queries_remaining") is not None:
+                        rem = max(0, int(entitlement["bundle_queries_remaining"]) - 1)
+                        tot = int(entitlement.get("total_queries_used") or 0) + 1
+                        self.supabase.request(
+                            "PATCH",
+                            "entitlements",
+                            params={"user_id": f"eq.{user_key}"},
+                            json={
+                                "bundle_queries_remaining": rem,
+                                "total_queries_used": tot,
+                                "updated_at": now_iso,
+                            },
+                        )
+                except Exception:
+                    pass
+                return new_count
+            except Exception:
+                # Fall back to local SQLite on any Supabase error
+                pass
+
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
@@ -202,7 +279,10 @@ class EntitlementStore:
                 (user_key, period, now_iso),
             )
             # Also update bundle queries remaining if user has an active bundle
-            entitlement = self.get(user_key)
+            try:
+                entitlement = self.get(user_key)
+            except Exception:
+                entitlement = None
             if entitlement and entitlement.get("bundle_queries_remaining") is not None:
                 rem = max(0, int(entitlement["bundle_queries_remaining"]) - 1)
                 tot = int(entitlement.get("total_queries_used") or 0) + 1
@@ -324,6 +404,46 @@ class EntitlementStore:
         cfg = default_pricing_config
         queries = query_allowance if query_allowance is not None else cfg.bundle_query_allowance
         now_iso = datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            try:
+                existing = self.get(user_key)
+                provider_id = f"bundle_{user_key}_{int(datetime.now(timezone.utc).timestamp())}"
+                if existing:
+                    current_rem = existing.get("bundle_queries_remaining") or 0
+                    self.supabase.request(
+                        "PATCH",
+                        "entitlements",
+                        params={"user_id": f"eq.{user_key}"},
+                        json={
+                            "provider": "bundle",
+                            "provider_id": provider_id,
+                            "plan": bundle_id,
+                            "status": "ACTIVE",
+                            "bundle_queries_remaining": current_rem + queries,
+                            "updated_at": now_iso,
+                        },
+                    )
+                else:
+                    self.supabase.request(
+                        "POST",
+                        "entitlements",
+                        json={
+                            "user_id": user_key,
+                            "provider": "bundle",
+                            "provider_id": provider_id,
+                            "plan": bundle_id,
+                            "status": "ACTIVE",
+                            "starts_at": now_iso,
+                            "updated_at": now_iso,
+                            "bundle_queries_remaining": queries,
+                            "total_queries_used": 0,
+                        },
+                    )
+                return
+            except Exception:
+                # Fall back to local SQLite on any Supabase error
+                pass
+
         with self._lock, self._connect() as connection:
             existing = connection.execute("SELECT * FROM entitlements WHERE user_key = ?", (user_key,)).fetchone()
             if existing:
