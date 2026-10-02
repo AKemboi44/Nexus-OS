@@ -479,7 +479,7 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
     assert captured["api_key"] == "claude-test-key"
     assert captured["model"] == "claude-test-model"
     assert captured["max_tokens"] == 4096
-    assert captured["temperature"] == 0.2
+    assert "temperature" not in captured
     assert captured["messages"] == [{"role": "user", "content": "Return JSON."}]
     assert captured["output_config"]["format"]["type"] == "json_schema"
     assert captured["output_config"]["format"]["schema"]["required"] == [

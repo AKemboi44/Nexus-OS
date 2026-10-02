@@ -553,7 +553,6 @@ class ScribeResearchAgent:
                     self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
                 ),
                 "max_tokens": max_tokens,
-                "temperature": settings.get("temperature", 0.2),
                 "messages": [{"role": "user", "content": contents}],
             }
             if settings.get("response_mime_type") == "application/json":
