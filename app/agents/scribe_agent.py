@@ -50,6 +50,11 @@ class ScribeResearchAgent:
                 self.model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Gemini editor unavailable: {error}")
+        if self.provider:
+            print(
+                f"[Scribe Editorial Notice]: Report editor configured "
+                f"(provider={self.provider}, model={self.model})."
+            )
 
     def generate_apa_dossier_report(self, topic: str, included_sources: list,
                                     dossier=None, domain: str = "scholarly",
@@ -511,11 +516,11 @@ class ScribeResearchAgent:
         except (ValueError, TypeError, AttributeError) as error:
             print(
                 "[Scribe Proposal Warning]: Invalid proposal response "
-                f"(provider={self.provider or 'gemini'}, "
+                f"(provider={self.provider or 'gemini'}, model={self.model or 'gemini-3.6-flash'}, "
                 f"details={error})"
             )
             raise ReportSynthesisError(
-                "The report model returned invalid JSON after a repair attempt. Please retry; if the problem persists, increase CLAUDE_MAX_OUTPUT_TOKENS."
+                f"The configured report model ({self.model or 'gemini-3.6-flash'}) returned invalid JSON after a fresh structured-output retry. Verify Railway is using the latest deployment and, for Claude, that CLAUDE_MODEL supports structured outputs. Increase CLAUDE_MAX_OUTPUT_TOKENS only if logs show the response stopped at max_tokens."
             ) from error
         except Exception as error:
             if isinstance(error, ReportSynthesisError):
@@ -543,7 +548,10 @@ class ScribeResearchAgent:
                 )
             )
             request = {
-                "model": self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+                "model": settings.get(
+                    "model",
+                    self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+                ),
                 "max_tokens": max_tokens,
                 "temperature": settings.get("temperature", 0.2),
                 "messages": [{"role": "user", "content": contents}],
@@ -566,7 +574,9 @@ class ScribeResearchAgent:
             )
         if self.provider == "gemini":
             return self.client.models.generate_content(
-                model=self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+                model=(config or {}).get(
+                    "model", self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+                ),
                 contents=contents,
                 config=config,
             ) if config else self.client.models.generate_content(
@@ -675,21 +685,30 @@ class ScribeResearchAgent:
         }
 
     def _generate_proposal_json(self, prompt):
-        output_limit = (
-            int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384"))
+        default_model = (
+            "claude-sonnet-4-5-20250929"
             if self.provider == "anthropic"
-            else 8192
+            else "gemini-3.6-flash"
         )
+        selected_model = self.model or default_model
+        output_limit = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384")) if self.provider == "anthropic" else 8192
         generation_config = {
             "response_mime_type": "application/json",
             "max_output_tokens": output_limit,
             "temperature": 0.2,
+            "model": selected_model,
         }
-        repair_prompt = prompt
         last_error = None
         for attempt in range(2):
+            generation_config["model"] = selected_model if attempt == 0 else default_model
+            retry_prompt = prompt if attempt == 0 else (
+                "Your prior response could not be parsed as the required JSON object. Regenerate "
+                "the complete response from the original request below. Follow its schema exactly "
+                "and return only the JSON object without Markdown or introductory text.\n\n"
+                f"Original request:\n{prompt}"
+            )
             response = self._generate_content(
-                contents=repair_prompt,
+                contents=retry_prompt,
                 config=generation_config,
             )
             response_text = str(getattr(response, "text", "") or "").strip()
@@ -701,16 +720,6 @@ class ScribeResearchAgent:
                 return self._parse_proposal_json(response_text)
             except ValueError as error:
                 last_error = error
-                if attempt == 0:
-                    repair_prompt = (
-                        "Repair the following model-generated response into one complete, valid JSON object "
-                        "that follows the exact schema and content requirements in the original request. "
-                        "Preserve the draft's supported content without adding claims. Return only the JSON "
-                        "object; do not use Markdown fences or explanatory text. If the response was cut off, "
-                        "complete the missing structure conservatively using the original request.\n\n"
-                        f"Original request:\n{prompt}\n\n"
-                        f"Malformed response, encoded as a JSON string:\n{json.dumps(response_text, ensure_ascii=False)}"
-                    )
         raise ValueError(f"JSON repair failed: {last_error}") from last_error
 
     @staticmethod
