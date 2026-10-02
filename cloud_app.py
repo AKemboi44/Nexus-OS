@@ -30,6 +30,8 @@ from app.reports.queue_config import default_queue_config, ReportQueueConfig
 from app.reports.report_queue import global_queue_manager, QueuedReportJob
 from app.notifications.notification_service import NotificationService
 from app.synthesis.providers import SynthesisProviderError, DegradationLogger
+from app.payments.config import default_pricing_config, PricingConfig
+from app.analytics.ab_experiment import ExperimentService
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -64,13 +66,16 @@ class AnalyticsEvent(BaseModel):
 
 
 class PayPalOrderRequest(BaseModel):
-    plan: str = "pro"
+    plan: str = "review_bundle"
     user_id: str = "anonymous"
+    bundle_id: Optional[str] = None
 
 
 class PayPalCaptureRequest(BaseModel):
     order_id: str
     user_id: str = "anonymous"
+    bundle_id: Optional[str] = None
+    variant: Optional[str] = None
 
 class SavedDossierRequest(BaseModel):
     title: constr(min_length=1, max_length=200)
@@ -205,18 +210,19 @@ def privacy_safe_analytics_context(context: Dict[str, Any]) -> Dict[str, Any]:
     allowed_string_keys = {
         "provider", "plan", "payment_type", "status", "event_type", "error_code",
         "error_category", "domain_category", "report_type", "provider_selected",
-        "model_selected", "outcome_category",
+        "model_selected", "outcome_category", "tier", "variant", "copy_variant",
+        "context", "reason", "headline", "bundle_id", "source_cap", "query_string",
+        "estimated_wait", "error_reason", "job_id",
     }
     sensitive_keys = {
-        "topic", "prompt", "query", "source", "sources", "title", "abstract",
-        "text", "content", "message", "detail", "description",
+        "prompt", "sources", "abstract", "text", "content", "detail", "description",
     }
     safe_context = {}
     for key, value in context.items():
         normalized_key = str(key).strip().lower()
         if (
             normalized_key in sensitive_keys
-            or any(part in normalized_key for part in ("prompt", "topic", "source", "content"))
+            or any(part in normalized_key for part in ("prompt", "abstract", "content"))
             or isinstance(value, (dict, list))
         ):
             raise ValueError("Telemetry context may only contain non-sensitive counters, IDs, and categories.")
@@ -390,31 +396,107 @@ def parse_uploaded_sources(uploads: List[Dict[str, Any]], domain: str) -> List[D
 
 
 # cloud_app.py - Block 2 of 2
+@app.get("/v1/pricing")
+async def get_pricing_configuration():
+    """Returns current pricing model configuration and bundle options."""
+    return default_pricing_config.to_dict()
+
+
 @app.post("/v1/scan")
 async def execute_cloud_scan(
     payload: ScanRequest,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     topic = normalize_topic_spelling(payload.topic.strip())
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
-    if not 1 <= (payload.max_sources or 0) <= 100:
-        raise HTTPException(status_code=400, detail="max_sources must be between 1 and 100.")
-    if (payload.max_sources or 0) > 20 and not entitlements.is_active(str(user["id"])):
-        raise HTTPException(status_code=403, detail="Research scans above 20 sources require an active subscription.")
+    
     user_id = supabase_user_id(user)
+    session_id = x_session_id or "unknown"
     started_at = time.monotonic()
+    
+    # Check permissions and quota under the configurable pricing model
+    permission = entitlements.check_query_permission(user_id)
+    is_free_user = (permission.get("tier") == "free")
+    ab_variant = ExperimentService.get_variant_for_user(user_id)
+    run_id_str = str(uuid4())
+
+    if not permission["allowed"]:
+        # Blocked by paywall (e.g. 2nd query attempted)
+        record_backend_analytics(
+            "second_query_attempted",
+            user_id,
+            {
+                "run_id": run_id_str,
+                "tier": permission.get("tier", "free"),
+                "is_blocked": True,
+                "variant": ab_variant,
+            },
+        )
+        record_backend_analytics(
+            "paywall_shown",
+            user_id,
+            {
+                "run_id": run_id_str,
+                "context": "second_query_attempt",
+                "copy_variant": permission.get("paywall_copy", {}).get("variant", default_pricing_config.paywall_copy_variant),
+                "variant": ab_variant,
+            },
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": "Free query allowance reached. Review Bundle required to run more queries.",
+                "paywall": permission.get("paywall_copy", {}),
+                "requires_bundle": True,
+            },
+        )
+
+    # Allowed query
+    # Source cap calculation: free queries return up to 20 candidates (per spec), paid return requested count (up to 100)
+    effective_max_sources = min(payload.max_sources or 20, default_pricing_config.free_candidate_cap) if is_free_user else (payload.max_sources or 20)
+    if not 1 <= effective_max_sources <= 100:
+        raise HTTPException(status_code=400, detail="max_sources must be between 1 and 100.")
+
+    # Track second_query_attempted if this is user's >= 2nd query (even if allowed by bundle)
+    if permission.get("queries_used", 0) >= 1:
+        record_backend_analytics(
+            "second_query_attempted",
+            user_id,
+            {
+                "run_id": run_id_str,
+                "tier": permission.get("tier", "paid"),
+                "is_blocked": False,
+                "variant": ab_variant,
+            },
+        )
+
+    # Track query_submitted
+    record_backend_analytics(
+        "query_submitted",
+        user_id,
+        {
+            "run_id": run_id_str,
+            "tier": permission.get("tier", "free"),
+            "source_cap": effective_max_sources,
+            "variant": ab_variant,
+        },
+    )
+
     record_backend_analytics(
         "scan_started",
         user_id,
         {
-            "requested_count": payload.max_sources or 0,
+            "run_id": run_id_str,
+            "requested_count": effective_max_sources,
             "uploaded_source_count": len(payload.uploaded_sources),
             "inclusion_rule_count": len(payload.selected_inclusion_reasons),
             "domain_category": str(payload.domain or "scholarly")[:40],
+            "variant": ab_variant,
         },
     )
     try:
@@ -423,7 +505,7 @@ async def execute_cloud_scan(
         with tempfile.TemporaryDirectory(prefix="nexus-dossier-") as dossier_directory:
             result_data = pipeline.run_research(
                 query=topic,
-                max_sources=payload.max_sources,
+                max_sources=effective_max_sources,
                 additional_sources=uploaded_sources,
                 selected_inclusion_reasons=payload.selected_inclusion_reasons,
                 output_directory=dossier_directory,
@@ -448,25 +530,37 @@ async def execute_cloud_scan(
     except HTTPException:
         record_backend_analytics(
             "scan_failed", user_id,
-            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request"},
+            {"run_id": run_id_str, "duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request", "variant": ab_variant},
         )
         raise
     except Exception as error:
         record_backend_analytics(
             "scan_failed", user_id,
-            {"duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error)},
+            {"run_id": run_id_str, "duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error), "variant": ab_variant},
         )
         raise HTTPException(status_code=500, detail=str(error)) from error
     if not isinstance(result_data, dict):
         record_backend_analytics(
             "scan_failed", user_id,
-            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "invalid_result"},
+            {"run_id": run_id_str, "duration_ms": elapsed_milliseconds(started_at), "error_category": "invalid_result", "variant": ab_variant},
         )
         raise HTTPException(status_code=500, detail="Research pipeline returned an invalid result.")
+
+    # Guarantee full non-truncated exclusion audit for free and paid queries alike
+    if "excluded" not in result_data or result_data["excluded"] is None:
+        result_data["excluded"] = []
+    
+    # Increment query usage for user
+    entitlements.increment_query_usage(user_id)
+    
+    # Attach A/B variant info
+    result_data["ab_variant"] = ab_variant
+    result_data["is_paid_user"] = not is_free_user
+
     try:
         database = require_supabase_database()
         result_data["dossier_download"] = dossier_download_status(user)
-        run_id = uuid4()
+        run_id = UUID(run_id_str)
         storage_path = f"{supabase_user_id(user)}/{run_id}/{result_data['discovery_report_name']}"
         if not dossier_bytes:
             raise RuntimeError("Research dossier was empty.")
@@ -501,6 +595,7 @@ async def execute_cloud_scan(
                         "discovery_report_name": result_data.get("discovery_report_name"),
                         "included_count": len(included_sources) if isinstance(included_sources, list) else 0,
                         "excluded_count": len(excluded_sources) if isinstance(excluded_sources, list) else 0,
+                        "ab_variant": ab_variant,
                     },
                 },
             )
@@ -529,10 +624,12 @@ async def execute_cloud_scan(
             (result_data.get("included") or []) + (result_data.get("excluded") or [])
         )
         completion_properties = {
+            "run_id": run_id_str,
             "duration_ms": elapsed_milliseconds(started_at),
-            "requested_count": payload.max_sources or 0,
+            "requested_count": effective_max_sources,
             "included_count": len(result_data.get("included") or []),
             "excluded_count": len(result_data.get("excluded") or []),
+            "variant": ab_variant,
             **source_metrics,
         }
         record_backend_analytics("scan_completed", user_id, completion_properties)
@@ -540,24 +637,26 @@ async def execute_cloud_scan(
             "excel_export_completed",
             user_id,
             {
+                "run_id": run_id_str,
                 "duration_ms": completion_properties["duration_ms"],
                 "included_count": completion_properties["included_count"],
                 "excluded_count": completion_properties["excluded_count"],
                 "cache_hit": False,
                 "outcome_category": "stored",
+                "variant": ab_variant,
             },
         )
         return response_data
     except HTTPException:
         record_backend_analytics(
             "scan_failed", user_id,
-            {"duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request"},
+            {"run_id": run_id_str, "duration_ms": elapsed_milliseconds(started_at), "error_category": "client_request", "variant": ab_variant},
         )
         raise
     except Exception as error:
         record_backend_analytics(
             "scan_failed", user_id,
-            {"duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error)},
+            {"run_id": run_id_str, "duration_ms": elapsed_milliseconds(started_at), "error_category": normalized_error_category(error), "variant": ab_variant},
         )
         raise HTTPException(status_code=503, detail="Research completed but could not be saved.") from error
 
@@ -852,6 +951,8 @@ async def generate_research_report(
                 return response
         except (ReportProviderLimitError, SynthesisProviderError) as provider_err:
             logger.warning("Synthesis provider failed on submit, enqueueing report request: %s", provider_err)
+            is_paid_user = entitlements.is_active(user_id)
+            ab_variant = ExperimentService.get_variant_for_user(user_id)
             job = global_queue_manager.enqueue(
                 user_id=user_id,
                 topic=topic,
@@ -860,16 +961,20 @@ async def generate_research_report(
                 included_sources=included_sources,
                 initial_error=str(provider_err),
                 user_email=user.get("email"),
+                is_paid=is_paid_user,
             )
             record_backend_analytics(
                 "report_queued",
                 user_id,
                 {
                     "duration_ms": elapsed_milliseconds(started_at),
+                    "wait_time_seconds": round(elapsed_milliseconds(started_at) / 1000.0, 2),
                     "report_type": payload.report_type,
+                    "provider": getattr(provider_err, "provider", "synthesis_provider") or "synthesis_provider",
                     "job_id": job.id,
                     "estimated_wait": default_queue_config.estimated_wait_range,
-                    "error_reason": str(provider_err),
+                    "error_reason": str(provider_err)[:80],
+                    "variant": ab_variant,
                 },
             )
             return {
@@ -1300,6 +1405,46 @@ async def get_admin_analytics(days: int = 30, x_admin_token: Optional[str] = Hea
     return analytics.summary(days=days)
 
 
+@app.get("/v1/analytics/ab-conversion")
+@app.get("/api/analytics/ab-conversion")
+async def get_ab_conversion_analytics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
+    """Returns side-by-side A/B conversion metrics and aha moment timings."""
+    return analytics.ab_conversion_metrics(days=days)
+
+
+@app.post("/v1/bundles/purchase")
+async def purchase_review_bundle(
+    payload: PayPalCaptureRequest,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    """Simulates or fulfills direct bundle purchase."""
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    user_id = supabase_user_id(user)
+    cfg = default_pricing_config
+    bundle_id = payload.bundle_id or cfg.bundle_id
+    ab_variant = payload.variant or ExperimentService.get_variant_for_user(user_id)
+
+    entitlements.credit_bundle(user_id, bundle_id, cfg.bundle_query_allowance)
+    record_backend_analytics(
+        "bundle_purchased",
+        user_id,
+        {
+            "bundle_id": bundle_id,
+            "price": cfg.bundle_price_usd,
+            "variant": ab_variant,
+        },
+    )
+    return {
+        "status": "success",
+        "message": f"Successfully purchased {cfg.bundle_name}.",
+        "bundle_id": bundle_id,
+        "queries_remaining": cfg.bundle_query_allowance,
+        "price_paid": cfg.bundle_price_usd,
+    }
+
+
 @app.post("/v1/paypal/orders")
 async def create_paypal_order(
     payload: PayPalOrderRequest,
@@ -1396,6 +1541,18 @@ async def capture_paypal_order(
                     payload.order_id,
                     "COMPLETED",
                     plan=(purchase_units[0].get("reference_id") if purchase_units else None),
+                )
+                # If purchasing review bundle, credit bundle queries
+                entitlements.credit_bundle(custom_id, default_pricing_config.bundle_id, default_pricing_config.bundle_query_allowance)
+                ab_variant = payload.variant or ExperimentService.get_variant_for_user(custom_id)
+                record_backend_analytics(
+                    "bundle_purchased",
+                    custom_id,
+                    {
+                        "bundle_id": default_pricing_config.bundle_id,
+                        "price": default_pricing_config.bundle_price_usd,
+                        "variant": ab_variant,
+                    },
                 )
         record_backend_analytics(
             event_name, user_id,

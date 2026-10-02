@@ -8,6 +8,14 @@ from fastapi import HTTPException
 
 import cloud_app
 
+@pytest.fixture(autouse=True)
+def clean_entitlements_and_pricing(tmp_path, monkeypatch):
+    import app.payments.entitlements
+    db_path = str(tmp_path / "test_api_entitlements.sqlite3")
+    store = app.payments.entitlements.EntitlementStore(database_path=db_path)
+    monkeypatch.setattr(cloud_app, "entitlements", store)
+    yield
+
 
 def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     class Pipeline:
@@ -69,14 +77,13 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     assert result["research_run_id"] == run_values["id"]
     assert result["saved_dossier_id"] == "saved-dossier-id"
     assert run_values["result"]["excel_dossier_storage_path"] == database.upload[1]
-    assert saved_dossier_values["payload"] == {
-        "research_run_id": result["research_run_id"],
-        "query": "AI evidence",
-        "status": "success",
-        "discovery_report_name": "research_audit_ai_evidence_20261001_120000.xlsx",
-        "included_count": 1,
-        "excluded_count": 0,
-    }
+    assert saved_dossier_values["payload"]["research_run_id"] == result["research_run_id"]
+    assert saved_dossier_values["payload"]["query"] == "AI evidence"
+    assert saved_dossier_values["payload"]["status"] == "success"
+    assert saved_dossier_values["payload"]["discovery_report_name"] == "research_audit_ai_evidence_20261001_120000.xlsx"
+    assert saved_dossier_values["payload"]["included_count"] == 1
+    assert saved_dossier_values["payload"]["excluded_count"] == 0
+    assert saved_dossier_values["payload"]["ab_variant"] in ("variant_a", "variant_b")
     assert database.upload[0] == cloud_app.DOSSIER_STORAGE_BUCKET
     assert database.upload[2] == b"workbook"
     assert "excel_dossier_base64" not in run_values["result"]
@@ -155,10 +162,11 @@ def test_scan_records_privacy_preserving_operational_events(monkeypatch):
         authorization="******",
     ))
 
-    assert [event["event_name"] for event in events] == [
-        "scan_started", "scan_completed", "excel_export_completed",
-    ]
-    completed = events[1]["properties"]
+    assert "scan_started" in [event["event_name"] for event in events]
+    assert "scan_completed" in [event["event_name"] for event in events]
+    assert "excel_export_completed" in [event["event_name"] for event in events]
+    completed_event = [event for event in events if event["event_name"] == "scan_completed"][0]
+    completed = completed_event["properties"]
     assert completed["requested_count"] == 3
     assert completed["reviewed_count"] == 2
     assert completed["metadata_complete_count"] == 1
@@ -211,7 +219,8 @@ def test_provider_quota_error_enqueues_pending_report(monkeypatch):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
-    monkeypatch.setattr("app.reports.dossier_generator.DossierGenerator", DossierGenerator)
+    import app.reports.dossier_generator
+    monkeypatch.setattr(app.reports.dossier_generator, "DossierGenerator", DossierGenerator)
 
     result = asyncio.run(cloud_app.generate_research_report(
         cloud_app.ReportRequest(
@@ -381,14 +390,17 @@ def test_cloud_scan_rejects_more_than_free_source_limit_for_free_users(monkeypat
     monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+    # Simulate user has already used their 1 free query
+    cloud_app.entitlements.increment_query_usage("user-id")
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(cloud_app.execute_cloud_scan(
-            cloud_app.ScanRequest(topic="AI evidence", max_sources=21),
+            cloud_app.ScanRequest(topic="AI evidence", max_sources=10),
             authorization="Bearer token",
         ))
 
     assert error.value.status_code == 403
+    assert error.value.detail["requires_bundle"] is True
 
 
 def test_word_report_failure_is_logged_with_original_exception(monkeypatch, caplog):

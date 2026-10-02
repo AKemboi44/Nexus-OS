@@ -2,9 +2,10 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
+from app.payments.config import default_pricing_config, PricingConfig
 
 
 class EntitlementStore:
@@ -38,7 +39,9 @@ class EntitlementStore:
                     status TEXT NOT NULL,
                     starts_at TEXT,
                     ends_at TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    bundle_queries_remaining INTEGER DEFAULT NULL,
+                    total_queries_used INTEGER DEFAULT 0
                 )
                 """
             )
@@ -54,6 +57,27 @@ class EntitlementStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_query_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_key TEXT NOT NULL,
+                    period_month TEXT NOT NULL,
+                    query_count INTEGER DEFAULT 0,
+                    last_queried_at TEXT NOT NULL,
+                    UNIQUE(user_key, period_month)
+                )
+                """
+            )
+            # Add columns if migrating existing db
+            try:
+                connection.execute("ALTER TABLE entitlements ADD COLUMN bundle_queries_remaining INTEGER DEFAULT NULL")
+            except Exception:
+                pass
+            try:
+                connection.execute("ALTER TABLE entitlements ADD COLUMN total_queries_used INTEGER DEFAULT 0")
+            except Exception:
+                pass
 
     def upsert(
         self,
@@ -149,6 +173,186 @@ class EntitlementStore:
     def is_active(self, user_key: str) -> bool:
         record = self.get(user_key)
         return bool(record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"})
+
+    @staticmethod
+    def current_period_month() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m")
+
+    def get_query_usage(self, user_key: str, period_month: Optional[str] = None) -> int:
+        period = period_month or self.current_period_month()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT query_count FROM user_query_usage WHERE user_key = ? AND period_month = ?",
+                (user_key, period),
+            ).fetchone()
+        return int(row["query_count"]) if row else 0
+
+    def increment_query_usage(self, user_key: str, period_month: Optional[str] = None) -> int:
+        period = period_month or self.current_period_month()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO user_query_usage (user_key, period_month, query_count, last_queried_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(user_key, period_month) DO UPDATE SET
+                    query_count = user_query_usage.query_count + 1,
+                    last_queried_at = excluded.last_queried_at
+                """,
+                (user_key, period, now_iso),
+            )
+            # Also update bundle queries remaining if user has an active bundle
+            entitlement = self.get(user_key)
+            if entitlement and entitlement.get("bundle_queries_remaining") is not None:
+                rem = max(0, int(entitlement["bundle_queries_remaining"]) - 1)
+                tot = int(entitlement.get("total_queries_used") or 0) + 1
+                connection.execute(
+                    """
+                    UPDATE entitlements
+                    SET bundle_queries_remaining = ?, total_queries_used = ?, updated_at = ?
+                    WHERE user_key = ?
+                    """,
+                    (rem, tot, now_iso, user_key),
+                )
+            row = connection.execute(
+                "SELECT query_count FROM user_query_usage WHERE user_key = ? AND period_month = ?",
+                (user_key, period),
+            ).fetchone()
+            return int(row["query_count"]) if row else 1
+
+    def check_query_permission(
+        self,
+        user_key: str,
+        config: Optional[PricingConfig] = None,
+    ) -> Dict[str, Any]:
+        """
+        Determines whether the user can execute a research query under the current pricing config.
+        Returns a dict:
+        {
+            "allowed": bool,
+            "tier": "paid" | "free",
+            "reason": str,
+            "queries_used": int,
+            "free_allowance": int,
+            "queries_remaining": int | None,
+            "requires_paywall": bool,
+            "paywall_copy": Dict[str, str],
+        }
+        """
+        cfg = config or default_pricing_config
+        active_paid = self.is_active(user_key)
+        record = self.get(user_key)
+        queries_used_this_month = self.get_query_usage(user_key)
+
+        if not cfg.pricing_model_enabled:
+            return {
+                "allowed": True,
+                "tier": "paid" if active_paid else "free",
+                "reason": "pricing_model_disabled",
+                "queries_used": queries_used_this_month,
+                "free_allowance": cfg.free_query_allowance,
+                "queries_remaining": None,
+                "requires_paywall": False,
+                "paywall_copy": {},
+            }
+
+        if active_paid:
+            bundle_remaining = record.get("bundle_queries_remaining") if record else None
+            # If not explicitly tracked yet for legacy/subscription records, default to available
+            is_exhausted = bundle_remaining is not None and bundle_remaining <= 0
+            if is_exhausted:
+                return {
+                    "allowed": False,
+                    "tier": "paid",
+                    "reason": "bundle_queries_exhausted",
+                    "queries_used": queries_used_this_month,
+                    "free_allowance": cfg.free_query_allowance,
+                    "queries_remaining": 0,
+                    "requires_paywall": True,
+                    "paywall_copy": {
+                        "headline": cfg.paywall_headline,
+                        "description": "You have completed the queries in your Review Bundle. Purchase an additional bundle to continue.",
+                        "bundle_id": cfg.bundle_id,
+                        "price": cfg.bundle_price_usd,
+                        "variant": cfg.paywall_copy_variant,
+                    },
+                }
+            return {
+                "allowed": True,
+                "tier": "paid",
+                "reason": "paid_entitlement_active",
+                "queries_used": queries_used_this_month,
+                "free_allowance": cfg.free_query_allowance,
+                "queries_remaining": bundle_remaining if bundle_remaining is not None else cfg.bundle_query_allowance,
+                "requires_paywall": False,
+                "paywall_copy": {},
+            }
+
+        # Free tier user
+        if queries_used_this_month >= cfg.free_query_allowance:
+            return {
+                "allowed": False,
+                "tier": "free",
+                "reason": "free_query_allowance_exceeded",
+                "queries_used": queries_used_this_month,
+                "free_allowance": cfg.free_query_allowance,
+                "queries_remaining": 0,
+                "requires_paywall": True,
+                "paywall_copy": {
+                    "headline": cfg.paywall_headline,
+                    "description": cfg.paywall_description,
+                    "bundle_id": cfg.bundle_id,
+                    "bundle_name": cfg.bundle_name,
+                    "price": cfg.bundle_price_usd,
+                    "queries_included": cfg.bundle_query_allowance,
+                    "variant": cfg.paywall_copy_variant,
+                },
+            }
+
+        return {
+            "allowed": True,
+            "tier": "free",
+            "reason": "free_query_available",
+            "queries_used": queries_used_this_month,
+            "free_allowance": cfg.free_query_allowance,
+            "queries_remaining": max(0, cfg.free_query_allowance - queries_used_this_month),
+            "requires_paywall": False,
+            "paywall_copy": {},
+        }
+
+    def credit_bundle(self, user_key: str, bundle_id: str, query_allowance: Optional[int] = None):
+        cfg = default_pricing_config
+        queries = query_allowance if query_allowance is not None else cfg.bundle_query_allowance
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect() as connection:
+            existing = connection.execute("SELECT * FROM entitlements WHERE user_key = ?", (user_key,)).fetchone()
+            if existing:
+                current_rem = existing["bundle_queries_remaining"] or 0
+                connection.execute(
+                    """
+                    UPDATE entitlements
+                    SET provider = 'bundle', provider_id = ?, plan = ?, status = 'ACTIVE',
+                        bundle_queries_remaining = ?, updated_at = ?
+                    WHERE user_key = ?
+                    """,
+                    (f"bundle_{user_key}_{int(datetime.now(timezone.utc).timestamp())}", bundle_id, current_rem + queries, now_iso, user_key),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO entitlements
+                    (user_key, provider, provider_id, plan, status, starts_at, updated_at, bundle_queries_remaining, total_queries_used)
+                    VALUES (?, 'bundle', ?, ?, 'ACTIVE', ?, ?, ?, 0)
+                    """,
+                    (
+                        user_key,
+                        f"bundle_{user_key}_{int(datetime.now(timezone.utc).timestamp())}",
+                        bundle_id,
+                        now_iso,
+                        now_iso,
+                        queries,
+                    ),
+                )
 
     def claim_event(self, event_id: str) -> bool:
         """Return False for a replayed webhook event."""
