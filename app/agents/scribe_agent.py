@@ -38,7 +38,11 @@ class ScribeResearchAgent:
         if claude_api_key:
             try:
                 import anthropic
-                self.client = anthropic.Anthropic(api_key=claude_api_key)
+                self.client = anthropic.Anthropic(
+                    api_key=claude_api_key,
+                    timeout=self._claude_timeout_seconds(),
+                    max_retries=0,
+                )
                 self.provider = "anthropic"
                 self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
                 try:
@@ -63,6 +67,25 @@ class ScribeResearchAgent:
                 f"[Scribe Editorial Notice]: Report editor configured "
                 f"(provider={self.provider}, model={self.model})."
             )
+
+    @staticmethod
+    def _claude_timeout_seconds():
+        configured_timeout = os.getenv("CLAUDE_TIMEOUT_SECONDS", "180")
+        try:
+            timeout = float(configured_timeout)
+        except ValueError:
+            print(
+                "[Scribe Editorial Notice]: Invalid CLAUDE_TIMEOUT_SECONDS; "
+                "using the 180-second report request timeout."
+            )
+            return 180.0
+        if timeout <= 0:
+            print(
+                "[Scribe Editorial Notice]: CLAUDE_TIMEOUT_SECONDS must be positive; "
+                "using the 180-second report request timeout."
+            )
+            return 180.0
+        return timeout
 
     def generate_apa_dossier_report(self, topic: str, included_sources: list,
                                     dossier=None, domain: str = "scholarly",
@@ -553,10 +576,7 @@ class ScribeResearchAgent:
                 f"({type(error).__name__}). Check the report service logs and retry."
             )
 
-        status_code = getattr(error, "status_code", None)
-        if status_code is None:
-            response = getattr(error, "response", None)
-            status_code = getattr(response, "status_code", None)
+        status_code = self._http_status(error)
         if status_code == 401:
             return "Claude rejected the API key. Verify CLAUDE_API_KEY in the Railway API service."
         if status_code == 403:
@@ -617,7 +637,18 @@ class ScribeResearchAgent:
                         "schema": self._proposal_json_schema(),
                     }
                 }
-            response = self.client.messages.create(**request)
+            try:
+                response = self.client.messages.create(**request)
+            except Exception as error:
+                if "output_config" not in request or self._http_status(error) != 400:
+                    raise
+                print(
+                    "[Scribe Editorial Notice]: Claude rejected the structured-output "
+                    f"request for model {request['model']} (details={error}). Retrying "
+                    "once with the JSON-only prompt; response validation remains enabled."
+                )
+                request.pop("output_config")
+                response = self.client.messages.create(**request)
             text = "\n".join(
                 block.text for block in response.content
                 if getattr(block, "type", None) == "text"
@@ -645,6 +676,14 @@ class ScribeResearchAgent:
             model="gemini-3.6-flash",
             contents=contents,
         )
+
+    @staticmethod
+    def _http_status(error):
+        status_code = getattr(error, "status_code", None)
+        if status_code is None:
+            response = getattr(error, "response", None)
+            status_code = getattr(response, "status_code", None)
+        return status_code
 
     @staticmethod
     def _proposal_json_schema():
