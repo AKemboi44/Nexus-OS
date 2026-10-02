@@ -17,6 +17,7 @@ from app.research.publication_quality import PublicationQualityGate
 from app.reports.dossier_generator import DossierGenerator
 from app.reports.excel_formatting import format_research_workbook
 from app.synthesis.citation_engine import CitationEngine
+from app.research.spelling import normalize_topic_spelling
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -50,6 +51,7 @@ class ResearchPipeline:
 
     def _discover_sources_real(self, query: str, max_sources: int = 5,
                                selected_reasons: List[str] = None) -> Dict[str, Any]:
+        query = normalize_topic_spelling(query)
         expanded_query = self._pre_process_query(query)
         combined_raw_sources = []
         engines = [(self.openalex, "openalex"), (self.semantic_scholar, "semantic_scholar"), (self.crossref, "crossref")]
@@ -172,6 +174,7 @@ class ResearchPipeline:
                      additional_sources: List[Dict[str, Any]] = None,
                      selected_inclusion_reasons: List[str] = None,
                      output_directory: str = None) -> Dict[str, Any]:
+        query = normalize_topic_spelling(query)
         selected_reasons = list(dict.fromkeys(
             str(reason).strip() for reason in (selected_inclusion_reasons or []) if str(reason).strip()
         )) or self.DEFAULT_AUDIT_CRITERIA.copy()

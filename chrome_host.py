@@ -3,6 +3,7 @@ import json
 import struct
 import subprocess
 import os
+from app.research.spelling import normalize_topic_spelling
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -44,7 +45,7 @@ def main():
         if msg is None:
             break
 
-        topic = msg.get("topic", "ai token optimization techniques")
+        topic = normalize_topic_spelling(msg.get("topic", "ai token optimization techniques"))
         max_sources = msg.get("max_sources", 5)
         domain = msg.get("domain", "scholarly")
         action_type = msg.get("action", "trigger_nexus_scan")

@@ -12,6 +12,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.synthesis.citation_engine import CitationEngine
 from app.research.publication_quality import PublicationQualityGate
+from app.research.spelling import normalize_topic_spelling
 from dotenv import load_dotenv
 
 
@@ -183,6 +184,7 @@ class ScribeResearchAgent:
                          dossier=None, domain: str = "scholarly",
                          report_type: str = "proposal",
                          output_directory: str = None) -> str:
+        topic = normalize_topic_spelling(topic)
         doc = Document()
 
         # Configure standard academic 1-inch margins on all sides

@@ -24,6 +24,7 @@ from app.analytics.event_store import AnalyticsEventStore
 from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
+from app.research.spelling import normalize_topic_spelling
 from app.agents.scribe_agent import ReportSynthesisError
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
@@ -393,7 +394,7 @@ async def execute_cloud_scan(
 ):
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
-    topic = payload.topic.strip()
+    topic = normalize_topic_spelling(payload.topic.strip())
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
     if not 1 <= (payload.max_sources or 0) <= 100:
@@ -668,7 +669,7 @@ async def generate_research_report(
 ):
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
-    topic = payload.topic.strip()
+    topic = normalize_topic_spelling(payload.topic.strip())
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
     if payload.report_type not in {"proposal", "full_starter"}:

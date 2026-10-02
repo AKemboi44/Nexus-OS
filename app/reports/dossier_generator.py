@@ -5,6 +5,7 @@ from google import genai
 from dotenv import load_dotenv
 from models.research_dossier import ResearchDossier
 from app.research.publication_quality import PublicationQualityGate
+from app.research.spelling import normalize_topic_spelling
 
 
 class DossierGenerator:
@@ -36,6 +37,7 @@ class DossierGenerator:
                                        domain: str = "scholarly",
                                        report_type: str = "proposal") -> ResearchDossier:
         """Assembles, analyzes, and synthesizes structured research dossiers using refined prompts."""
+        query = normalize_topic_spelling(query)
         dossier = ResearchDossier(query=query)
         dossier.included_sources = included_sources
         dossier.provenance = [
