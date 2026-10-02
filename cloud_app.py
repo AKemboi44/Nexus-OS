@@ -145,11 +145,23 @@ def require_supabase_database() -> SupabaseRestClient:
 DOSSIER_DOWNLOAD_LIMIT = 3
 DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
-REPORT_CACHE_VERSION = "4"
+REPORT_CACHE_VERSION = "5"
 REPORT_CACHE_PREFIX = "report-cache"
 DOCX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
+
+
+def report_cache_id(cache_key: str) -> str:
+    return f"v{REPORT_CACHE_VERSION}-{Path(cache_key).parent.name}"
+
+
+def parse_report_cache_id(cache_id: str) -> Optional[str]:
+    match = re.fullmatch(
+        rf"v{re.escape(REPORT_CACHE_VERSION)}-([a-f0-9]{{64}})",
+        str(cache_id or ""),
+    )
+    return match.group(1) if match else None
 
 
 def record_backend_analytics(
@@ -321,7 +333,8 @@ def cached_report_response(
         "document_base64": base64.b64encode(document_bytes).decode("ascii"),
         "report_type": report_type,
         "cache_hit": True,
-        "report_cache_id": Path(cache_key).parent.name,
+        "report_cache_id": report_cache_id(cache_key),
+        "report_cache_version": REPORT_CACHE_VERSION,
     }
 
 
@@ -803,7 +816,8 @@ async def generate_research_report(
                 "report_type": payload.report_type,
                 "quality_report": jsonable_encoder(dossier.quality_report),
                 "cache_hit": False,
-                "report_cache_id": Path(cache_key).parent.name,
+                "report_cache_id": report_cache_id(cache_key),
+                "report_cache_version": REPORT_CACHE_VERSION,
             }
             telemetry = scribe_telemetry(scribe)
             quality_report = dossier.quality_report
@@ -877,10 +891,14 @@ async def download_cached_research_report(
     require_api_access(x_api_key)
     if report_type not in {"proposal", "full_starter"}:
         raise HTTPException(status_code=400, detail="Unsupported report type.")
-    if not re.fullmatch(r"[a-f0-9]{64}", cache_id):
-        raise HTTPException(status_code=404, detail="Cached report not found.")
+    cache_digest = parse_report_cache_id(cache_id)
+    if not cache_digest:
+        raise HTTPException(
+            status_code=410,
+            detail="This cached report is outdated. Generate a new report to download the corrected version.",
+        )
     cache_key = (
-        f"{supabase_user_id(user)}/{REPORT_CACHE_PREFIX}/{cache_id}/"
+        f"{supabase_user_id(user)}/{REPORT_CACHE_PREFIX}/{cache_digest}/"
         f"{report_type}-report.docx"
     )
     try:
