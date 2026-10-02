@@ -935,16 +935,16 @@ def test_scribe_falls_back_to_gemini_after_claude_output_limit():
 
 def test_claude_output_limit_is_bounded(monkeypatch):
     monkeypatch.delenv("CLAUDE_MAX_OUTPUT_TOKENS", raising=False)
-    assert ScribeResearchAgent._claude_output_token_limit() == 6144
+    assert ScribeResearchAgent._claude_output_token_limit() == 8192
     monkeypatch.setenv("CLAUDE_MAX_OUTPUT_TOKENS", "64000")
     assert ScribeResearchAgent._claude_output_token_limit() == 8192
 
 
 def test_proposal_output_limit_uses_concise_budget(monkeypatch):
     monkeypatch.delenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", raising=False)
-    assert ScribeResearchAgent._proposal_output_token_limit() == 3000
-    monkeypatch.setenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", "64000")
     assert ScribeResearchAgent._proposal_output_token_limit() == 4096
+    monkeypatch.setenv("CLAUDE_PROPOSAL_MAX_OUTPUT_TOKENS", "64000")
+    assert ScribeResearchAgent._proposal_output_token_limit() == 8192
 
 
 def test_proposal_prompt_uses_top_ten_short_evidence_cards():
@@ -1015,7 +1015,7 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     def generate_content(contents, config):
         prompts.append(contents)
         requested_models.append(config["model"])
-        assert config["max_output_tokens"] == 3000
+        assert config["max_output_tokens"] == 4096
         return next(responses)
 
     agent._generate_content = generate_content
