@@ -472,8 +472,8 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
 
         messages = Messages()
 
-    def create_client(api_key):
-        captured["api_key"] = api_key
+    def create_client(**kwargs):
+        captured.update(kwargs)
         return FakeClaude()
 
     anthropic = types.ModuleType("anthropic")
@@ -496,6 +496,8 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
     assert agent.provider == "anthropic"
     assert agent.model == "claude-test-model"
     assert captured["api_key"] == "claude-test-key"
+    assert captured["timeout"] == 180.0
+    assert captured["max_retries"] == 0
     assert captured["model"] == "claude-test-model"
     assert captured["max_tokens"] == 4096
     assert "temperature" not in captured
@@ -514,6 +516,42 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
         "timeline",
     ]
     assert response.text == '{"ready": true}'
+
+
+def test_scribe_retries_without_structured_output_after_claude_400():
+    requests = []
+
+    class BadRequest(Exception):
+        status_code = 400
+
+    class FakeClaude:
+        class Messages:
+            @staticmethod
+            def create(**kwargs):
+                requests.append(kwargs)
+                if len(requests) == 1:
+                    raise BadRequest("output_config is not supported by this model")
+                return SimpleNamespace(content=[
+                    SimpleNamespace(type="text", text='{"ready": true}')
+                ], stop_reason="end_turn")
+
+        messages = Messages()
+
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    agent.model = "claude-sonnet-5-5"
+    agent.client = FakeClaude()
+
+    response = agent._generate_content(
+        contents="Return JSON.",
+        config={"response_mime_type": "application/json"},
+    )
+
+    assert response.text == '{"ready": true}'
+    assert "output_config" in requests[0]
+    assert "output_config" not in requests[1]
+    assert requests[0]["model"] == requests[1]["model"]
+    assert requests[0]["messages"] == requests[1]["messages"]
 
 
 def test_proposal_json_parser_accepts_fenced_and_prefaced_claude_output():
