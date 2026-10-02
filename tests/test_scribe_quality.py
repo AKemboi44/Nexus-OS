@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 from docx import Document
 from docx.shared import Inches
+from app.synthesis.citation_engine import CitationEngine
 
 
 def test_scribe_deduplicates_section_items():
@@ -128,7 +129,7 @@ def test_scribe_prose_cleanup_handles_long_repeated_input():
     assert cleaned.endswith("evidence")
 
 
-def test_scribe_uses_academic_first_line_indentation_for_body_prose():
+def test_scribe_keeps_proposal_body_flush_left_and_paragraph_spacing_consistent():
     document = Document()
     ScribeResearchAgent._add_body_paragraph(
         document,
@@ -141,11 +142,209 @@ def test_scribe_uses_academic_first_line_indentation_for_body_prose():
     )
 
     assert len(document.paragraphs) == 3
-    assert document.paragraphs[0].paragraph_format.first_line_indent == Inches(0.5)
-    assert document.paragraphs[1].paragraph_format.first_line_indent == Inches(0.5)
+    assert document.paragraphs[0].paragraph_format.first_line_indent == 0
+    assert document.paragraphs[1].paragraph_format.first_line_indent == 0
     assert document.paragraphs[2].paragraph_format.first_line_indent == 0
     assert all(paragraph.paragraph_format.space_before.pt == 0 for paragraph in document.paragraphs)
     assert all(paragraph.paragraph_format.space_after.pt == 0 for paragraph in document.paragraphs)
+
+
+def test_apa_references_format_author_initials_and_in_text_et_al():
+    source = {
+        "authors": ["Ahmed Abdelghany", "Khaled Abdelghany", "Laila Hassan"],
+        "year": 2026,
+        "title": "Research on evidence-grounded systems",
+        "venue": "Journal of Applied Research",
+        "doi": "10.1234/example",
+    }
+    agent = ScribeResearchAgent()
+
+    reference = CitationEngine.generate_apa_7th(source)
+    citation = agent._citation_for_sources([source])
+
+    assert reference.startswith("Abdelghany, A., Abdelghany, K., & Hassan, L. (2026).")
+    assert "Journal of Applied Research." in reference
+    assert "https://doi.org/10.1234/example" in reference
+    assert citation == "(Abdelghany et al., 2026)"
+
+
+def test_apa_reference_document_italics_title_or_publication():
+    document = Document()
+    paragraph = document.add_paragraph()
+    source = {
+        "authors": ["MANSOUR, Amina"],
+        "year": 2026,
+        "title": "A study of responsible systems",
+        "venue": "Journal of Research",
+        "volume": "12",
+        "issue": "2",
+        "pages": "34-49",
+    }
+
+    ScribeResearchAgent._add_apa_reference(paragraph, source)
+
+    assert paragraph.text == (
+        "Mansour, A. (2026). A study of responsible systems. "
+        "Journal of Research, 12(2), 34-49."
+    )
+    assert next(run for run in paragraph.runs if run.text == "Journal of Research").italic
+
+
+def test_apa_reference_sorting_is_alphabetical_by_first_author():
+    sources = [
+        {"authors": ["Zoe Smith"], "year": 2024, "title": "Later"},
+        {"authors": ["Ahmed Abdelghany"], "year": 2022, "title": "Earlier"},
+    ]
+
+    ordered = sorted(sources, key=ScribeResearchAgent._apa_reference_sort_key)
+
+    assert [source["title"] for source in ordered] == ["Earlier", "Later"]
+
+
+def test_proposal_editor_generates_full_grounded_structure_and_citations():
+    agent = ScribeResearchAgent()
+    source = {
+        "title": "Research quality across settings",
+        "authors": ["Atul Kumar"],
+        "year": 2024,
+        "venue": "Journal of Applied Research",
+        "url": "https://example.org/research",
+        "abstract": "The study compares research-quality measures across institutional settings and reports differences in implementation and evaluation.",
+    }
+
+    def paragraph(text, evidence_ids=None):
+        return {
+            "text": text,
+            "evidence_ids": ["S1"] if evidence_ids is None else evidence_ids,
+        }
+
+    developed = (
+        "The reviewed source compares research-quality measures across institutional settings and identifies "
+        "differences in how teams implement and evaluate those measures. Its reported comparison provides "
+        "a relevant basis for examining the topic, but the available abstract does not establish why the "
+        "observed differences arose or whether they generalize beyond the settings studied. The proposal "
+        "should therefore distinguish the documented comparison from explanations that require further "
+        "empirical testing. A full-text review is needed to verify the measures, context, and limits of the finding."
+    )
+    methodology = (
+        "A comparative design is a provisional option because the research problem concerns variation across "
+        "settings rather than a single reported outcome. The study should specify the unit of analysis, the "
+        "comparison groups, and the indicators used to define research quality before data collection begins. "
+        "The supplied records do not identify a target population or a validated measurement instrument. "
+        "These choices should remain explicit design decisions, not be presented as facts established by the "
+        "reviewed study. [Specify the study population and setting.]"
+    )
+
+    class FakeModels:
+        def generate_content(self, model, contents):
+            assert "expert academic research consultant and scholar" in contents
+            assert "zero" not in contents.lower() or "FACTUAL INTEGRITY" in contents
+            assert "research-quality measures across institutional settings" in contents
+            lit = {
+                key: [paragraph(developed), paragraph(developed)]
+                for key in (
+                    "key_themes",
+                    "contradictions_and_boundary_conditions",
+                    "research_gaps",
+                    "research_areas",
+                    "opportunities",
+                    "research_problems",
+                )
+            }
+            methods = {
+                key: [paragraph(methodology), paragraph(methodology, [])]
+                for key in ("research_design", "data_collection", "analysis", "limitations")
+            }
+            response = {
+                "introduction": [paragraph(developed), paragraph(developed)],
+                "problem_statement": [paragraph(developed), paragraph(developed)],
+                "research_questions": [
+                    paragraph("How do research-quality measures vary across institutional settings?", ["S1"]),
+                    paragraph("Which contextual conditions explain variation in the implementation of those measures?", ["S1"]),
+                ],
+                "hypotheses": [],
+                "research_objectives": [
+                    paragraph("Compare quality measures across the institutional settings represented in the evidence.", ["S1"]),
+                    paragraph("Identify contextual conditions associated with differences in implementation.", ["S1"]),
+                ],
+                "literature_review": lit,
+                "conceptual_framework": [
+                    paragraph(developed),
+                    paragraph(
+                        "No established framework is identified in the supplied records. "
+                        "The proposal should not attach an unrelated theory to the topic or "
+                        "present an unverified model as established scholarship. Before selecting "
+                        "a framework, the researcher should review peer-reviewed theoretical work "
+                        "that directly addresses research quality across institutional settings. "
+                        "The chosen framework should clarify rather than predetermine the proposed analysis. "
+                        "This decision requires a focused search beyond the abstracts supplied here. "
+                        "[Add a verified peer-reviewed source for the selected framework.]",
+                        [],
+                    ),
+                ],
+                "methodology": methods,
+                "significance": [paragraph(developed), paragraph(developed)],
+                "timeline": [
+                    {"phase": "Protocol", "duration": "Months 1-2", "activities": "Confirm questions, scope, and eligibility criteria."},
+                    {"phase": "Review", "duration": "Months 3-4", "activities": "Verify full texts and finalize evidence extraction."},
+                    {"phase": "Collection", "duration": "Months 5-7", "activities": "Collect approved data using documented procedures."},
+                    {"phase": "Analysis", "duration": "Months 8-10", "activities": "Analyze results, document limitations, and prepare the report."},
+                ],
+            }
+            return SimpleNamespace(text=json.dumps(response))
+
+    agent.client = SimpleNamespace(models=FakeModels())
+    agent._prepare_proposal_draft(
+        "research quality",
+        [source],
+        ["Measures vary across settings."],
+        ["Implementation differs by institution."],
+        ["The evidence does not identify causes."],
+        ["Compare institutions."],
+        ["Validate a shared measure."],
+        ["Determine which measures are useful."],
+        "scholarly",
+    )
+    assert agent._proposal_draft is not None
+    assert agent._editorial_synthesis_complete
+    assert agent._validate_proposal_draft(agent._proposal_draft, {}) is None
+
+    document = Document()
+    agent._write_proposal_sections(
+        document,
+        "research quality",
+        [source],
+        ["Measures vary across settings."],
+        ["Implementation differs by institution."],
+        ["The evidence does not identify causes."],
+        ["Validate a shared measure."],
+        ["Determine which measures are useful."],
+    )
+    paragraphs = document.paragraphs
+    text = "\n".join(paragraph.text for paragraph in paragraphs)
+    for heading in (
+        "Introduction and Background",
+        "Statement of the Problem",
+        "Research Questions and Hypotheses",
+        "Research Objectives",
+        "Literature Review",
+        "Key Themes",
+        "Contradictions and Boundary Conditions",
+        "Research Gaps",
+        "Research Areas",
+        "Opportunities",
+        "Research Problems",
+        "Theoretical or Conceptual Framework",
+        "Research Design",
+        "Data Collection",
+        "Analysis Strategy",
+        "Significance and Implications",
+        "Preliminary Timeline",
+    ):
+        assert heading in text
+    assert "(Kumar, 2024)" in text
+    assert all(paragraph.paragraph_format.first_line_indent == 0 for paragraph in paragraphs)
+    assert sum(paragraph.text.startswith("Phase ") for paragraph in paragraphs) == 4
 
 
 def test_scribe_quotes_direct_topic_references_in_report_body_only():
