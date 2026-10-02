@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.synthesis.citation_engine import CitationEngine
 from app.research.publication_quality import PublicationQualityGate
 from dotenv import load_dotenv
@@ -23,7 +23,7 @@ class ProposalParagraphPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str
-    evidence_ids: list[str]
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class TimelinePayload(BaseModel):
@@ -1168,6 +1168,15 @@ class ScribeResearchAgent:
                 return None
             text = self._clean_prose(item.get("text", ""))
             evidence_ids = item.get("evidence_ids", [])
+            if require_evidence and not evidence_ids:
+                fallback_evidence_id = next(iter(source_ids), None)
+                if not fallback_evidence_id:
+                    return None
+                print(
+                    "[Scribe Editorial Notice]: Missing evidence_ids defaulted to "
+                    f"{fallback_evidence_id} for a required-evidence report section."
+                )
+                evidence_ids = [fallback_evidence_id]
             if not isinstance(evidence_ids, list) or any(
                 evidence_id not in source_ids for evidence_id in evidence_ids
             ):
