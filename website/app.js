@@ -446,6 +446,7 @@
 
     function renderResult(data) {
         activeResult = data;
+        restoreCachedReportDownload();
         byId('scanResults').hidden = false;
         const topic = String(data.query || '').trim();
         byId('resultTitle').textContent = topic
@@ -500,6 +501,85 @@
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
         return new Blob([bytes], {type: mimeType});
+    }
+
+    let lastReportDownload = null;
+
+    function reportDownloadStorageKey(reportType) {
+        const runId = activeResult?.research_run_id;
+        return runId ? `nexus-report-download:${runId}:${reportType}` : null;
+    }
+
+    function updateReDownloadReportButton() {
+        byId('reDownloadReport').hidden = !lastReportDownload;
+    }
+
+    function rememberReportDownload(report) {
+        lastReportDownload = {
+            reportType: report.report_type,
+            documentName: report.document_name || 'nexus-research-report.docx',
+            documentBase64: report.document_base64,
+            cacheId: report.report_cache_id || null,
+        };
+        const storageKey = reportDownloadStorageKey(lastReportDownload.reportType);
+        if (storageKey && lastReportDownload.cacheId) {
+            sessionStorage.setItem(storageKey, JSON.stringify({
+                reportType: lastReportDownload.reportType,
+                documentName: lastReportDownload.documentName,
+                cacheId: lastReportDownload.cacheId,
+            }));
+        }
+        updateReDownloadReportButton();
+    }
+
+    function restoreCachedReportDownload() {
+        lastReportDownload = null;
+        const runId = activeResult?.research_run_id;
+        if (!runId) {
+            updateReDownloadReportButton();
+            return;
+        }
+        for (const reportType of ['proposal', 'full_starter']) {
+            const stored = sessionStorage.getItem(reportDownloadStorageKey(reportType));
+            if (!stored) continue;
+            try {
+                const report = JSON.parse(stored);
+                if (report.cacheId && report.reportType === reportType) {
+                    lastReportDownload = report;
+                    break;
+                }
+            } catch (error) {
+                sessionStorage.removeItem(reportDownloadStorageKey(reportType));
+            }
+        }
+        updateReDownloadReportButton();
+    }
+
+    async function reDownloadLastReport() {
+        if (!lastReportDownload) return;
+        const button = byId('reDownloadReport');
+        button.disabled = true;
+        try {
+            if (!lastReportDownload.documentBase64) {
+                const cached = await apiJson(
+                    `/v1/reports/cache/${encodeURIComponent(lastReportDownload.cacheId)}?report_type=${encodeURIComponent(lastReportDownload.reportType)}`
+                );
+                lastReportDownload.documentBase64 = cached.document_base64;
+                lastReportDownload.documentName = cached.document_name;
+            }
+            safeDownload(
+                base64ToBlob(
+                    lastReportDownload.documentBase64,
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                ),
+                lastReportDownload.documentName
+            );
+            setMessage(reportStatus, 'Your previously generated Word report was downloaded.', 'success');
+        } catch (error) {
+            setMessage(reportStatus, error.message, 'error');
+        } finally {
+            button.disabled = false;
+        }
     }
 
     async function downloadExcel() {
@@ -670,6 +750,7 @@
                 base64ToBlob(report.document_base64, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
                 report.document_name || 'nexus-research-report.docx'
             );
+            rememberReportDownload(report);
             finishReportProgress('Report ready and downloaded.');
             setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
@@ -927,6 +1008,7 @@
         byId('downloadExcel').addEventListener('click', downloadExcel);
         byId('proposalReport').addEventListener('click', () => generateReport('proposal'));
         byId('fullReport').addEventListener('click', () => generateReport('full_starter'));
+        byId('reDownloadReport').addEventListener('click', reDownloadLastReport);
     }
 
     initialize();

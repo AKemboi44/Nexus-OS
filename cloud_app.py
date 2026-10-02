@@ -7,6 +7,7 @@ import requests
 import base64
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -218,6 +219,7 @@ def cached_report_response(
         "document_base64": base64.b64encode(document_bytes).decode("ascii"),
         "report_type": report_type,
         "cache_hit": True,
+        "report_cache_id": Path(cache_key).parent.name,
     }
 
 
@@ -584,6 +586,7 @@ async def generate_research_report(
                 "report_type": payload.report_type,
                 "quality_report": jsonable_encoder(dossier.quality_report),
                 "cache_hit": False,
+                "report_cache_id": Path(cache_key).parent.name,
             }
     except HTTPException:
         raise
@@ -593,6 +596,48 @@ async def generate_research_report(
     except Exception as error:
         logger.exception("Word report generation failed for report type %s.", payload.report_type)
         raise HTTPException(status_code=500, detail="Report generation failed.") from error
+
+
+@app.get("/v1/reports/cache/{cache_id}")
+async def download_cached_research_report(
+    cache_id: str,
+    report_type: str = "proposal",
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    if report_type not in {"proposal", "full_starter"}:
+        raise HTTPException(status_code=400, detail="Unsupported report type.")
+    if not re.fullmatch(r"[a-f0-9]{64}", cache_id):
+        raise HTTPException(status_code=404, detail="Cached report not found.")
+    cache_key = (
+        f"{supabase_user_id(user)}/{REPORT_CACHE_PREFIX}/{cache_id}/"
+        f"{report_type}-report.docx"
+    )
+    try:
+        document_bytes = require_supabase_database().download_storage_object(
+            DOSSIER_STORAGE_BUCKET, cache_key
+        )
+    except SupabaseRequestError as error:
+        if error.status_code == 404:
+            raise HTTPException(status_code=404, detail="Cached report not found.") from error
+        logger.warning(
+            "Could not download cached %s report for user %s: %s",
+            report_type,
+            supabase_user_id(user),
+            error,
+        )
+        raise HTTPException(status_code=503, detail="Cached report download is unavailable.") from error
+    except RuntimeError as error:
+        logger.warning(
+            "Could not download cached %s report for user %s: %s",
+            report_type,
+            supabase_user_id(user),
+            error,
+        )
+        raise HTTPException(status_code=503, detail="Cached report download is unavailable.") from error
+    return cached_report_response(document_bytes, cache_key, report_type)
 
 
 @app.get("/v1/research")

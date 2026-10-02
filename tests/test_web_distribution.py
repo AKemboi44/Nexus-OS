@@ -101,6 +101,9 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert "function startActivityProgress(activity, stages)" in js
     assert "startActivityProgress('scan'" in js
     assert "startActivityProgress('excel'" in js
+    assert 'id="reDownloadReport"' in html
+    assert "function reDownloadLastReport()" in js
+    assert "/v1/reports/cache/" in js
     assert "`${error.message} Your research is still saved; please retry in a few minutes.`" in js
     assert ".report-progress-ring" in css
 
@@ -125,7 +128,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
     assert 'href="/styles.css?v=20261002-6"' in html
-    assert 'src="/app.js?v=20261002-8"' in html
+    assert 'src="/app.js?v=20261002-9"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
 
 
