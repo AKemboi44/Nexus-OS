@@ -85,6 +85,74 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     assert result["dossier_download"]["remaining"] == 3
 
 
+def test_scan_records_privacy_preserving_operational_events(monkeypatch):
+    class Pipeline:
+        def run_research(self, **kwargs):
+            Path(kwargs["output_directory"], "scan.xlsx").write_bytes(b"workbook")
+            return {
+                "status": "success",
+                "included": [{"title": "Evidence", "authors": ["Author"], "year": 2024, "venue": "Journal"}],
+                "excluded": [{"title": "Unusable"}],
+                "discovery_report_name": "scan.xlsx",
+            }
+
+    class Database:
+        def request(self, method, resource, **kwargs):
+            return []
+
+        def upload_storage_object(self, *args):
+            return None
+
+        def insert(self, table, values):
+            return {"id": values.get("id", "saved-dossier-id")}
+
+    events = []
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
+    monkeypatch.setattr(cloud_app, "pipeline", Pipeline())
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+    monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
+
+    asyncio.run(cloud_app.execute_cloud_scan(
+        cloud_app.ScanRequest(topic="Sensitive research prompt", max_sources=3),
+        authorization="******",
+    ))
+
+    assert [event["event_name"] for event in events] == [
+        "scan_started", "scan_completed", "excel_export_completed",
+    ]
+    completed = events[1]["properties"]
+    assert completed["requested_count"] == 3
+    assert completed["reviewed_count"] == 2
+    assert completed["metadata_complete_count"] == 1
+    assert "topic" not in completed
+    assert "Sensitive research prompt" not in str(events)
+
+
+def test_analytics_recording_failure_does_not_break_cached_report(monkeypatch):
+    class Database:
+        def download_storage_object(self, bucket, path):
+            return b"cached docx"
+
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
+    monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    result = asyncio.run(cloud_app.generate_research_report(
+        cloud_app.ReportRequest(
+            topic="Sensitive report prompt",
+            included_sources=[{
+                "title": "Evidence", "authors": ["Author"], "year": 2024, "venue": "Journal",
+            }],
+        ),
+        authorization="******",
+    ))
+
+    assert result["cache_hit"] is True
+
+
 def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch):
     run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
     filename = "research_audit_ai_20261001_120000.xlsx"

@@ -8,6 +8,20 @@ from typing import Any, Dict, List
 
 from app.supabase_store import SupabaseRestClient
 
+
+OPERATIONAL_EVENT_NAMES = (
+    "scan_completed",
+    "scan_failed",
+    "report_completed",
+    "report_failed",
+    "report_cache_redownload_completed",
+    "report_cache_redownload_failed",
+    "excel_export_completed",
+    "excel_download_completed",
+    "excel_download_failed",
+)
+
+
 class AnalyticsEventStore:
     """Small durable event store for funnel, error, and product-usage analytics."""
 
@@ -134,12 +148,30 @@ class AnalyticsEventStore:
                 """,
                 (f"-{days} days",),
             ).fetchall()
+            operational = connection.execute(
+                """
+                SELECT event_name,
+                       COUNT(*) AS event_count,
+                       SUM(CASE WHEN json_extract(properties_json, '$.duration_ms') IS NOT NULL
+                                THEN 1 ELSE 0 END) AS timed_events,
+                       ROUND(AVG(CAST(json_extract(properties_json, '$.duration_ms') AS REAL))) AS average_duration_ms,
+                       SUM(CASE WHEN json_extract(properties_json, '$.cache_hit') = 1
+                                THEN 1 ELSE 0 END) AS cache_hits
+                FROM analytics_events
+                WHERE event_name IN ({})
+                  AND occurred_at >= datetime('now', ?)
+                GROUP BY event_name
+                ORDER BY event_count DESC
+                """.format(",".join("?" for _ in OPERATIONAL_EVENT_NAMES)),
+                (*OPERATIONAL_EVENT_NAMES, f"-{days} days"),
+            ).fetchall()
 
         return {
             "window_days": days,
             "events": [dict(row) for row in totals],
             "common_errors": [dict(row) for row in errors],
             "funnel": self._funnel(days),
+            "operational_metrics": [dict(row) for row in operational],
         }
 
     def _funnel(self, days: int) -> List[Dict[str, Any]]:
