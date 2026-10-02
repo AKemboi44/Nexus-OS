@@ -585,7 +585,7 @@ class ScribeResearchAgent:
         if isinstance(error, (TypeError, AttributeError)):
             return (
                 "The installed Anthropic SDK is incompatible with the Claude report request. "
-                "Redeploy so Railway installs the required anthropic>=1.9.0 dependency."
+                "Redeploy so Railway installs the required anthropic==1.11.0 dependency."
             )
         return (
             f"The Claude report request failed ({type(error).__name__}"

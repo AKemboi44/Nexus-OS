@@ -445,7 +445,7 @@ def test_proposal_quota_errors_return_safe_actionable_message():
         (SimpleNamespace(status_code=401), "Verify CLAUDE_API_KEY"),
         (SimpleNamespace(status_code=403), "denied access to model"),
         (SimpleNamespace(status_code=400), "HTTP 400"),
-        (TypeError("unexpected keyword"), "anthropic>=1.9.0"),
+        (TypeError("unexpected keyword"), "anthropic==1.11.0"),
     ],
 )
 def test_claude_api_errors_return_actionable_messages(error, expected):
