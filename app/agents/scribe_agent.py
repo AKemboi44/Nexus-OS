@@ -1912,7 +1912,7 @@ class ScribeResearchAgent:
         """Polish the abstract, reject visibly corrupted prose, and normalize its keyword line."""
         source_is_corrupt = self._has_repeated_word_corruption(text)
         clean = self._clean_prose(text)
-        clean = re.sub(r"^(?:abstract\s*:?)\s*", "", clean, flags=re.I)
+        clean = self._strip_abstract_heading(clean, topic)
         keyword_position = self._keyword_label_position(clean)
         if keyword_position is not None:
             body = clean[:keyword_position].strip(" .")
@@ -1952,6 +1952,28 @@ class ScribeResearchAgent:
                 "in settings not represented in the current evidence base."
             )
         return f"{body.strip(' .')}. Keywords: {keywords}."
+
+    @staticmethod
+    def _strip_abstract_heading(text, topic):
+        heading = re.match(
+            r"^(?:#+\s*)?(?:research\s+)?abstract\s*:?\s*",
+            str(text or ""),
+            flags=re.I,
+        )
+        if not heading:
+            return str(text or "")
+
+        remainder = str(text or "")[heading.end():]
+        normalized_topic = str(topic or "").strip()
+        if normalized_topic:
+            echoed_topic = re.match(
+                rf"^{re.escape(normalized_topic)}(?=\s|[.:—–-]|$)\s*[.:—–-]?\s*",
+                remainder,
+                flags=re.I,
+            )
+            if echoed_topic:
+                remainder = remainder[echoed_topic.end():]
+        return remainder.strip()
 
     @staticmethod
     def _has_unusable_abstract_marker(text):

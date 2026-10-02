@@ -172,6 +172,34 @@ def test_scribe_replaces_source_quality_disclaimer_abstract_with_evidence_fallba
     )
 
 
+def test_scribe_removes_markdown_abstract_heading_and_echoed_topic():
+    agent = ScribeResearchAgent()
+    agent.client = None
+    body = (
+        "Understanding user intent in interactive systems requires consideration of how intent "
+        "signals manifest across modalities and evolve temporally. Recent work examines the "
+        "relationship between contextual cues, user behavior, and time-sensitive relevance. "
+        "Studies compare movement patterns, vocal tone, facial expression, and text-based "
+        "interactions to identify complementary signals for classification. They also assess "
+        "how recency, changing goals, and interaction histories affect interpretation in "
+        "dialogue and recommendation settings. The evidence suggests that robust systems "
+        "should integrate multiple signals while making temporal assumptions explicit. "
+        "Variation in datasets, outcome definitions, and evaluation methods limits direct "
+        "comparison across studies. Further investigation can clarify which combinations of "
+        "contextual and temporal features are most useful in practical systems."
+    )
+    abstract = agent._format_abstract(
+        "# Research Abstract: Contextual Intent Classification and Temporal Intent Decay "
+        + body,
+        "contextual intent classification and temporal intent decay",
+        [],
+    )
+
+    assert not abstract.startswith("# Research Abstract:")
+    assert not abstract.startswith("Contextual Intent Classification")
+    assert abstract.startswith("Understanding user intent in interactive systems")
+
+
 def test_scribe_prose_cleanup_handles_long_repeated_input():
     repeated_dash = "claim" + ("--" * 10000) + "supported"
     repeated_words = ("evidence " * 10000).strip()
