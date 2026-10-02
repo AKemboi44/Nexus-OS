@@ -1,6 +1,8 @@
 from openpyxl import load_workbook
+from openpyxl import Workbook
 
 from app.research.research_pipeline import ResearchPipeline
+from app.reports.excel_formatting import format_research_workbook
 from models.research_dossier import ResearchDossier
 from models.research_insight import ResearchInsight
 
@@ -59,4 +61,29 @@ def test_research_workbook_exports_research_areas_and_topic_opportunities(
     assert opportunities_sheet["A2"].value.startswith("Evaluate a shared reporting toolkit")
     assert research_sheet.freeze_panes == "A2"
     assert research_sheet["A1"].font.bold is True
+    for worksheet in workbook.worksheets:
+        assert all(
+            str(cell.value)[0].isupper()
+            for cell in worksheet[1]
+            if cell.value not in (None, "")
+        )
     workbook.close()
+
+
+def test_workbook_capitalizes_headers_and_preserves_common_acronyms(tmp_path):
+    path = tmp_path / "headers.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["research_topic", "doi", "source URL", "apa_format_citation"])
+    workbook.save(path)
+
+    format_research_workbook(path)
+
+    formatted = load_workbook(path, read_only=True)
+    assert list(formatted.active.values)[0] == (
+        "Research Topic",
+        "DOI",
+        "Source URL",
+        "APA Format Citation",
+    )
+    formatted.close()
