@@ -124,6 +124,28 @@ def test_scribe_replaces_garbled_repetitive_abstract_with_clean_fallback():
     assert len(abstract.split()) >= 100
 
 
+def test_scribe_replaces_cautious_abstract_error_marker_with_evidence_fallback():
+    agent = ScribeResearchAgent()
+    agent.client = None
+    abstract = agent._format_abstract(
+        "# Cautious Abstract The supplied draft for this research topic could not be preserved, "
+        "as the synthesis generation service failed and no usable content was recoverable.",
+        "contextual intent classification",
+        [{
+            "title": "Evidence",
+            "authors": ["Author"],
+            "year": 2024,
+            "venue": "Journal of Evidence",
+        }],
+    )
+
+    assert not abstract.startswith("# Cautious Abstract")
+    assert "synthesis generation service failed" not in abstract
+    assert abstract.startswith(
+        "This report examines contextual intent classification through a structured review"
+    )
+
+
 def test_scribe_prose_cleanup_handles_long_repeated_input():
     repeated_dash = "claim" + ("--" * 10000) + "supported"
     repeated_words = ("evidence " * 10000).strip()

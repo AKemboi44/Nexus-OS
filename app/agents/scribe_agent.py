@@ -1928,6 +1928,7 @@ class ScribeResearchAgent:
             body = edited
         if (
             not body
+            or self._has_unusable_abstract_marker(body)
             or "synthesis unavailable" in body.lower()
             or (source_is_corrupt and not edited)
             or self._has_repeated_word_corruption(body)
@@ -1943,6 +1944,16 @@ class ScribeResearchAgent:
                 "in settings not represented in the current evidence base."
             )
         return f"{body.strip(' .')}. Keywords: {keywords}."
+
+    @staticmethod
+    def _has_unusable_abstract_marker(text):
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+        return (
+            bool(re.match(r"^#?\s*(?:cautious|fallback|generated)?\s*abstract\b", normalized))
+            or "supplied draft for this research topic could not be preserved" in normalized
+            or "synthesis generation service failed" in normalized
+            or "no usable content was recoverable" in normalized
+        )
 
     def _editorial_abstract(self, text, topic, sources):
         if not self.client or not text or self._editorial_calls >= 5:
