@@ -40,6 +40,8 @@ class QueuedReportJob:
         quality_report: Optional[dict] = None,
         estimated_wait: Optional[str] = None,
         user_email: Optional[str] = None,
+        is_paid: bool = False,
+        priority: int = 0,
     ):
         self.id = job_id
         self.user_id = user_id
@@ -63,6 +65,9 @@ class QueuedReportJob:
         self.quality_report = quality_report
         self.estimated_wait = estimated_wait
         self.user_email = user_email
+        self.is_paid = is_paid
+        # Priority: paid users get priority 10 (or higher), free get priority 0
+        self.priority = priority if priority != 0 else (10 if is_paid else 0)
 
     def to_dict(self) -> dict:
         return {
@@ -84,6 +89,8 @@ class QueuedReportJob:
             "audit_filename": self.audit_filename,
             "estimated_wait": self.estimated_wait,
             "quality_report": self.quality_report,
+            "is_paid": self.is_paid,
+            "priority": self.priority,
         }
 
 
@@ -107,9 +114,12 @@ class ReportQueueManager:
         audit_filename: Optional[str] = None,
         user_email: Optional[str] = None,
         immediate_retry: bool = False,
+        is_paid: bool = False,
+        priority: Optional[int] = None,
     ) -> QueuedReportJob:
         job_id = str(uuid4())
         now = time.time()
+        job_priority = priority if priority is not None else (10 if is_paid else 0)
         job = QueuedReportJob(
             job_id=job_id,
             user_id=user_id,
@@ -127,9 +137,11 @@ class ReportQueueManager:
             audit_filename=audit_filename,
             estimated_wait=self.config.estimated_wait_range,
             user_email=user_email,
+            is_paid=is_paid,
+            priority=job_priority,
         )
         self._jobs[job_id] = job
-        logger.info("Enqueued report job %s for user %s on topic '%s'", job_id, user_id, topic)
+        logger.info("Enqueued report job %s for user %s (is_paid=%s, priority=%s) on topic '%s'", job_id, user_id, is_paid, job_priority, topic)
         return job
 
     def get_job(self, job_id: str) -> Optional[QueuedReportJob]:
@@ -219,16 +231,20 @@ class ReportQueueManager:
         return job
 
     def process_pending_jobs(self, max_jobs: int = 10) -> List[QueuedReportJob]:
-        """Runs a background processing pass for queued jobs."""
+        """Runs a background processing pass for queued jobs, prioritizing higher priority / paid jobs."""
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 
         now = time.time()
         processed = []
-        for job in list(self._jobs.values()):
-            if job.status not in ("queued", "generating"):
-                continue
+        candidate_jobs = [
+            j for j in self._jobs.values()
+            if j.status in ("queued", "generating")
+        ]
+        # Sort candidates: highest priority first, then earliest created_timestamp
+        candidate_jobs.sort(key=lambda j: (-j.priority, j.created_timestamp))
 
+        for job in candidate_jobs[:max_jobs]:
             # Check timeout window
             if (now - job.created_timestamp) > self.config.timeout_window_seconds:
                 self.mark_failed(job.id, f"Report timed out after {int(self.config.timeout_window_seconds)}s in queue.")
