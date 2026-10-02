@@ -480,6 +480,27 @@ def test_proposal_editor_fails_closed_if_model_is_unavailable_or_invalid():
         agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
 
 
+def test_proposal_editor_requests_one_corrective_draft_after_validation_failure():
+    agent = ScribeResearchAgent()
+    agent.client = object()
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+    prompts = []
+    validation_results = iter([None, {"introduction": []}])
+
+    def generate_draft(prompt):
+        prompts.append(prompt)
+        return {"response": "draft"}
+
+    agent._generate_proposal_json = generate_draft
+    agent._validate_proposal_draft = lambda draft, source_ids: next(validation_results)
+
+    agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
+
+    assert len(prompts) == 2
+    assert "Original request:" in prompts[1]
+    assert agent._proposal_draft == {"introduction": []}
+
+
 def test_proposal_quota_errors_return_safe_actionable_message():
     agent = ScribeResearchAgent()
     source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
