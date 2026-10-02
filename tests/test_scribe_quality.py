@@ -8,7 +8,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches
 import pytest
 from app.synthesis.citation_engine import CitationEngine
-from app.agents.scribe_agent import ReportSynthesisError
+from app.agents.scribe_agent import ReportProviderLimitError, ReportSynthesisError
 
 
 def test_scribe_deduplicates_section_items():
@@ -634,6 +634,125 @@ def test_proposal_quota_errors_return_safe_actionable_message(capsys):
         agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
 
     assert "Provider quota or rate limit" in capsys.readouterr().out
+
+
+def test_scribe_exports_labeled_deterministic_fallback_after_provider_quota(tmp_path, monkeypatch):
+    source = {
+        "authors": ["Jane Doe"],
+        "year": 2024,
+        "title": "Validated evidence record",
+        "venue": "Journal of Testing",
+    }
+
+    class QuotaModels:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    models = QuotaModels()
+    monkeypatch.setattr(
+        "app.agents.scribe_agent.PublicationQualityGate",
+        lambda: SimpleNamespace(validate_dossier=lambda *args, **kwargs: {"passed": True}),
+    )
+    agent = ScribeResearchAgent()
+    agent.client = SimpleNamespace(models=models)
+    agent.provider = "gemini"
+    dossier = SimpleNamespace(
+        abstract="A validated dossier abstract.",
+        themes=["The validated dossier records a recurring implementation pattern."],
+        contradictions=[],
+        research_gaps=[],
+        research_areas=[],
+        opportunity_areas=[],
+        problems_to_solve=[],
+        quality_report={"passed": True},
+    )
+
+    report_path = agent.generate_apa_dossier_report(
+        "quota-safe report",
+        [source],
+        dossier=dossier,
+        output_directory=str(tmp_path),
+    )
+
+    assert models.calls == 1
+    assert agent.fallback_mode == "deterministic_evidence_fallback"
+    text = "\n".join(paragraph.text for paragraph in Document(report_path).paragraphs)
+    assert "Evidence-Grounded Fallback (Non-AI-Synthesized)" in text
+    assert "does not contain AI-generated synthesis" in text
+    assert "Prepared from validated source records (Non-AI-Synthesized)" in text
+    assert "Prepared with Nexus Research AI" not in text
+    assert "(Doe, 2024)" in text
+
+
+def test_scribe_replaces_ai_abstract_when_later_provider_call_hits_quota(tmp_path, monkeypatch):
+    source = {
+        "authors": ["Jane Doe"],
+        "year": 2024,
+        "title": "Validated evidence record",
+        "venue": "Journal of Testing",
+    }
+    ai_abstract = " ".join(f"aiabstractword{index}" for index in range(120)) + "."
+
+    class MixedModels:
+        calls = 0
+
+        def generate_content(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(text=ai_abstract)
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    models = MixedModels()
+    monkeypatch.setattr(
+        "app.agents.scribe_agent.PublicationQualityGate",
+        lambda: SimpleNamespace(validate_dossier=lambda *args, **kwargs: {"passed": True}),
+    )
+    agent = ScribeResearchAgent()
+    agent.client = SimpleNamespace(models=models)
+    agent.provider = "gemini"
+    dossier = SimpleNamespace(
+        abstract="A short validated dossier abstract.",
+        themes=[],
+        contradictions=[],
+        research_gaps=[],
+        research_areas=[],
+        opportunity_areas=[],
+        problems_to_solve=[],
+        quality_report={"passed": True},
+    )
+
+    report_path = agent.generate_apa_dossier_report(
+        "quota-safe report",
+        [source],
+        dossier=dossier,
+        output_directory=str(tmp_path),
+    )
+
+    text = "\n".join(paragraph.text for paragraph in Document(report_path).paragraphs)
+    assert models.calls == 2
+    assert agent.fallback_mode == "deterministic_evidence_fallback"
+    assert "aiabstractword0" not in text
+    assert "Prepared with Nexus Research AI" not in text
+    assert "Prepared from validated source records (Non-AI-Synthesized)" in text
+
+
+def test_scribe_does_not_fallback_for_non_quota_provider_failures(tmp_path):
+    agent = ScribeResearchAgent()
+    agent.client = SimpleNamespace(
+        models=SimpleNamespace(
+            generate_content=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("provider unavailable"))
+        )
+    )
+    agent.provider = "gemini"
+    source = {"authors": ["Jane Doe"], "year": 2024, "title": "Valid", "venue": "Journal"}
+
+    with pytest.raises(ReportSynthesisError, match="could not complete"):
+        agent.generate_apa_dossier_report("topic", [source], output_directory=str(tmp_path))
+
+    assert agent.fallback_mode is None
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,10 @@ class ReportSynthesisError(RuntimeError):
     """Raised when the proposal cannot meet its evidence and prose requirements."""
 
 
+class ReportProviderLimitError(ReportSynthesisError):
+    """Raised only after a configured report provider rejects a request for capacity."""
+
+
 class ProposalParagraphPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -87,6 +91,9 @@ class ScribeResearchAgent:
         self.telemetry_correction_used = False
         self.telemetry_last_provider = None
         self.telemetry_last_model = None
+        self.fallback_mode = None
+        self._provider_limit_detected = False
+        self._cover_author_paragraph = None
         load_dotenv()
         claude_api_key = os.getenv("CLAUDE_API_KEY")
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -212,6 +219,7 @@ class ScribeResearchAgent:
         author_p.alignment = 1
         author_p.paragraph_format.space_before = Pt(24)
         author_p.add_run("Prepared with Nexus Research AI")
+        self._cover_author_paragraph = author_p
 
         doc.add_page_break()
         return self._write_synthesis_body(
@@ -229,6 +237,8 @@ class ScribeResearchAgent:
         self._editorial_batch_attempted = False
         self._editorial_synthesis_complete = False
         self._proposal_draft = None
+        self.fallback_mode = None
+        self._provider_limit_detected = False
         included_sources = CitationEngine.referenceable_sources(included_sources)
         if not included_sources:
             raise ReportSynthesisError(
@@ -258,6 +268,7 @@ class ScribeResearchAgent:
             self._format_abstract(abstract, topic, included_sources),
             first_line_indent=0,
         )
+        abstract_paragraph = doc.paragraphs[-1]
 
         themes = getattr(dossier, "themes", []) if dossier else []
         contradictions = getattr(dossier, "contradictions", []) if dossier else []
@@ -266,8 +277,12 @@ class ScribeResearchAgent:
         research_areas = getattr(dossier, "research_areas", []) if dossier else []
         problems = getattr(dossier, "problems_to_solve", []) if dossier else []
 
-        if report_type == "full_starter":
-            self._prepare_editorial_synthesis(
+        if self._provider_limit_detected:
+            self._activate_deterministic_fallback(
+                abstract_paragraph, topic, included_sources
+            )
+            self._write_deterministic_fallback_sections(
+                doc,
                 topic,
                 included_sources,
                 themes,
@@ -279,26 +294,58 @@ class ScribeResearchAgent:
                 report_type,
                 domain,
             )
-            self._write_full_starter_sections(
-                doc, topic, included_sources, themes, contradictions,
-                gaps, opportunities, problems, domain, research_areas=research_areas
-            )
         else:
-            self._prepare_proposal_draft(
-                topic,
-                included_sources,
-                themes,
-                contradictions,
-                gaps,
-                research_areas,
-                opportunities,
-                problems,
-                domain,
-            )
-            self._write_proposal_sections(
-                doc, topic, included_sources, themes, contradictions,
-                gaps, opportunities, problems, research_areas=research_areas
-            )
+            try:
+                if report_type == "full_starter":
+                    self._prepare_editorial_synthesis(
+                        topic,
+                        included_sources,
+                        themes,
+                        contradictions,
+                        gaps,
+                        research_areas,
+                        opportunities,
+                        problems,
+                        report_type,
+                        domain,
+                    )
+                    self._write_full_starter_sections(
+                        doc, topic, included_sources, themes, contradictions,
+                        gaps, opportunities, problems, domain, research_areas=research_areas
+                    )
+                else:
+                    self._prepare_proposal_draft(
+                        topic,
+                        included_sources,
+                        themes,
+                        contradictions,
+                        gaps,
+                        research_areas,
+                        opportunities,
+                        problems,
+                        domain,
+                    )
+                    self._write_proposal_sections(
+                        doc, topic, included_sources, themes, contradictions,
+                        gaps, opportunities, problems, research_areas=research_areas
+                    )
+            except ReportProviderLimitError:
+                self._activate_deterministic_fallback(
+                    abstract_paragraph, topic, included_sources
+                )
+                self._write_deterministic_fallback_sections(
+                    doc,
+                    topic,
+                    included_sources,
+                    themes,
+                    contradictions,
+                    gaps,
+                    research_areas,
+                    opportunities,
+                    problems,
+                    report_type,
+                    domain,
+                )
 
         gate = PublicationQualityGate()
         quality_report = (
@@ -313,7 +360,7 @@ class ScribeResearchAgent:
                 "The source synthesis did not pass publication-quality checks; no report was exported."
             )
         synthesis_complete = (
-            self._proposal_draft is not None
+            self._proposal_draft is not None or self.fallback_mode is not None
             if report_type == "proposal"
             else self._editorial_synthesis_complete
         )
@@ -354,6 +401,17 @@ class ScribeResearchAgent:
         )
         doc.save(target_docx_path)
         return target_docx_path
+
+    def _activate_deterministic_fallback(self, abstract_paragraph, topic, sources):
+        self.fallback_mode = "deterministic_evidence_fallback"
+        self._editorial_synthesis_complete = True
+        abstract_paragraph.clear()
+        abstract_paragraph.add_run(self._fallback_abstract(topic, sources))
+        if self._cover_author_paragraph is not None:
+            self._cover_author_paragraph.clear()
+            self._cover_author_paragraph.add_run(
+                "Prepared from validated source records (Non-AI-Synthesized)"
+            )
 
     @staticmethod
     def _add_heading(doc, text):
@@ -641,6 +699,10 @@ class ScribeResearchAgent:
                     f"Details: {self._proposal_validation_failure or 'unknown validation constraint'}."
                 )
         except (ValueError, TypeError, AttributeError) as error:
+            if self._is_provider_limit_error(error):
+                raise ReportProviderLimitError(
+                    "All configured report providers are temporarily at their request or quota limit."
+                ) from error
             print(
                 "[Scribe Proposal Warning]: Invalid proposal response "
                 f"(provider={self.provider or 'gemini'}, model={self.model or 'gemini-3.6-flash'}, "
@@ -655,7 +717,7 @@ class ScribeResearchAgent:
             error_message = str(error).casefold()
             if any(term in error_message for term in (
                 "429", "resource_exhausted", "quota", "rate_limit_error",
-                "rate limit", "overloaded_error",
+                "rate limit",
             )):
                 print(
                     "[Scribe Proposal Warning]: Provider quota or rate limit "
@@ -663,7 +725,7 @@ class ScribeResearchAgent:
                     f"model={self.telemetry_last_model or self.model or 'unknown'}, "
                     f"fallback_used={self.telemetry_fallback_used}, details={error})."
                 )
-                raise ReportSynthesisError(
+                raise ReportProviderLimitError(
                     "The configured report model is temporarily at its request limit. Retry later or check the provider's quota and billing settings."
                 ) from error
             print(f"[Scribe Proposal Warning]: Proposal synthesis unavailable: {error}")
@@ -714,6 +776,16 @@ class ScribeResearchAgent:
             f"{f', HTTP {status_code}' if status_code else ''}). "
             "Check the Claude API error in Railway logs and verify the model configuration."
         )
+
+    @staticmethod
+    def _is_provider_limit_error(error):
+        status_code = ScribeResearchAgent._http_status(error)
+        if status_code == 429:
+            return True
+        message = str(error).casefold()
+        return any(term in message for term in (
+            "429", "resource_exhausted", "quota", "rate_limit_error", "rate limit",
+        ))
 
     def _generate_content(self, contents, config=None):
         self.telemetry_attempts += 1
@@ -1325,6 +1397,92 @@ class ScribeResearchAgent:
             "The proposal was incomplete and cannot be exported as a document."
         )
 
+    def _write_deterministic_fallback_sections(
+        self,
+        doc,
+        topic,
+        sources,
+        themes,
+        contradictions,
+        gaps,
+        research_areas,
+        opportunities,
+        problems,
+        report_type,
+        domain,
+    ):
+        self._add_heading(doc, "Report Status: Evidence-Grounded Fallback (Non-AI-Synthesized)")
+        self._add_body_paragraph(
+            doc,
+            "The configured AI report providers rejected this request because of temporary quota or "
+            "rate limits. Nexus created this limited, deterministic report from the validated source "
+            "metadata and dossier records already available for this research run. It does not contain "
+            "AI-generated synthesis or new factual claims. Generate the report again later to request "
+            "the full AI-synthesized version.",
+            first_line_indent=0,
+        )
+        sections = [
+            ("Evidence Scope", [
+                f"This fallback covers {len(sources)} validated {domain} source record(s) for {topic}. "
+                "It preserves only traceable metadata, citations, and dossier observations."
+            ]),
+            ("Key Themes", themes),
+            ("Contradictions and Boundary Conditions", contradictions),
+            ("Research Gaps", gaps),
+            ("Research Areas", research_areas),
+            ("Opportunity Areas", opportunities),
+            ("Research Problems", problems),
+        ]
+        if report_type == "proposal":
+            sections.extend([
+                ("Proposed Research Questions", [
+                    f"Which documented patterns in {topic} should be examined across the settings represented by the validated sources?",
+                    f"Which evidence gaps and boundary conditions should a future study of {topic} test directly?",
+                ]),
+                ("Proposed Research Objectives", [
+                    f"Document the validated evidence records and dossier observations concerning {topic}.",
+                    f"Define a future study that tests the gaps and contextual conditions recorded above.",
+                ]),
+            ])
+        else:
+            sections.extend([
+                ("Research Direction", [
+                    f"A future study of {topic} should verify the dossier observations against the full source texts before drawing conclusions."
+                ]),
+                ("Methodological Note", [
+                    "No methodology was AI-synthesized in this fallback. Study design, data collection, and analysis choices require later researcher review."
+                ]),
+            ])
+
+        for heading, claims in sections:
+            self._add_heading(doc, heading)
+            clean_claims = self._unique_items(claims)
+            if not clean_claims:
+                clean_claims = ["The validated dossier does not record a separate observation for this category."]
+            for claim in clean_claims[:5]:
+                self._add_body_paragraph(
+                    doc,
+                    self._deterministic_evidence_paragraph(claim, sources),
+                )
+
+    def _deterministic_evidence_paragraph(self, claim, sources):
+        claim = self._complete_sentence(
+            self._remove_parenthetical_years(self._clean_prose(claim)).strip(" .")
+        )
+        cited_sources = self._sources_for_point(claim, sources)[:3] or sources[:3]
+        citation = self._citation_for_sources(cited_sources)
+        source_count = len(cited_sources)
+        evidence_sentence = (
+            f"The statement is reproduced from the validated dossier record and is linked to "
+            f"{source_count} included source record{'s' if source_count != 1 else ''}"
+        )
+        if citation:
+            evidence_sentence = f"{evidence_sentence} {citation}"
+        return (
+            f"{claim} {evidence_sentence}. This limited fallback does not interpret the "
+            "underlying studies or establish conclusions beyond the available metadata and dossier data."
+        )
+
     def _write_structured_proposal(self, doc, draft, sources):
         source_by_id = {f"S{index}": source for index, source in enumerate(sources, 1)}
 
@@ -1865,8 +2023,16 @@ class ScribeResearchAgent:
                 entry["key"] in self._editorial_cache for entry in entries
             )
         except (ValueError, TypeError, AttributeError) as error:
+            if self._is_provider_limit_error(error):
+                raise ReportProviderLimitError(
+                    "All configured report providers are temporarily at their request or quota limit."
+                ) from error
             print(f"[Scribe Synthesis Warning]: Invalid editorial response: {error}")
         except Exception as error:
+            if self._is_provider_limit_error(error):
+                raise ReportProviderLimitError(
+                    "All configured report providers are temporarily at their request or quota limit."
+                ) from error
             print(f"[Scribe Synthesis Warning]: Editorial synthesis unavailable: {error}")
 
     def _normalize_editorial_claim(self, claim, topic):
@@ -1966,6 +2132,8 @@ class ScribeResearchAgent:
                 self._editorial_cache[cache_key] = rewritten
                 return rewritten
         except Exception as error:
+            if self._is_provider_limit_error(error):
+                self._provider_limit_detected = True
             print(f"[Scribe Editorial Warning]: {error}")
         return claim
 
@@ -2093,6 +2261,8 @@ class ScribeResearchAgent:
             ):
                 return edited
         except Exception as error:
+            if self._is_provider_limit_error(error):
+                self._provider_limit_detected = True
             print(f"[Scribe Abstract Warning]: {error}")
         return ""
 

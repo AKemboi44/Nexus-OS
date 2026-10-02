@@ -254,6 +254,7 @@ def scribe_telemetry(scribe: Any) -> Dict[str, Any]:
         ),
         "provider_fallback_used": bool(getattr(scribe, "telemetry_fallback_used", False)),
         "validation_correction_used": bool(getattr(scribe, "telemetry_correction_used", False)),
+        "degraded_mode": bool(getattr(scribe, "fallback_mode", None)),
     }
     try:
         telemetry["configured_output_token_limit"] = min(
@@ -328,6 +329,8 @@ def cached_report_response(
     return {
         "status": "success",
         "action": "cached_docx_download",
+        "generation_mode": "ai_synthesized",
+        "degraded": False,
         "document_name": Path(cache_key).name,
         "document_base64": base64.b64encode(document_bytes).decode("ascii"),
         "report_type": report_type,
@@ -793,35 +796,44 @@ async def generate_research_report(
             if report_path.parent != report_root or not report_path.is_file():
                 raise RuntimeError("Generated report escaped its temporary output directory.")
             document_bytes = report_path.read_bytes()
-            try:
-                database.upload_storage_object(
-                    DOSSIER_STORAGE_BUCKET,
-                    cache_key,
-                    document_bytes,
-                    DOCX_CONTENT_TYPE,
-                )
-            except (RuntimeError, SupabaseRequestError) as error:
-                logger.warning(
-                    "Could not cache %s report for user %s: %s",
-                    payload.report_type,
-                    supabase_user_id(user),
-                    error,
-                )
+            degraded = bool(scribe.fallback_mode)
+            if not degraded:
+                try:
+                    database.upload_storage_object(
+                        DOSSIER_STORAGE_BUCKET,
+                        cache_key,
+                        document_bytes,
+                        DOCX_CONTENT_TYPE,
+                    )
+                except (RuntimeError, SupabaseRequestError) as error:
+                    logger.warning(
+                        "Could not cache %s report for user %s: %s",
+                        payload.report_type,
+                        supabase_user_id(user),
+                        error,
+                    )
             response = {
-                "status": "success",
-                "action": "docx_generation_complete",
+                "status": "degraded" if degraded else "success",
+                "action": (
+                    "evidence_grounded_fallback_docx"
+                    if degraded else "docx_generation_complete"
+                ),
+                "generation_mode": (
+                    scribe.fallback_mode if degraded else "ai_synthesized"
+                ),
+                "degraded": degraded,
                 "document_name": report_path.name,
                 "document_base64": base64.b64encode(document_bytes).decode("ascii"),
                 "report_type": payload.report_type,
                 "quality_report": jsonable_encoder(dossier.quality_report),
                 "cache_hit": False,
-                "report_cache_id": report_cache_id(cache_key),
-                "report_cache_version": REPORT_CACHE_VERSION,
+                "report_cache_id": None if degraded else report_cache_id(cache_key),
+                "report_cache_version": None if degraded else REPORT_CACHE_VERSION,
             }
             telemetry = scribe_telemetry(scribe)
             quality_report = dossier.quality_report
             record_backend_analytics(
-                "report_completed",
+                "report_degraded_completed" if degraded else "report_completed",
                 user_id,
                 {
                     "duration_ms": elapsed_milliseconds(started_at),
@@ -833,6 +845,7 @@ async def generate_research_report(
                         bool(quality_report.get("passed", True))
                         if isinstance(quality_report, dict) else None
                     ),
+                    "outcome_category": "evidence_grounded_fallback" if degraded else "ai_synthesized",
                     **telemetry,
                 },
             )
