@@ -648,6 +648,45 @@ def test_scribe_falls_back_to_gemini_after_claude_provider_failure():
     assert captured["config"]["response_mime_type"] == "application/json"
 
 
+def test_scribe_falls_back_to_gemini_after_claude_output_limit():
+    captured = {}
+
+    class ClaudeMessages:
+        @staticmethod
+        def create(**kwargs):
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text='{"incomplete":')],
+                stop_reason="max_tokens",
+            )
+
+    class GeminiModels:
+        @staticmethod
+        def generate_content(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text='{"ready": true}')
+
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    agent.client = SimpleNamespace(messages=ClaudeMessages())
+    agent.gemini_client = SimpleNamespace(models=GeminiModels())
+    agent.gemini_model = "gemini-fallback-model"
+
+    response = agent._generate_content(
+        contents="Return JSON.",
+        config={"max_output_tokens": 6144},
+    )
+
+    assert response.text == '{"ready": true}'
+    assert captured["model"] == "gemini-fallback-model"
+
+
+def test_claude_output_limit_is_bounded(monkeypatch):
+    monkeypatch.delenv("CLAUDE_MAX_OUTPUT_TOKENS", raising=False)
+    assert ScribeResearchAgent._claude_output_token_limit() == 6144
+    monkeypatch.setenv("CLAUDE_MAX_OUTPUT_TOKENS", "64000")
+    assert ScribeResearchAgent._claude_output_token_limit() == 8192
+
+
 def test_proposal_json_parser_accepts_fenced_and_prefaced_claude_output():
     parsed = ScribeResearchAgent._parse_proposal_json(
         'Here is the requested JSON:\n```json\n{"introduction": []}\n```'
@@ -683,7 +722,7 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     def generate_content(contents, config):
         prompts.append(contents)
         requested_models.append(config["model"])
-        assert config["max_output_tokens"] == 4096
+        assert config["max_output_tokens"] == 6144
         return next(responses)
 
     agent._generate_content = generate_content
