@@ -120,7 +120,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
     assert 'href="/styles.css?v=20261002-6"' in html
-    assert 'src="/app.js?v=20261002-6"' in html
+    assert 'src="/app.js?v=20261002-7"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
 
 
