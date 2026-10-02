@@ -542,13 +542,13 @@ def test_claude_invalid_json_gets_one_repair_attempt():
     assert len(prompts) == 2
     assert "Original schema and proposal prompt" in prompts[1]
     assert "Regenerate" in prompts[1]
-    assert requested_models == ["custom-claude-model", "claude-sonnet-4-5-20250929"]
+    assert requested_models == ["custom-claude-model", "claude-sonnet-5-5"]
 
 
 def test_claude_invalid_json_reports_retry_diagnostics_without_blind_token_advice():
     agent = ScribeResearchAgent()
     agent.provider = "anthropic"
-    agent.model = "claude-sonnet-4-5-20250929"
+    agent.model = "claude-sonnet-5-5"
     agent._generate_content = lambda **kwargs: SimpleNamespace(
         text='{"partial":',
         stop_reason="end_turn",
