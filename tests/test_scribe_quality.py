@@ -130,15 +130,22 @@ def test_scribe_prose_cleanup_handles_long_repeated_input():
 
 def test_scribe_uses_academic_first_line_indentation_for_body_prose():
     document = Document()
-    ScribeResearchAgent._add_body_paragraph(document, "A developed research paragraph.")
+    ScribeResearchAgent._add_body_paragraph(
+        document,
+        "A developed research paragraph.\n\nA second developed paragraph.",
+    )
     ScribeResearchAgent._add_body_paragraph(
         document,
         "An abstract paragraph.",
         first_line_indent=0,
     )
 
+    assert len(document.paragraphs) == 3
     assert document.paragraphs[0].paragraph_format.first_line_indent == Inches(0.5)
-    assert document.paragraphs[1].paragraph_format.first_line_indent == 0
+    assert document.paragraphs[1].paragraph_format.first_line_indent == Inches(0.5)
+    assert document.paragraphs[2].paragraph_format.first_line_indent == 0
+    assert all(paragraph.paragraph_format.space_before.pt == 0 for paragraph in document.paragraphs)
+    assert all(paragraph.paragraph_format.space_after.pt == 0 for paragraph in document.paragraphs)
 
 
 def test_scribe_quotes_direct_topic_references_in_report_body_only():
@@ -300,23 +307,33 @@ def test_report_editorial_synthesis_expands_each_theme_from_source_evidence():
 
         def generate_content(self, model, contents):
             self.calls += 1
-            assert "Integrate concepts into an argument" in contents
+            assert "exactly two" in contents
             payload = json.loads(contents.split("Report sections:", 1)[1])
             paragraphs = []
             for entry in payload:
                 claim = entry["claim"].rstrip(".")
-                text = (
+                first_paragraph = (
                     f"For the research topic, {claim} provides a focused way to interpret the evidence. "
                     "The supplied source records place this idea within a defined research context and "
                     "help distinguish it from an assumption that would apply to every setting. Read "
-                    "together, the evidence supports considering how the relevant concepts relate, while "
-                    "the available abstracts do not establish that the same relationship holds across "
-                    "all populations or methods. This qualification matters because it keeps the synthesis "
-                    "proportionate to the material reviewed. Future studies should specify the population, "
-                    "measures, and contextual conditions needed to test the proposition and assess its "
-                    "relevance before translating it into practice."
+                    "together, the evidence supports considering how the relevant concepts relate. "
+                    "However, the available abstracts do not establish that the same relationship holds "
+                    "across all populations or methods. This qualification keeps the synthesis "
+                    "proportionate to the material reviewed."
                 )
-                paragraphs.append({"id": entry["id"], "text": text})
+                second_paragraph = (
+                    "This pattern matters because differences in setting and measurement can change how "
+                    "a research concept is understood and evaluated. The current source descriptions "
+                    "provide a basis for comparison, but they do not resolve whether the interpretation "
+                    "transfers beyond the studies represented here. Further work should identify the "
+                    "population, measures, and contextual conditions needed to test the proposition. "
+                    "Such a design would clarify its relevance without treating a promising interpretation "
+                    "as an established result or assuming that it applies universally."
+                )
+                paragraphs.append({
+                    "id": entry["id"],
+                    "paragraphs": [first_paragraph, second_paragraph],
+                })
             return SimpleNamespace(text=json.dumps({"paragraphs": paragraphs}))
 
     class FakeClient:
@@ -345,5 +362,5 @@ def test_report_editorial_synthesis_expands_each_theme_from_source_evidence():
     assert agent.client.models.calls == 1
     assert agent._editorial_synthesis_complete is True
     assert len(paragraph.split()) >= 75
-    assert paragraph.count("(Abdar, 2021)") == 1
-    assert "Future studies should specify the population" in paragraph
+    assert paragraph.count("(Abdar, 2021)") == 2
+    assert "Further work should identify the population" in paragraph
