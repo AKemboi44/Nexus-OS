@@ -35,6 +35,8 @@ class ScribeResearchAgent:
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.provider = None
         self.model = None
+        self.gemini_client = None
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         if claude_api_key:
             try:
                 import anthropic
@@ -54,14 +56,16 @@ class ScribeResearchAgent:
                 )
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Claude editor unavailable: {error}")
-        elif gemini_api_key:
+        if gemini_api_key:
             try:
                 from google import genai
-                self.client = genai.Client(api_key=gemini_api_key)
-                self.provider = "gemini"
-                self.model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+                self.gemini_client = genai.Client(api_key=gemini_api_key)
+                if self.provider is None:
+                    self.client = self.gemini_client
+                    self.provider = "gemini"
+                    self.model = self.gemini_model
             except Exception as error:
-                print(f"[Scribe Editorial Notice]: Gemini editor unavailable: {error}")
+                print(f"[Scribe Editorial Notice]: Gemini fallback unavailable: {error}")
         if self.provider:
             print(
                 f"[Scribe Editorial Notice]: Report editor configured "
@@ -641,15 +645,23 @@ class ScribeResearchAgent:
             try:
                 response = self.client.messages.create(**request)
             except Exception as error:
-                if "output_config" not in request or self._http_status(error) != 400:
-                    raise
-                print(
-                    "[Scribe Editorial Notice]: Claude rejected the structured-output "
-                    f"request for model {request['model']} (details={error}). Retrying "
-                    "once with the JSON-only prompt; response validation remains enabled."
-                )
-                request.pop("output_config")
-                response = self.client.messages.create(**request)
+                if "output_config" in request and self._http_status(error) == 400:
+                    print(
+                        "[Scribe Editorial Notice]: Claude rejected the structured-output "
+                        f"request for model {request['model']} (details={error}). Retrying "
+                        "once with the JSON-only prompt; response validation remains enabled."
+                    )
+                    request.pop("output_config")
+                    try:
+                        response = self.client.messages.create(**request)
+                    except Exception as retry_error:
+                        return self._generate_with_gemini_or_raise(
+                            contents, config, retry_error
+                        )
+                else:
+                    return self._generate_with_gemini_or_raise(
+                        contents, config, error
+                    )
             text = "\n".join(
                 block.text for block in response.content
                 if getattr(block, "type", None) == "text"
@@ -659,22 +671,44 @@ class ScribeResearchAgent:
                 stop_reason=getattr(response, "stop_reason", None),
             )
         if self.provider == "gemini":
-            return self.client.models.generate_content(
-                model=(config or {}).get(
-                    "model", self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-                ),
-                contents=contents,
-                config=config,
-            ) if config else self.client.models.generate_content(
-                model=self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
-                contents=contents,
-            )
+            return self._generate_with_gemini(contents, config)
         return self.client.models.generate_content(
             model="gemini-3.6-flash",
             contents=contents,
             config=config,
         ) if config else self.client.models.generate_content(
             model="gemini-3.6-flash",
+            contents=contents,
+        )
+
+    def _generate_with_gemini_or_raise(self, contents, config, claude_error):
+        if not self.gemini_client:
+            raise claude_error
+        status_code = self._http_status(claude_error)
+        if isinstance(status_code, int) and status_code < 400:
+            raise claude_error
+        print(
+            "[Scribe Editorial Notice]: Claude request failed "
+            f"(status={status_code}, details={claude_error}). "
+            f"Falling back to Gemini model {self.gemini_model}."
+        )
+        return self._generate_with_gemini(contents, config)
+
+    def _generate_with_gemini(self, contents, config=None):
+        settings = dict(config or {})
+        settings.pop("model", None)
+        if self.provider == "gemini":
+            client = self.client
+            model = self.model or self.gemini_model or "gemini-3.6-flash"
+        else:
+            client = self.gemini_client
+            model = self.gemini_model or "gemini-3.6-flash"
+        return client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=settings,
+        ) if settings else client.models.generate_content(
+            model=model,
             contents=contents,
         )
 

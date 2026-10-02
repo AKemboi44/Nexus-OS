@@ -608,6 +608,46 @@ def test_scribe_retries_without_structured_output_after_claude_400():
     assert requests[0]["messages"] == requests[1]["messages"]
 
 
+def test_scribe_falls_back_to_gemini_after_claude_provider_failure():
+    captured = {}
+
+    class ProviderError(Exception):
+        status_code = 503
+
+    class ClaudeMessages:
+        @staticmethod
+        def create(**kwargs):
+            raise ProviderError("Claude service unavailable")
+
+    class GeminiModels:
+        @staticmethod
+        def generate_content(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text='{"ready": true}', stop_reason="end_turn")
+
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    agent.model = "claude-haiku-4-5-20251001"
+    agent.client = SimpleNamespace(messages=ClaudeMessages())
+    agent.gemini_client = SimpleNamespace(models=GeminiModels())
+    agent.gemini_model = "gemini-fallback-model"
+
+    response = agent._generate_content(
+        contents="Return JSON.",
+        config={
+            "model": "claude-haiku-4-5-20251001",
+            "response_mime_type": "application/json",
+            "max_output_tokens": 4096,
+        },
+    )
+
+    assert response.text == '{"ready": true}'
+    assert captured["model"] == "gemini-fallback-model"
+    assert captured["contents"] == "Return JSON."
+    assert "model" not in captured["config"]
+    assert captured["config"]["response_mime_type"] == "application/json"
+
+
 def test_proposal_json_parser_accepts_fenced_and_prefaced_claude_output():
     parsed = ScribeResearchAgent._parse_proposal_json(
         'Here is the requested JSON:\n```json\n{"introduction": []}\n```'
