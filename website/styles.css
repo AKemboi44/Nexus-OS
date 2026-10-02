@@ -196,13 +196,16 @@ body { font-size: 16px; }
 .auth-divider, .google-button { display: none !important; }
 .hero, .how-section, .feature-section, .products-section { position: relative; isolation: isolate; }
 .hero::before, .feature-section::before, .how-section::before { position: absolute; z-index: -1; pointer-events: none; content: ""; }
-.hero::before { inset: 0 -8vw; background: radial-gradient(ellipse at 78% 38%, #dbe6ff99, transparent 36%), radial-gradient(ellipse at 85% 77%, #e5dcff70, transparent 28%); animation: aurora-drift 18s ease-in-out infinite alternate; }
-.feature-section::before { inset: 0; background: radial-gradient(ellipse at 83% 30%, #dce9ff70, transparent 34%), radial-gradient(ellipse at 15% 80%, #d9f3e96b, transparent 28%); animation: aurora-drift 22s ease-in-out infinite alternate-reverse; }
-.how-section::before { top: 10%; right: 0; width: 240px; height: 240px; border-radius: 50%; background: radial-gradient(circle, #dce7ff99, transparent 68%); }
+.hero::before { inset: 0 -8vw; background: url("/images/evidence-network.svg") no-repeat 75% 50% / min(78vw, 980px) auto, radial-gradient(ellipse at 78% 38%, #dbe6ff99, transparent 36%), radial-gradient(ellipse at 85% 77%, #e5dcff70, transparent 28%); animation: aurora-drift 18s ease-in-out infinite alternate, hero-art-drift 32s ease-in-out infinite alternate; }
+.feature-section::before { inset: 0; background: url("/images/research-layers.svg") no-repeat 88% 100% / min(92vw, 1120px) auto, radial-gradient(ellipse at 83% 30%, #dce9ff70, transparent 34%), radial-gradient(ellipse at 15% 80%, #d9f3e96b, transparent 28%); animation: aurora-drift 22s ease-in-out infinite alternate-reverse, section-art-drift 38s ease-in-out infinite alternate; }
+.how-section::before { top: 3%; right: 0; width: min(54vw, 650px); height: 100%; border-radius: 24px; background: url("/images/research-layers.svg") no-repeat 100% 50% / contain, radial-gradient(ellipse at 75% 50%, #dce7ff99, transparent 68%); opacity: .72; animation: section-art-drift 34s ease-in-out infinite alternate-reverse; }
+.products-section::before { position: absolute; z-index: -1; top: 0; right: -4vw; bottom: 0; width: min(54vw, 620px); pointer-events: none; content: ""; background: url("/images/evidence-network.svg") no-repeat 100% 50% / contain; opacity: .34; animation: section-art-drift 40s ease-in-out infinite alternate; }
 .research-window { animation: float-window 7s ease-in-out infinite; }
 .floating-note { animation: float-note 5s ease-in-out infinite; }
 .visual-glow { animation: glow-breathe 8s ease-in-out infinite alternate; }
 @keyframes aurora-drift { from { transform: translate3d(-1%,0,0) scale(1); } to { transform: translate3d(1.2%,1%,0) scale(1.035); } }
+@keyframes hero-art-drift { from { background-position: 75% 50%, 0 0, 0 0; } to { background-position: 78% 47%, 0 0, 0 0; } }
+@keyframes section-art-drift { from { background-position: 88% 100%, 0 0, 0 0; } to { background-position: 83% 94%, 0 0, 0 0; } }
 @keyframes float-window { 0%,100% { translate: 0 0; } 50% { translate: 0 -8px; } }
 @keyframes float-note { 0%,100% { translate: 0 0; } 50% { translate: 0 -5px; } }
 @keyframes glow-breathe { from { opacity: .65; scale: .98; } to { opacity: 1; scale: 1.04; } }
@@ -216,12 +219,16 @@ body { font-size: 16px; }
 }
 @media (max-width: 640px) {
   .hero { min-height: auto; }
+  .hero::before { inset: 2% -12vw 0; background-size: 118vw auto, auto, auto; background-position: 67% 36%, 0 0, 0 0; }
   .hero h1 { font-size: 46px; }
   .hero-lede { font-size: 15px; }
   .hero-proof { font-size: 11px; }
   .evidence-lines b { font-size: 10px; }
   .visual-stats span { font-size: 8px; }
   .research-window { animation: none; }
+  .how-section::before { top: auto; right: -8%; bottom: 0; width: 100%; height: 58%; opacity: .38; }
+  .feature-section::before { background-size: 150vw auto, auto, auto; background-position: 80% 100%, 0 0, 0 0; }
+  .products-section::before { right: -18%; width: 90vw; opacity: .2; }
   .history-list { min-height: 0; }
   .library-controls { grid-template-columns: 1fr; }
   .results-heading { padding: 18px 17px 14px; }

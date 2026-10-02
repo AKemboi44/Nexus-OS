@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="620" viewBox="0 0 900 620" fill="none">
+  <defs>
+    <radialGradient id="wash" cx="0" cy="0" r="1" gradientTransform="matrix(440 0 0 310 485 314)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B9CDFF" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#E7EDFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="line" x1="174" x2="725" y1="151" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6189F6" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#8C6DDE" stop-opacity=".24"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="492" cy="310" fill="url(#wash)" rx="440" ry="310"/>
+  <g stroke="url(#line)" stroke-width="2">
+    <path d="m178 178 151 79 136-92 152 97 105-51M178 178l73 188 194-109 116 170 156-209M251 366l129 102 65-211 189-8 83 75M329 257l51 211m85-303 59 262m92-165 88 50"/>
+    <path d="m177 178 22 126 52 62m337-254 43 170m-119 97 124 31" stroke-opacity=".4"/>
+  </g>
+  <g fill="#fff" stroke="#6688EB" stroke-width="3">
+    <circle cx="178" cy="178" r="12"/><circle cx="329" cy="257" r="15"/><circle cx="465" cy="165" r="18"/>
+    <circle cx="617" cy="262" r="13"/><circle cx="722" cy="211" r="10"/><circle cx="251" cy="366" r="10"/>
+    <circle cx="445" cy="445" r="12"/><circle cx="561" cy="427" r="17"/><circle cx="717" cy="324" r="12"/>
+    <circle cx="380" cy="468" r="8"/><circle cx="199" cy="304" r="7"/>
+  </g>
+  <g fill="#6985D5" fill-opacity=".24">
+    <circle cx="97" cy="109" r="4"/><circle cx="782" cy="128" r="5"/><circle cx="787" cy="455" r="4"/>
+    <circle cx="129" cy="483" r="5"/><circle cx="677" cy="526" r="4"/><circle cx="375" cy="91" r="4"/>
+  </g>
+</svg>
