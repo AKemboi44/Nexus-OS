@@ -538,7 +538,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (isReport) {
                 // Support queued, immediate base64, direct download URL, or cache ID
-                data.action = data.action || (data.status === 'queued' ? 'report_queued_pending' : 'docx_generation_complete');
+                if (data.status === 'queued' || data.action === 'report_queued_pending') {
+                    data.action = 'report_queued_pending';
+                    data.status = 'queued';
+                } else {
+                    data.action = data.action || (data.document_base64 || data.download_url || data.report_cache_id ? 'docx_generation_complete' : 'report_queued_pending');
+                }
             } else {
                 if (!Array.isArray(data.included)) {
                     throw new Error('The research API returned an incomplete scan result.');
@@ -940,13 +945,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // --- PRODUCTION LOGIC VECTOR A: INTERCEPT CITATION DOCUMENT SCRIBE WRITES & QUEUES ---
         // Handle queued report synthesis or asynchronous jobs
-        if ((currentRoutingSessionToken === "docx_generation_active" || lastRequestContext?.action === 'trigger_docx_generation') &&
-            (data.status === 'queued' || data.action === 'report_queued_pending' || (!data.document_base64 && !data.document_saved_at && !data.download_url && data.job_id))) {
-            const jobId = data.job_id || data.id;
+        const isQueuedReport = (
+            data.status === 'queued' ||
+            data.action === 'report_queued_pending' ||
+            (!data.document_base64 && !data.document_saved_at && !data.download_url && (data.job_id || data.report_id || data.id))
+        );
+
+        if ((currentRoutingSessionToken === "docx_generation_active" || lastRequestContext?.action === 'trigger_docx_generation') && isQueuedReport) {
+            const jobId = data.job_id || data.report_id || data.id;
             if (jobId) {
                 if (draftStatus) {
                     draftStatus.className = 'info';
-                    draftStatus.textContent = data.message || 'Report synthesis in progress. Polling for completed document…';
+                    draftStatus.textContent = data.message || `Report synthesis request queued (${data.estimated_wait || 'usually under 20 minutes'}).`;
                     draftStatus.style.display = 'block';
                 }
                 try {
@@ -984,7 +994,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (cancelReportBtn) cancelReportBtn.style.display = 'none';
                     if (draftStatus) {
                         draftStatus.className = 'info';
-                        draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
+                        draftStatus.textContent = data.message || `Report synthesis request queued (${data.estimated_wait || 'usually under 20 minutes'}).`;
                         draftStatus.style.display = 'block';
                     }
                     currentRoutingSessionToken = 'idle';
@@ -998,7 +1008,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (cancelReportBtn) cancelReportBtn.style.display = 'none';
                 if (draftStatus) {
                     draftStatus.className = 'info';
-                    draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
+                    draftStatus.textContent = data.message || `Report synthesis request queued (${data.estimated_wait || 'usually under 20 minutes'}).`;
                     draftStatus.style.display = 'block';
                 }
                 currentRoutingSessionToken = 'idle';
@@ -1006,8 +1016,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // By checking our request token, we block document passes from falling through into search logic
-        if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at || data.download_url) {
+        // Only allow document download if ready / completed and document payload exists
+        const isDocxReady = (
+            data.status === 'ready' ||
+            data.status === 'completed' ||
+            data.action === "docx_generation_complete" ||
+            data.document_saved_at ||
+            data.download_url ||
+            (data.document_base64 && typeof data.document_base64 === 'string')
+        );
+
+        if ((currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete") && isDocxReady) {
             if (reportGenerationCancelled) return;
             reportProcessingActive = false;
             let reportBlob;
