@@ -72,6 +72,10 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert 'id="googleSignIn"' not in html
     assert "Download Excel dossier" in html
     assert "Download proposal report" in html
+    assert "Relevant, recent, quality-filtered evidence." in html
+    assert "You make the final call." in html
+    assert "Excluded: limited metadata · low topical match" in html
+    assert "FOR GRADUATE RESEARCHERS DEFENDING A PROPOSAL" in html
     assert 'id="historySearch"' in html
     assert 'id="historyDateFilter"' in html
     assert "LIBRARY_PAGE_SIZE = 5" in js
