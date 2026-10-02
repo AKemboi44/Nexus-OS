@@ -481,6 +481,19 @@ def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
     assert captured["max_tokens"] == 4096
     assert captured["temperature"] == 0.2
     assert captured["messages"] == [{"role": "user", "content": "Return JSON."}]
+    assert captured["output_config"]["format"]["type"] == "json_schema"
+    assert captured["output_config"]["format"]["schema"]["required"] == [
+        "introduction",
+        "problem_statement",
+        "research_questions",
+        "hypotheses",
+        "research_objectives",
+        "literature_review",
+        "conceptual_framework",
+        "methodology",
+        "significance",
+        "timeline",
+    ]
     assert response.text == '{"ready": true}'
 
 

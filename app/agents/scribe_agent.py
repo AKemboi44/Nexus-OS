@@ -39,7 +39,7 @@ class ScribeResearchAgent:
                 import anthropic
                 self.client = anthropic.Anthropic(api_key=claude_api_key)
                 self.provider = "anthropic"
-                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Claude editor unavailable: {error}")
         elif gemini_api_key:
@@ -542,12 +542,20 @@ class ScribeResearchAgent:
                     str(settings.get("max_output_tokens", 16384)),
                 )
             )
-            response = self.client.messages.create(
-                model=self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
-                max_tokens=max_tokens,
-                temperature=settings.get("temperature", 0.2),
-                messages=[{"role": "user", "content": contents}],
-            )
+            request = {
+                "model": self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929"),
+                "max_tokens": max_tokens,
+                "temperature": settings.get("temperature", 0.2),
+                "messages": [{"role": "user", "content": contents}],
+            }
+            if settings.get("response_mime_type") == "application/json":
+                request["output_config"] = {
+                    "format": {
+                        "type": "json_schema",
+                        "schema": self._proposal_json_schema(),
+                    }
+                }
+            response = self.client.messages.create(**request)
             text = "\n".join(
                 block.text for block in response.content
                 if getattr(block, "type", None) == "text"
@@ -573,6 +581,98 @@ class ScribeResearchAgent:
             model="gemini-3.6-flash",
             contents=contents,
         )
+
+    @staticmethod
+    def _proposal_json_schema():
+        paragraph = {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "evidence_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["text", "evidence_ids"],
+            "additionalProperties": False,
+        }
+        timeline_item = {
+            "type": "object",
+            "properties": {
+                "phase": {"type": "string"},
+                "duration": {"type": "string"},
+                "activities": {"type": "string"},
+            },
+            "required": ["phase", "duration", "activities"],
+            "additionalProperties": False,
+        }
+        paragraph_array = {
+            "type": "array",
+            "items": paragraph,
+        }
+        literature_review = {
+            "type": "object",
+            "properties": {
+                key: paragraph_array
+                for key in (
+                    "key_themes",
+                    "contradictions_and_boundary_conditions",
+                    "research_gaps",
+                    "research_areas",
+                    "opportunities",
+                    "research_problems",
+                )
+            },
+            "required": [
+                "key_themes",
+                "contradictions_and_boundary_conditions",
+                "research_gaps",
+                "research_areas",
+                "opportunities",
+                "research_problems",
+            ],
+            "additionalProperties": False,
+        }
+        methodology = {
+            "type": "object",
+            "properties": {
+                key: paragraph_array
+                for key in (
+                    "research_design",
+                    "data_collection",
+                    "analysis",
+                    "limitations",
+                )
+            },
+            "required": [
+                "research_design",
+                "data_collection",
+                "analysis",
+                "limitations",
+            ],
+            "additionalProperties": False,
+        }
+        properties = {
+            "introduction": paragraph_array,
+            "problem_statement": paragraph_array,
+            "research_questions": paragraph_array,
+            "hypotheses": paragraph_array,
+            "research_objectives": paragraph_array,
+            "literature_review": literature_review,
+            "conceptual_framework": paragraph_array,
+            "methodology": methodology,
+            "significance": paragraph_array,
+            "timeline": {
+                "type": "array",
+                "items": timeline_item,
+            },
+        }
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        }
 
     def _generate_proposal_json(self, prompt):
         output_limit = (
