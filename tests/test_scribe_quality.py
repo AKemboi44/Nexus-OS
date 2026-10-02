@@ -4,6 +4,7 @@ import sys
 import types
 from types import SimpleNamespace
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches
 import pytest
 from app.synthesis.citation_engine import CitationEngine
@@ -136,7 +137,7 @@ def test_scribe_prose_cleanup_handles_long_repeated_input():
     assert cleaned.endswith("evidence")
 
 
-def test_scribe_keeps_proposal_body_flush_left_and_paragraph_spacing_consistent():
+def test_scribe_justifies_proposal_body_and_keeps_paragraph_spacing_consistent():
     document = Document()
     ScribeResearchAgent._add_body_paragraph(
         document,
@@ -152,6 +153,10 @@ def test_scribe_keeps_proposal_body_flush_left_and_paragraph_spacing_consistent(
     assert document.paragraphs[0].paragraph_format.first_line_indent == 0
     assert document.paragraphs[1].paragraph_format.first_line_indent == 0
     assert document.paragraphs[2].paragraph_format.first_line_indent == 0
+    assert all(
+        paragraph.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+        for paragraph in document.paragraphs
+    )
     assert all(paragraph.paragraph_format.space_before.pt == 0 for paragraph in document.paragraphs)
     assert all(paragraph.paragraph_format.space_after.pt == 0 for paragraph in document.paragraphs)
 
