@@ -1,4 +1,8 @@
 from app.agents.scribe_agent import ScribeResearchAgent
+import json
+from types import SimpleNamespace
+from docx import Document
+from docx.shared import Inches
 
 
 def test_scribe_deduplicates_section_items():
@@ -64,9 +68,11 @@ def test_scribe_paragraph_is_concise_and_evidence_bounded():
     after = paragraph[citation_index + len("(Abdar, 2021)"):]
 
     assert len(words) < 60
-    assert before.strip().endswith("Evidence supports careful evaluation of the research problem.")
+    assert before.strip().endswith("Evidence supports careful evaluation of the research problem")
     assert after == "."
     assert paragraph.count("(Abdar, 2021)") == 1
+    assert "(Abdar, 2021)." in paragraph
+    assert ". (Abdar, 2021)" not in paragraph
 
 
 def test_scribe_keeps_long_claims_focused_without_stock_padding():
@@ -120,6 +126,19 @@ def test_scribe_prose_cleanup_handles_long_repeated_input():
     assert "--" not in cleaned
     assert "evidence evidence" not in cleaned
     assert cleaned.endswith("evidence")
+
+
+def test_scribe_uses_academic_first_line_indentation_for_body_prose():
+    document = Document()
+    ScribeResearchAgent._add_body_paragraph(document, "A developed research paragraph.")
+    ScribeResearchAgent._add_body_paragraph(
+        document,
+        "An abstract paragraph.",
+        first_line_indent=0,
+    )
+
+    assert document.paragraphs[0].paragraph_format.first_line_indent == Inches(0.5)
+    assert document.paragraphs[1].paragraph_format.first_line_indent == 0
 
 
 def test_scribe_formats_publication_style_abstract_with_keywords():
@@ -243,3 +262,66 @@ def test_complete_literature_review_contains_paper_components():
         "Conclusion",
     ):
         assert heading in output
+
+
+def test_report_editorial_synthesis_expands_each_theme_from_source_evidence():
+    agent = ScribeResearchAgent()
+    source = {
+        "title": "Research quality study",
+        "authors": ["Abdar"],
+        "year": 2021,
+        "abstract": "The study examines research quality and implementation across multiple settings.",
+    }
+
+    class FakeModels:
+        calls = 0
+
+        def generate_content(self, model, contents):
+            self.calls += 1
+            assert "Integrate concepts into an argument" in contents
+            payload = json.loads(contents.split("Report sections:", 1)[1])
+            paragraphs = []
+            for entry in payload:
+                claim = entry["claim"].rstrip(".")
+                text = (
+                    f"For the research topic, {claim} provides a focused way to interpret the evidence. "
+                    "The supplied source records place this idea within a defined research context and "
+                    "help distinguish it from an assumption that would apply to every setting. Read "
+                    "together, the evidence supports considering how the relevant concepts relate, while "
+                    "the available abstracts do not establish that the same relationship holds across "
+                    "all populations or methods. This qualification matters because it keeps the synthesis "
+                    "proportionate to the material reviewed. Future studies should specify the population, "
+                    "measures, and contextual conditions needed to test the proposition and assess its "
+                    "relevance before translating it into practice."
+                )
+                paragraphs.append({"id": entry["id"], "text": text})
+            return SimpleNamespace(text=json.dumps({"paragraphs": paragraphs}))
+
+    class FakeClient:
+        models = FakeModels()
+
+    agent.client = FakeClient()
+    agent._prepare_editorial_synthesis(
+        "research quality",
+        [source],
+        ["Quality measurement varies across research settings."],
+        [],
+        [],
+        [],
+        [],
+        [],
+        "proposal",
+        "scholarly",
+    )
+
+    paragraph = agent._evidence_paragraph(
+        "Quality measurement varies across research settings.",
+        [source],
+        topic="research quality",
+        section="Key Themes",
+    )
+    assert agent.client.models.calls == 1
+    assert agent._editorial_synthesis_complete is True
+    assert len(paragraph.split()) >= 75
+    assert paragraph.count("(Abdar, 2021)") == 1
+    assert "Future studies should specify the population" in paragraph
