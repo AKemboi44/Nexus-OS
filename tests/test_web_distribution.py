@@ -91,9 +91,9 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
 
     for count_id in ("reviewedCount", "includedCount", "excludedCount"):
         assert f'id="{count_id}"' in html
-    assert "sources reviewed" in html
-    assert "included</span>" in html
-    assert "filtered</span>" in html
+    assert "Sources Reviewed" in html
+    assert "Sources Included" in html
+    assert "Sources Filtered Out" in html
     assert "included.length + excluded.length" in js
     assert "if (counter) counter.textContent = String(count)" in js
     assert "if (resultSummary)" in js
@@ -101,6 +101,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".reviewed-stat strong" in css
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
+    assert ".result-stat { flex-wrap: nowrap;" in css
 
 
 def test_website_includes_original_section_art_and_visible_background_motion():

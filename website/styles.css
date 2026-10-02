@@ -240,9 +240,9 @@ body { font-size: 16px; }
   .library-controls { grid-template-columns: 1fr; }
   .results-heading { padding: 18px 17px 14px; }
   .result-stats { gap: 8px; padding: 16px 17px; }
-  .result-stat { gap: 6px; flex-wrap: wrap; }
-  .result-stat strong { font-size: 29px; }
-  .result-stat span { font-size: 10px; }
+  .result-stat { flex-wrap: nowrap; gap: 5px; align-items: baseline; }
+  .result-stat strong { font-size: 25px; letter-spacing: -1px; }
+  .result-stat span { font-size: 9px; line-height: 1.2; }
   .deliverables-panel { margin: 14px 13px 17px; padding: 15px; }
   .deliverables-intro strong { font-size: 15px; }
   .results-columns { padding: 0 13px 16px; grid-template-columns: 1fr; }
