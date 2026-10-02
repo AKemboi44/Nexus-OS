@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from pydantic import BaseModel, ConfigDict, ValidationError
 from app.synthesis.citation_engine import CitationEngine
 from app.research.publication_quality import PublicationQualityGate
 from dotenv import load_dotenv
@@ -16,6 +17,56 @@ from dotenv import load_dotenv
 
 class ReportSynthesisError(RuntimeError):
     """Raised when the proposal cannot meet its evidence and prose requirements."""
+
+
+class ProposalParagraphPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    evidence_ids: list[str]
+
+
+class TimelinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phase: str
+    duration: str
+    activities: str
+
+
+class LiteratureReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key_themes: list[ProposalParagraphPayload]
+    contradictions_and_boundary_conditions: list[ProposalParagraphPayload]
+    research_gaps: list[ProposalParagraphPayload]
+    research_areas: list[ProposalParagraphPayload]
+    opportunities: list[ProposalParagraphPayload]
+    research_problems: list[ProposalParagraphPayload]
+
+
+class MethodologyPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    research_design: list[ProposalParagraphPayload]
+    data_collection: list[ProposalParagraphPayload]
+    analysis: list[ProposalParagraphPayload]
+    limitations: list[ProposalParagraphPayload]
+
+
+class ProposalDraftPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    introduction: list[ProposalParagraphPayload]
+    problem_statement: list[ProposalParagraphPayload]
+    research_questions: list[ProposalParagraphPayload]
+    hypotheses: list[ProposalParagraphPayload]
+    research_objectives: list[ProposalParagraphPayload]
+    literature_review: LiteratureReviewPayload
+    conceptual_framework: list[ProposalParagraphPayload]
+    methodology: MethodologyPayload
+    significance: list[ProposalParagraphPayload]
+    timeline: list[TimelinePayload]
 
 
 class ScribeResearchAgent:
@@ -30,6 +81,7 @@ class ScribeResearchAgent:
         self._editorial_batch_attempted = False
         self._editorial_synthesis_complete = False
         self._proposal_draft = None
+        self._proposal_validation_failure = None
         load_dotenv()
         claude_api_key = os.getenv("CLAUDE_API_KEY")
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -544,10 +596,36 @@ class ScribeResearchAgent:
             self._editorial_calls += 1
             draft = self._generate_proposal_json(prompt)
             self._proposal_draft = self._validate_proposal_draft(draft, source_ids)
+            if not self._proposal_draft:
+                self._proposal_validation_failure = (
+                    self._proposal_validation_failure
+                    or "the concise content-quality requirements were not met"
+                )
+                print(
+                    "[Scribe Editorial Notice]: Proposal draft failed validation "
+                    f"({self._proposal_validation_failure or 'unknown constraint'}). "
+                    "Requesting one concise corrective draft."
+                )
+                corrected_draft = self._generate_proposal_json(
+                    "The previous JSON response failed this validation requirement: "
+                    f"{self._proposal_validation_failure or 'a required report section was invalid'}. "
+                    "Return a complete, concise replacement that meets every content requirement "
+                    "in the original request. Do not omit fields or add markdown.\n\n"
+                    f"Original request:\n{prompt}"
+                )
+                self._proposal_draft = self._validate_proposal_draft(
+                    corrected_draft, source_ids
+                )
+                if not self._proposal_draft:
+                    self._proposal_validation_failure = (
+                        self._proposal_validation_failure
+                        or "the concise content-quality requirements were not met"
+                    )
             self._editorial_synthesis_complete = self._proposal_draft is not None
             if not self._proposal_draft:
                 raise ReportSynthesisError(
-                    "The proposal language model returned incomplete or invalid sections. Please retry report generation."
+                    "The proposal language model returned incomplete or invalid sections after an automatic correction attempt. "
+                    f"Details: {self._proposal_validation_failure or 'unknown validation constraint'}."
                 )
         except (ValueError, TypeError, AttributeError) as error:
             print(
@@ -965,11 +1043,21 @@ class ScribeResearchAgent:
         return "".join(result)
 
     def _validate_proposal_draft(self, draft, source_ids):
-        if not isinstance(draft, dict):
+        self._proposal_validation_failure = None
+        try:
+            draft = ProposalDraftPayload.model_validate(draft).model_dump()
+        except ValidationError as error:
+            errors = error.errors(include_url=False)
+            first_error = errors[0] if errors else {}
+            location = ".".join(str(part) for part in first_error.get("loc", ("response",)))
+            self._proposal_validation_failure = (
+                f"{location}: {first_error.get('msg', 'invalid structured response')}"
+            )
             return None
         literature_review = draft.get("literature_review")
         methodology = draft.get("methodology")
         if not isinstance(literature_review, dict) or not isinstance(methodology, dict):
+            self._proposal_validation_failure = "literature_review or methodology is invalid"
             return None
 
         prose_sections = (
