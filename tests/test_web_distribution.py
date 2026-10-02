@@ -2,8 +2,13 @@ import json
 import struct
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
+
+from docx import Document
+
+from app.agents.scribe_agent import ScribeResearchAgent
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,3 +61,38 @@ def test_website_is_static_and_uses_existing_authenticated_services():
     assert "/terms /terms.html 200" in redirects
     assert (website / "privacy.html").is_file()
     assert (website / "terms.html").is_file()
+
+
+def test_website_surfaces_exports_library_controls_and_email_only_signin():
+    website = ROOT / "website"
+    html = (website / "index.html").read_text(encoding="utf-8")
+    js = (website / "app.js").read_text(encoding="utf-8")
+    css = (website / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="googleSignIn"' not in html
+    assert "Download Excel dossier" in html
+    assert "Download proposal report" in html
+    assert 'id="historySearch"' in html
+    assert 'id="historyDateFilter"' in html
+    assert "LIBRARY_PAGE_SIZE = 5" in js
+    assert "Free accounts can choose up to 3 criteria. Upgrade to select up to 5." in js
+    assert "function displayName(email)" in js
+    assert "mailto:support@brisklightai.com" in js
+    assert "WhatsApp support is coming soon" in js
+    assert "prefers-reduced-motion: reduce" in css
+    assert ".status-callout.success" in css
+
+
+def test_generated_report_does_not_include_personal_account_name():
+    with tempfile.TemporaryDirectory() as output_directory:
+        report_path = ScribeResearchAgent().generate_apa_dossier_report(
+            topic="Evidence based testing",
+            included_sources=[],
+            output_directory=output_directory,
+        )
+        document = Document(report_path)
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+    assert "Prepared with Nexus Research AI" in text
+    assert "Abraham" not in text
+    assert "Akiptoo" not in text

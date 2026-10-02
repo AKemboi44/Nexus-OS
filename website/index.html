@@ -22,6 +22,7 @@
       <a href="#how-it-works">How it works</a>
       <a href="#features">Features</a>
       <a href="#products">Products</a>
+      <a href="#contact">Contact</a>
     </nav>
     <div class="header-actions">
       <button class="button button-quiet" id="signInOpen" type="button">Sign in</button>
@@ -110,7 +111,7 @@
       </div>
       <div class="workspace-grid">
         <section class="workspace-card scan-card">
-          <div class="card-heading"><div><span class="card-kicker">NEW SCAN</span><h3>Start with a question</h3></div><span class="card-symbol">⌕</span></div>
+          <div class="card-heading"><div><span class="card-kicker">NEW SCAN</span><h3>Start with a question</h3></div><span class="scan-card-label">TOPIC SEARCH</span></div>
           <form id="scanForm">
             <label for="topic">Research topic</label>
             <textarea id="topic" required maxlength="1200" placeholder="e.g. How do AI clinical decision support tools affect diagnostic accuracy?"></textarea>
@@ -119,6 +120,7 @@
               <div><label for="domain">Research area</label><select id="domain"><option value="scholarly">Scholarly research</option><option value="legal" data-paid-only>Legal research · paid</option></select></div>
             </div>
             <fieldset class="criteria-fieldset"><legend>Evidence criteria <span id="criteriaLimit">(up to 3, optional)</span></legend>
+              <p class="criteria-hint" id="criteriaHint">Free accounts can select up to 3 criteria. Upgrade to select up to 5.</p>
               <label class="check-label"><input type="checkbox" value="Peer-reviewed or journal-associated source"><span>Peer-reviewed or journal-associated</span></label>
               <label class="check-label"><input type="checkbox" value="Cited source with usable metadata"><span>Cited with usable metadata</span></label>
               <label class="check-label"><input type="checkbox" value="Unique source relevant to the requested topic"><span>Unique and topic-relevant</span></label>
@@ -129,16 +131,30 @@
           </form>
         </section>
         <section class="workspace-card history-card">
-          <div class="card-heading"><div><span class="card-kicker">YOUR LIBRARY</span><h3>Recent research</h3></div><span class="card-symbol">▤</span></div>
+          <div class="card-heading"><div><span class="card-kicker">YOUR LIBRARY</span><h3>Recent research</h3></div><span class="card-symbol" aria-hidden="true">▤</span></div>
+          <div class="library-controls">
+            <label class="visually-hidden" for="historySearch">Search research history</label>
+            <input id="historySearch" type="search" placeholder="Search your research…" autocomplete="off">
+            <label class="visually-hidden" for="historyDateFilter">Filter research by date</label>
+            <select id="historyDateFilter"><option value="all">Any time</option><option value="7">Past 7 days</option><option value="30">Past 30 days</option><option value="365">Past year</option></select>
+          </div>
           <div id="historyList" class="history-list"><p class="empty-state">Sign in and run a scan to start your research library.</p></div>
+          <div class="library-pagination" id="historyPagination" hidden><span id="historyPageLabel"></span><div><button class="button button-outline library-page-button" id="historyPrev" type="button" aria-label="Previous research page">←</button><button class="button button-outline library-page-button" id="historyNext" type="button" aria-label="Next research page">→</button></div></div>
           <div class="saved-heading"><h4>Saved sources</h4><span id="sourceCount">0</span></div>
+          <label class="visually-hidden" for="sourceSearch">Search saved sources</label>
+          <input id="sourceSearch" class="library-search" type="search" placeholder="Search saved sources…" autocomplete="off">
           <div id="savedSourcesList" class="saved-sources-list"><p class="empty-state">Save a source from a scan to keep it here.</p></div>
+          <div class="library-pagination" id="sourcePagination" hidden><span id="sourcePageLabel"></span><div><button class="button button-outline library-page-button" id="sourcePrev" type="button" aria-label="Previous saved sources page">←</button><button class="button button-outline library-page-button" id="sourceNext" type="button" aria-label="Next saved sources page">→</button></div></div>
         </section>
       </div>
       <section class="workspace-card results-card" id="scanResults" hidden>
-        <div class="results-heading"><div><span class="card-kicker">SCAN COMPLETE</span><h3 id="resultTitle">Evidence review</h3><p id="resultSummary"></p></div><div class="result-actions"><button class="button button-outline" id="downloadExcel" type="button">Download Excel</button><button class="button button-primary" id="proposalReport" type="button">Proposal report</button><button class="button button-outline" id="fullReport" type="button">Complete review · paid</button></div></div>
-        <p class="form-message" id="reportStatus" role="status" aria-live="polite"></p>
-        <div class="results-columns"><div><h4>Included evidence <span id="includedCount"></span></h4><div id="includedSources" class="source-list"></div></div><div><h4>Filtered candidates <span id="excludedCount"></span></h4><div id="excludedSources" class="source-list"></div></div></div>
+        <div class="results-heading"><div><span class="card-kicker">SCAN COMPLETE</span><h3 id="resultTitle">Evidence review</h3><p id="resultSummary"></p></div></div>
+        <div class="deliverables-panel">
+          <div class="deliverables-intro"><span class="deliverables-icon" aria-hidden="true">✦</span><div><strong>Your research deliverables</strong><span>Download and use the evidence from this scan.</span></div></div>
+          <div class="result-actions"><button class="button button-export button-excel" id="downloadExcel" type="button"><span aria-hidden="true">▦</span><span><strong>Download Excel dossier</strong><small>Full source audit · .xlsx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-proposal" id="proposalReport" type="button"><span aria-hidden="true">▤</span><span><strong>Download proposal report</strong><small>Structured research report · .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-full" id="fullReport" type="button"><span aria-hidden="true">▤</span><span><strong>Complete literature review</strong><small>Full cited review · paid</small></span><span class="export-arrow" aria-hidden="true">↗</span></button></div>
+          <p class="form-message status-callout" id="reportStatus" role="status" aria-live="polite"></p>
+        </div>
+        <div class="results-columns"><section class="evidence-panel included-panel"><h4><span class="panel-indicator">✓</span> Included evidence <span id="includedCount"></span><small>Passed your review criteria</small></h4><div id="includedSources" class="source-list"></div></section><section class="evidence-panel filtered-panel"><h4><span class="panel-indicator">–</span> Filtered candidates <span id="excludedCount"></span><small>Excluded or below the selected criteria</small></h4><div id="excludedSources" class="source-list"></div></section></div>
       </section>
       <section class="workspace-card plans-card" id="plansCard" hidden>
         <div class="card-heading"><div><span class="card-kicker">RESEARCH PRO</span><h3>Choose the scope you need</h3></div><button class="dialog-close" id="closePlans" type="button" aria-label="Close plans">×</button></div>
@@ -166,12 +182,21 @@
         <label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required>
         <button class="button button-primary auth-submit" id="authSubmit" type="submit">Sign in</button>
       </form>
-      <div class="auth-divider"><span>or continue with</span></div>
-      <button class="button button-outline google-button" id="googleSignIn" type="button"><span class="google-g">G</span> Continue with Google</button>
       <p class="form-message" id="authStatus" role="status" aria-live="polite"></p>
       <p class="auth-legal">By continuing, you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy.</a></p>
     </section>
   </div>
+
+  <section class="contact-section" id="contact">
+    <div class="contact-copy"><div class="eyebrow">WE’RE HERE TO HELP</div><h2>Questions about your research?</h2><p>Send the Nexus team a message. Your email app will open with your note ready to send.</p><button class="button button-outline whatsapp-button" id="whatsappContact" type="button">Chat on WhatsApp <span aria-hidden="true">↗</span></button><span class="whatsapp-hint" id="whatsappHint" role="status" aria-live="polite"></span></div>
+    <form class="contact-form" id="contactForm">
+      <label for="contactName">Your name</label><input id="contactName" name="name" autocomplete="name" required maxlength="100">
+      <label for="contactEmail">Email address</label><input id="contactEmail" name="email" type="email" autocomplete="email" required maxlength="254">
+      <label for="contactMessage">How can we help?</label><textarea id="contactMessage" name="message" required maxlength="2000" rows="4"></textarea>
+      <button class="button button-primary" type="submit">Prepare email <span aria-hidden="true">→</span></button>
+      <p class="contact-note">This opens your email app; the message is sent only when you choose Send.</p>
+    </form>
+  </section>
 
   <footer class="site-footer">
     <a class="brand footer-brand" href="/"><span class="brand-mark"><svg viewBox="0 0 40 40"><circle cx="17" cy="17" r="10"></circle><path d="m25 25 8 8M12 18l5-5 5 7 4-5"></path></svg></span><span>Nexus<span class="brand-light"> Research AI</span></span></a>

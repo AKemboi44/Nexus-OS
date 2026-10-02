@@ -5,8 +5,9 @@
     const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_xp5XQM7DThmmgsVpG4wZog_QVVnOOmw';
     const API_URL = 'https://nexus-os-production-2e14.up.railway.app';
     const SESSION_KEY = 'nexus_web_supabase_session';
-    const PKCE_KEY = 'nexus_web_supabase_pkce';
     const FREE_MAX_SOURCES = 20;
+    const FREE_MAX_CRITERIA = 3;
+    const LIBRARY_PAGE_SIZE = 5;
     const SESSION_TICK_MARGIN_SECONDS = 60;
 
     const byId = id => document.getElementById(id);
@@ -18,11 +19,17 @@
     let paid = false;
     let authMode = 'signin';
     let activeResult = null;
+    let researchRuns = [];
+    let savedDossiers = [];
+    let savedSources = [];
+    let historyPage = 0;
+    let sourcesPage = 0;
 
     function setMessage(element, message, type = '') {
         if (!element) return;
+        const keepCallout = element.classList.contains('status-callout');
         element.textContent = message;
-        element.className = `form-message${type ? ` ${type}` : ''}`;
+        element.className = `form-message${type ? ` ${type}` : ''}${keepCallout ? ' status-callout' : ''}`;
     }
 
     async function readAuthResponse(response) {
@@ -62,7 +69,7 @@
     function clearSession() {
         session = null;
         localStorage.removeItem(SESSION_KEY);
-        sessionStorage.removeItem(PKCE_KEY);
+        sessionStorage.removeItem('nexus_web_supabase_pkce');
     }
 
     async function refreshSession() {
@@ -99,22 +106,7 @@
 
     async function exchangeCallback() {
         const url = new URL(window.location.href);
-        const code = url.searchParams.get('code');
-        const oauthError = url.searchParams.get('error_description') || url.searchParams.get('error');
         const hash = new URLSearchParams(url.hash.slice(1));
-        if (oauthError) throw new Error(oauthError);
-        if (code) {
-            const verifier = sessionStorage.getItem(PKCE_KEY);
-            if (!verifier) throw new Error('The Google sign-in session expired. Please try again.');
-            const exchanged = await authRequest('token?grant_type=pkce', {
-                method: 'POST',
-                body: {auth_code: code, code_verifier: verifier}
-            });
-            persistSession(exchanged);
-            sessionStorage.removeItem(PKCE_KEY);
-            window.history.replaceState({}, document.title, `${url.pathname}${url.hash}`);
-            return true;
-        }
         const accessToken = hash.get('access_token');
         const refreshToken = hash.get('refresh_token');
         if (accessToken && refreshToken) {
@@ -129,25 +121,6 @@
             return true;
         }
         return false;
-    }
-
-    function base64Url(bytes) {
-        let binary = '';
-        bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-
-    async function googleSignIn() {
-        const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-        const challenge = base64Url(new Uint8Array(digest));
-        sessionStorage.setItem(PKCE_KEY, verifier);
-        const authorization = new URL(`${SUPABASE_URL}/auth/v1/authorize`);
-        authorization.searchParams.set('provider', 'google');
-        authorization.searchParams.set('redirect_to', `${location.origin}/`);
-        authorization.searchParams.set('code_challenge', challenge);
-        authorization.searchParams.set('code_challenge_method', 's256');
-        location.assign(authorization.toString());
     }
 
     function openAuth(mode = 'signin') {
@@ -171,7 +144,7 @@
         const loggedIn = Boolean(session?.access_token);
         byId('signInOpen').hidden = loggedIn;
         byId('signOut').hidden = !loggedIn;
-        byId('accountEmail').textContent = session?.user?.email || 'researcher';
+        byId('accountEmail').textContent = displayName(session?.user?.email);
         byId('workspace').hidden = !loggedIn;
         if (loggedIn) {
             dialog.hidden = true;
@@ -181,6 +154,12 @@
             byId('heroStart').textContent = 'Start researching →';
             byId('headerStart').textContent = 'Open workspace ↗';
         }
+    }
+
+    function displayName(email) {
+        const localPart = String(email || '').split('@')[0] || 'Researcher';
+        const name = localPart.replace(/[._+-].*$/, '').replace(/\d+/g, '');
+        return name ? `${name.charAt(0).toUpperCase()}${name.slice(1)}` : 'Researcher';
     }
 
     async function apiFetch(path, options = {}) {
@@ -222,6 +201,9 @@
         byId('fullReport').hidden = !paid;
         byId('upgradePlan').hidden = paid;
         byId('criteriaLimit').textContent = `(up to ${paid ? 5 : 3}, optional)`;
+        byId('criteriaHint').textContent = paid
+            ? 'Choose up to 5 criteria to focus your evidence review.'
+            : 'Free accounts can choose up to 3 criteria. Upgrade to select up to 5.';
     }
 
     function appendText(parent, tag, text, className = '') {
@@ -232,15 +214,30 @@
         return element;
     }
 
-    function renderHistory(runs, dossiers) {
+    function renderHistory() {
         const container = byId('historyList');
         container.replaceChildren();
-        if (!runs.length) {
-            appendText(container, 'p', 'Your completed scans will appear here.', 'empty-state');
+        const query = byId('historySearch').value.trim().toLowerCase();
+        const ageDays = byId('historyDateFilter').value;
+        const cutoff = ageDays === 'all' ? 0 : Date.now() - Number(ageDays) * 24 * 60 * 60 * 1000;
+        const filteredRuns = researchRuns.filter(run => {
+            const matchesQuery = String(run.query || '').toLowerCase().includes(query);
+            const createdAt = Date.parse(run.created_at || '');
+            const matchesDate = !cutoff || !Number.isFinite(createdAt) || createdAt >= cutoff;
+            return matchesQuery && matchesDate;
+        });
+        if (!filteredRuns.length) {
+            appendText(container, 'p', researchRuns.length
+                ? 'No research matches those filters.'
+                : 'Your completed scans will appear here.', 'empty-state');
+            byId('historyPagination').hidden = true;
             return;
         }
-        const dossierByRun = new Map(dossiers.map(item => [item.payload?.research_run_id, item]));
-        runs.forEach(run => {
+        const dossierByRun = new Map(savedDossiers.map(item => [item.payload?.research_run_id, item]));
+        const totalPages = Math.ceil(filteredRuns.length / LIBRARY_PAGE_SIZE);
+        historyPage = Math.min(historyPage, totalPages - 1);
+        const pageRuns = filteredRuns.slice(historyPage * LIBRARY_PAGE_SIZE, (historyPage + 1) * LIBRARY_PAGE_SIZE);
+        pageRuns.forEach(run => {
             const item = document.createElement('article');
             item.className = 'history-item';
             appendText(item, 'strong', run.query || 'Untitled research');
@@ -252,27 +249,47 @@
             open.addEventListener('click', () => loadRun(run.id));
             container.appendChild(item);
         });
+        byId('historyPagination').hidden = filteredRuns.length <= LIBRARY_PAGE_SIZE;
+        byId('historyPageLabel').textContent = `${historyPage + 1} / ${totalPages} · ${filteredRuns.length} scans`;
+        byId('historyPrev').disabled = historyPage === 0;
+        byId('historyNext').disabled = historyPage >= totalPages - 1;
     }
 
     async function loadHistory() {
         const [runs, dossiers, sources] = await Promise.all([
-            apiJson('/v1/research?limit=30'),
+            apiJson('/v1/research?limit=100'),
             apiJson('/v1/dossiers'),
             apiJson('/v1/sources')
         ]);
-        renderHistory(runs, dossiers);
-        renderSavedSources(sources);
+        researchRuns = runs;
+        savedDossiers = dossiers;
+        savedSources = sources;
+        historyPage = 0;
+        sourcesPage = 0;
+        renderHistory();
+        renderSavedSources();
     }
 
-    function renderSavedSources(sources) {
+    function renderSavedSources() {
         const container = byId('savedSourcesList');
         container.replaceChildren();
-        byId('sourceCount').textContent = String(sources.length);
-        if (!sources.length) {
-            appendText(container, 'p', 'Save a source from a scan to keep it here.', 'empty-state');
+        byId('sourceCount').textContent = String(savedSources.length);
+        const query = byId('sourceSearch').value.trim().toLowerCase();
+        const matches = savedSources.filter(record => {
+            const source = record.source || {};
+            return [source.title, source.abstract, source.year, source.venue, source.doi, source.url]
+                .some(value => String(value || '').toLowerCase().includes(query));
+        });
+        if (!matches.length) {
+            appendText(container, 'p', savedSources.length
+                ? 'No saved sources match your search.'
+                : 'Save a source from a scan to keep it here.', 'empty-state');
+            byId('sourcePagination').hidden = true;
             return;
         }
-        sources.slice(0, 8).forEach(record => {
+        const totalPages = Math.ceil(matches.length / LIBRARY_PAGE_SIZE);
+        sourcesPage = Math.min(sourcesPage, totalPages - 1);
+        matches.slice(sourcesPage * LIBRARY_PAGE_SIZE, (sourcesPage + 1) * LIBRARY_PAGE_SIZE).forEach(record => {
             const row = document.createElement('div');
             row.className = 'saved-source-row';
             const source = record.source || {};
@@ -284,9 +301,34 @@
                 title.rel = 'noopener noreferrer';
             }
             row.appendChild(title);
-            appendText(row, 'small', [source.year, source.venue].filter(Boolean).join(' · '));
+            appendText(row, 'small', [source.authors?.slice?.(0, 2).join(', '), source.year, source.venue || source.journal]
+                .filter(Boolean).join(' · '));
+            if (source.abstract) appendText(row, 'p', source.abstract.slice(0, 240), 'saved-source-abstract');
+            const actions = appendText(row, 'div', '', 'saved-source-actions');
+            if (source.url && /^https?:\/\//i.test(source.url)) {
+                const open = appendText(actions, 'a', 'Open source ↗');
+                open.href = source.url;
+                open.target = '_blank';
+                open.rel = 'noopener noreferrer';
+            }
+            const remove = appendText(actions, 'button', 'Remove');
+            remove.type = 'button';
+            remove.addEventListener('click', async () => {
+                remove.disabled = true;
+                try {
+                    await apiJson(`/v1/sources/${encodeURIComponent(record.id)}`, {method: 'DELETE'});
+                    await loadHistory();
+                } catch (error) {
+                    remove.disabled = false;
+                    setMessage(reportStatus, error.message, 'error');
+                }
+            });
             container.appendChild(row);
         });
+        byId('sourcePagination').hidden = matches.length <= LIBRARY_PAGE_SIZE;
+        byId('sourcePageLabel').textContent = `${sourcesPage + 1} / ${totalPages} · ${matches.length} sources`;
+        byId('sourcePrev').disabled = sourcesPage === 0;
+        byId('sourceNext').disabled = sourcesPage >= totalPages - 1;
     }
 
     function makeSourceCard(source, included) {
@@ -330,8 +372,8 @@
         byId('resultSummary').textContent = `${included.length} sources included · ${excluded.length} candidates filtered`;
         byId('includedCount').textContent = `(${included.length})`;
         byId('excludedCount').textContent = `(${excluded.length})`;
-        byId('includedSources').replaceChildren(...included.slice(0, 30).map(source => makeSourceCard(source, true)));
-        byId('excludedSources').replaceChildren(...excluded.slice(0, 30).map(source => makeSourceCard(source, false)));
+        byId('includedSources').replaceChildren(...included.map(source => makeSourceCard(source, true)));
+        byId('excludedSources').replaceChildren(...excluded.map(source => makeSourceCard(source, false)));
         byId('fullReport').hidden = !paid;
         setMessage(reportStatus, '');
         byId('scanResults').scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -368,6 +410,7 @@
         if (!activeResult?.research_run_id) return;
         byId('downloadExcel').disabled = true;
         setMessage(reportStatus, 'Preparing your Excel dossier…');
+        byId('reportStatus').classList.add('status-callout');
         try {
             const response = await apiFetch(`/v1/research/${encodeURIComponent(activeResult.research_run_id)}/dossier`);
             if (!response.ok) {
@@ -379,6 +422,7 @@
             setMessage(reportStatus, remaining === 'unlimited'
                 ? 'Dossier downloaded. Unlimited downloads available.'
                 : `Dossier downloaded. ${remaining} of 3 free downloads remaining.`, 'success');
+            byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
             setMessage(reportStatus, error.message, 'error');
         } finally {
@@ -396,6 +440,7 @@
         const button = reportType === 'full_starter' ? byId('fullReport') : byId('proposalReport');
         button.disabled = true;
         setMessage(reportStatus, 'Preparing your Word report…');
+        byId('reportStatus').classList.add('status-callout');
         try {
             const report = await apiJson('/v1/reports', {
                 method: 'POST',
@@ -412,6 +457,7 @@
                 report.document_name || 'nexus-research-report.docx'
             );
             setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
+            byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
             setMessage(reportStatus, error.message, 'error');
         } finally {
@@ -426,6 +472,7 @@
         const button = byId('scanSubmit');
         button.disabled = true;
         setMessage(scanStatus, 'Searching sources and reviewing evidence…');
+        byId('scanStatus').classList.add('status-callout');
         try {
             const data = await apiJson('/v1/scan', {
                 method: 'POST',
@@ -460,6 +507,31 @@
             byId('savedSourcesList').replaceChildren();
             byId('scanResults').hidden = true;
         }
+    }
+
+    function handleCriteriaLimit(event) {
+        const checked = document.querySelectorAll('.criteria-fieldset input:checked');
+        const max = paid ? 5 : FREE_MAX_CRITERIA;
+        if (checked.length <= max) return;
+        if (event.target instanceof HTMLInputElement) event.target.checked = false;
+        setMessage(scanStatus, paid
+            ? 'You can select up to 5 evidence criteria.'
+            : 'Free accounts can select up to 3 criteria. Upgrade to select up to 5.', 'error');
+        byId('scanStatus').classList.add('status-callout', 'limit-callout');
+        if (!paid) byId('upgradePlan').hidden = false;
+        byId('scanStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+
+    function sendContactEmail(event) {
+        event.preventDefault();
+        const subject = `Nexus Research AI support — ${byId('contactName').value.trim()}`;
+        const body = [
+            `Name: ${byId('contactName').value.trim()}`,
+            `Email: ${byId('contactEmail').value.trim()}`,
+            '',
+            byId('contactMessage').value.trim()
+        ].join('\n');
+        window.location.href = `mailto:support@brisklightai.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
 
     async function startSubscription(plan) {
@@ -541,14 +613,6 @@
         byId('signOut').addEventListener('click', signOut);
         byId('authSignInTab').addEventListener('click', () => setAuthMode('signin'));
         byId('authSignUpTab').addEventListener('click', () => setAuthMode('signup'));
-        byId('googleSignIn').addEventListener('click', async () => {
-            try {
-                setMessage(authStatus, 'Opening Google sign-in…');
-                await googleSignIn();
-            } catch (error) {
-                setMessage(authStatus, error.message, 'error');
-            }
-        });
         byId('authForm').addEventListener('submit', async event => {
             event.preventDefault();
             const email = byId('authEmail').value.trim();
@@ -585,12 +649,18 @@
             }
         });
         byId('scanForm').addEventListener('submit', runScan);
-        document.querySelector('.criteria-fieldset').addEventListener('change', event => {
-            const checked = document.querySelectorAll('.criteria-fieldset input:checked');
-            if (checked.length > (paid ? 5 : 3)) {
-                event.target.checked = false;
-                setMessage(scanStatus, `Select up to ${paid ? 5 : 3} evidence criteria.`, 'error');
-            }
+        document.querySelector('.criteria-fieldset').addEventListener('change', handleCriteriaLimit);
+        byId('historySearch').addEventListener('input', () => { historyPage = 0; renderHistory(); });
+        byId('historyDateFilter').addEventListener('change', () => { historyPage = 0; renderHistory(); });
+        byId('historyPrev').addEventListener('click', () => { historyPage = Math.max(0, historyPage - 1); renderHistory(); });
+        byId('historyNext').addEventListener('click', () => { historyPage += 1; renderHistory(); });
+        byId('sourceSearch').addEventListener('input', () => { sourcesPage = 0; renderSavedSources(); });
+        byId('sourcePrev').addEventListener('click', () => { sourcesPage = Math.max(0, sourcesPage - 1); renderSavedSources(); });
+        byId('sourceNext').addEventListener('click', () => { sourcesPage += 1; renderSavedSources(); });
+        byId('contactForm').addEventListener('submit', sendContactEmail);
+        byId('whatsappContact').addEventListener('click', () => {
+            byId('whatsappHint').textContent = 'WhatsApp support is coming soon. Please use the contact form for now.';
+            byId('whatsappHint').classList.add('whatsapp-hint-visible');
         });
         byId('refreshHistory').addEventListener('click', async () => {
             try {

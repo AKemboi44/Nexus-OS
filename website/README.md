@@ -14,6 +14,7 @@ This is a static website with a shared-account research workspace. It uses Supab
 ## Before going live
 
 - Add monitored privacy and support contact addresses to the policies; update them with the service operator's legal identity and final retention/deletion process.
+- The website contact form opens the visitor's email client addressed to `support@brisklightai.com`; verify that mailbox exists and is monitored before launch. WhatsApp is intentionally marked as coming soon.
 - Review the draft Terms and Privacy Policy with the service operator.
 - In Supabase Authentication, enable Google OAuth and add `https://www.brisklightai.com/` as an allowed redirect URL. The Google provider callback remains `https://mdjgrtkjjcwmhuhpsjsk.supabase.co/auth/v1/callback`.
 - Add the exact origins `https://www.brisklightai.com` and `https://brisklightai.com` to Railway's `NEXUS_ALLOWED_ORIGINS`.
