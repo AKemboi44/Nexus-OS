@@ -145,7 +145,7 @@ def require_supabase_database() -> SupabaseRestClient:
 DOSSIER_DOWNLOAD_LIMIT = 3
 DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
-REPORT_CACHE_VERSION = "6"
+REPORT_CACHE_VERSION = "7"
 REPORT_CACHE_PREFIX = "report-cache"
 DOCX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -255,13 +255,12 @@ def scribe_telemetry(scribe: Any) -> Dict[str, Any]:
         "provider_fallback_used": bool(getattr(scribe, "telemetry_fallback_used", False)),
         "validation_correction_used": bool(getattr(scribe, "telemetry_correction_used", False)),
     }
-    if telemetry["provider_selected"] == "anthropic":
-        try:
-            telemetry["configured_output_token_limit"] = min(
-                max(int(scribe._claude_output_token_limit()), 1), 8192
-            )
-        except (AttributeError, TypeError, ValueError):
-            pass
+    try:
+        telemetry["configured_output_token_limit"] = min(
+            max(int(scribe._proposal_output_token_limit()), 1), 4096
+        )
+    except (AttributeError, TypeError, ValueError):
+        pass
     return telemetry
 
 
