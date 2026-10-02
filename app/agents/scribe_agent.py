@@ -692,24 +692,79 @@ class ScribeResearchAgent:
     @staticmethod
     def _clean_prose(text):
         clean = re.sub(r"\s+", " ", str(text or "")).strip()
-        clean = re.sub(r"([—–-])(?:\s*\1)+", r"\1", clean)
-        clean = re.sub(
-            r"\b([\w'-]+)(?:[\s,;:—–-]+\1\b)+",
-            r"\1",
-            clean,
-            flags=re.I,
-        )
+        clean = ScribeResearchAgent._collapse_repeated_dashes(clean)
+        clean = ScribeResearchAgent._collapse_repeated_words(clean)
         clean = re.sub(r"\s+([,.;!?])", r"\1", clean)
         clean = re.sub(r"([,.;!?])(?:\s*[,.!?])+", r"\1", clean)
         return re.sub(r"\s+", " ", clean).strip()
 
     @staticmethod
     def _has_repeated_word_corruption(text):
-        return bool(re.search(
-            r"\b([\w'-]+)(?:[\s,;:—–-]+\1\b){2,}",
+        return ScribeResearchAgent._collapse_repeated_words(
             str(text or ""),
-            flags=re.I,
-        ))
+            minimum_repetitions=3,
+        ) != str(text or "")
+
+    @staticmethod
+    def _collapse_repeated_words(text, minimum_repetitions=2):
+        word_spans = list(re.finditer(r"[\w'-]+", text))
+        if len(word_spans) < minimum_repetitions:
+            return text
+
+        output = []
+        cursor = 0
+        index = 0
+        while index < len(word_spans):
+            first = word_spans[index]
+            last_index = index
+            repetitions = 1
+            while last_index + 1 < len(word_spans):
+                following = word_spans[last_index + 1]
+                separator = text[word_spans[last_index].end():following.start()]
+                if (
+                    following.group().casefold() != first.group().casefold()
+                    or any(not (character.isspace() or character in ",;:—–-") for character in separator)
+                ):
+                    break
+                repetitions += 1
+                last_index += 1
+
+            if repetitions >= minimum_repetitions:
+                output.extend((
+                    text[cursor:first.start()],
+                    first.group(),
+                ))
+                cursor = word_spans[last_index].end()
+                index = last_index + 1
+            else:
+                index += 1
+
+        if not output:
+            return text
+        output.append(text[cursor:])
+        return "".join(output)
+
+    @staticmethod
+    def _collapse_repeated_dashes(text):
+        dashes = "—–-"
+        output = []
+        index = 0
+        while index < len(text):
+            character = text[index]
+            output.append(character)
+            index += 1
+            if character not in dashes:
+                continue
+            while index < len(text):
+                separator_start = index
+                while index < len(text) and text[index].isspace():
+                    index += 1
+                if index < len(text) and text[index] == character:
+                    index += 1
+                    continue
+                index = separator_start
+                break
+        return "".join(output)
 
     def _fallback_abstract(self, topic, sources):
         source_count = len(sources)
