@@ -505,7 +505,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function createReportBlob(encodedReport) {
         if (!encodedReport || typeof encodedReport !== 'string') {
-            throw new Error('Report data is empty or invalid.');
+            throw new Error('Report document data is not available.');
         }
         // Strip any whitespace, newlines, or data URI prefix if present
         let cleanBase64 = encodedReport.trim();
@@ -517,15 +517,19 @@ document.addEventListener('DOMContentLoaded', () => {
         while (cleanBase64.length % 4 !== 0) {
             cleanBase64 += '=';
         }
-        const binary = atob(cleanBase64);
-        const bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index++) {
-            bytes[index] = binary.charCodeAt(index);
+        try {
+            const binary = atob(cleanBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index++) {
+                bytes[index] = binary.charCodeAt(index);
+            }
+            return new Blob(
+                [bytes],
+                {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+            );
+        } catch (error) {
+            throw new Error('The generated report document could not be decoded.');
         }
-        return new Blob(
-            [bytes],
-            {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
-        );
     }
 
     function downloadReportBlob(reportBlob, filename) {
@@ -863,15 +867,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Keep the report controls alive for any non-terminal host response.
-        // Only a saved document or an explicit error should end report processing.
+        // Only a saved document, queued status, or an explicit error should end report processing.
         if (reportProcessingActive &&
             data.action !== 'docx_generation_complete' &&
+            data.action !== 'report_queued_pending' &&
+            data.status !== 'queued' &&
             !data.document_saved_at &&
             currentRoutingSessionToken === 'docx_generation_active') {
             return;
         }
 
-        // --- PRODUCTION LOGIC VECTOR A: INTERCEPT CITATION DOCUMENT SCRIBE WRITES ---
+        // --- PRODUCTION LOGIC VECTOR A: INTERCEPT CITATION DOCUMENT SCRIBE WRITES & QUEUES ---
+        // Handle queued report synthesis
+        if ((currentRoutingSessionToken === "docx_generation_active" || lastRequestContext?.action === 'trigger_docx_generation') &&
+            (data.status === 'queued' || data.action === 'report_queued_pending' || (!data.document_base64 && !data.document_saved_at && data.message))) {
+            reportProcessingActive = false;
+            resetScribeButtonState();
+            if (activeReportButton) activeReportButton.disabled = false;
+            if (sProgContainer) sProgContainer.style.display = 'none';
+            if (cancelReportBtn) cancelReportBtn.style.display = 'none';
+            if (draftStatus) {
+                draftStatus.className = 'info';
+                draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
+                draftStatus.style.display = 'block';
+            }
+            currentRoutingSessionToken = 'idle';
+            return;
+        }
+
         // By checking our request token, we block document passes from falling through into search logic
         if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at) {
             if (reportGenerationCancelled) return;

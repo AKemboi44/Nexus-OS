@@ -528,7 +528,7 @@
 
     function base64ToBlob(encoded, mimeType) {
         if (!encoded || typeof encoded !== 'string') {
-            throw new Error('Report data is empty or invalid.');
+            throw new Error('Report document data is not available.');
         }
         let cleanBase64 = encoded.trim();
         if (cleanBase64.includes(',')) {
@@ -538,10 +538,14 @@
         while (cleanBase64.length % 4 !== 0) {
             cleanBase64 += '=';
         }
-        const binary = atob(cleanBase64);
-        const bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-        return new Blob([bytes], {type: mimeType});
+        try {
+            const binary = atob(cleanBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+            return new Blob([bytes], {type: mimeType});
+        } catch (error) {
+            throw new Error('The generated report document could not be decoded.');
+        }
     }
 
     const REPORT_CACHE_VERSION = '7';
@@ -801,6 +805,18 @@
                     max_sources: Number(byId('maxSources').value)
                 })
             });
+
+            if (report.status === 'queued' || report.action === 'report_queued_pending' || (!report.document_base64 && report.message)) {
+                finishReportProgress('Report synthesis request queued.');
+                setMessage(
+                    reportStatus,
+                    report.message || 'Report synthesis request queued (usually under 20 minutes). Your report will be available once synthesis completes.',
+                    'info'
+                );
+                byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
+                return;
+            }
+
             safeDownload(
                 base64ToBlob(report.document_base64, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
                 report.document_name || 'nexus-research-report.docx'
