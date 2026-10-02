@@ -420,7 +420,8 @@ async def execute_cloud_scan(
     started_at = time.monotonic()
     
     # Check permissions and quota under the configurable pricing model
-    permission = entitlements.check_query_permission(user_id)
+    user_email = user.get("email")
+    permission = entitlements.check_query_permission(user_id, user_email=user_email)
     is_free_user = (permission.get("tier") == "free")
     ab_variant = ExperimentService.get_variant_for_user(user_id)
     run_id_str = str(uuid4())
@@ -450,7 +451,10 @@ async def execute_cloud_scan(
         raise HTTPException(
             status_code=403,
             detail={
-                "message": "Free query allowance reached. Review Bundle required to run more queries.",
+                "message": (
+                    permission.get("paywall_copy", {}).get("description")
+                    or "Free query allowance reached. Review Bundle required to run more queries."
+                ),
                 "paywall": permission.get("paywall_copy", {}),
                 "requires_bundle": True,
             },
@@ -1586,10 +1590,12 @@ async def get_entitlement(
         allowed_ids.add(str(user["email"]))
     if user_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Cannot access another user's entitlements.")
+    user_email = user.get("email")
+    is_user_active = entitlements.is_active(str(user["id"]), user_email=user_email)
     record = entitlements.get(str(user["id"]))
     return {
         "user_id": user_id,
-        "active": bool(record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"}),
+        "active": is_user_active,
         "entitlement": record,
     }
 

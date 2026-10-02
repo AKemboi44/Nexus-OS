@@ -168,7 +168,12 @@ class EntitlementStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def is_active(self, user_key: str) -> bool:
+    def is_active(self, user_key: str, user_email: Optional[str] = None) -> bool:
+        cfg = default_pricing_config
+        if user_email and user_email.strip().lower() in cfg.whitelisted_emails:
+            return True
+        if user_key and user_key.strip().lower() in cfg.whitelisted_emails:
+            return True
         record = self.get(user_key)
         return bool(record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"})
 
@@ -304,6 +309,7 @@ class EntitlementStore:
         self,
         user_key: str,
         config: Optional[PricingConfig] = None,
+        user_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Determines whether the user can execute a research query under the current pricing config.
@@ -320,7 +326,30 @@ class EntitlementStore:
         }
         """
         cfg = config or default_pricing_config
-        active_paid = self.is_active(user_key)
+        
+        # Check whitelist bypass (unlimited queries and full paid privileges)
+        normalized_email = str(user_email or "").strip().lower()
+        normalized_key = str(user_key or "").strip().lower()
+        if (
+            normalized_email in cfg.whitelisted_emails
+            or normalized_key in cfg.whitelisted_emails
+        ):
+            queries_used_this_month = self.get_query_usage(user_key)
+            return {
+                "allowed": True,
+                "tier": "paid",
+                "reason": "whitelisted_admin",
+                "queries_used": queries_used_this_month,
+                "free_allowance": cfg.free_query_allowance,
+                "queries_remaining": None,
+                "requires_paywall": False,
+                "paywall_copy": {},
+            }
+
+        try:
+            active_paid = self.is_active(user_key, user_email=user_email)
+        except TypeError:
+            active_paid = self.is_active(user_key)
         record = self.get(user_key)
         queries_used_this_month = self.get_query_usage(user_key)
 

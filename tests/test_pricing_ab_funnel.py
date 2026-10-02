@@ -13,6 +13,7 @@ def test_pricing_config_and_feature_flag(monkeypatch):
     monkeypatch.setenv("NEXUS_FREE_QUERY_ALLOWANCE", "1")
     monkeypatch.setenv("NEXUS_BUNDLE_QUERY_ALLOWANCE", "10")
     monkeypatch.setenv("NEXUS_BUNDLE_PRICE_USD", "29.00")
+    monkeypatch.setenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com,admin@nexus.test")
 
     cfg = PricingConfig.from_env()
     assert cfg.pricing_model_enabled is True
@@ -20,6 +21,26 @@ def test_pricing_config_and_feature_flag(monkeypatch):
     assert cfg.bundle_query_allowance == 10
     assert cfg.bundle_price_usd == 29.00
     assert cfg.bundle_id == "review_bundle_standard"
+    assert "akiptoo20@gmail.com" in cfg.whitelisted_emails
+    assert "admin@nexus.test" in cfg.whitelisted_emails
+
+
+def test_whitelisted_user_unlimited_privileges(tmp_path):
+    db_path = str(tmp_path / "test_entitlements_whitelist.sqlite3")
+    store = EntitlementStore(database_path=db_path)
+    whitelisted_email = "akiptoo20@gmail.com"
+    user_id = "user_whitelisted_123"
+
+    # Even after 10 queries, whitelisted user is still allowed with paid tier
+    for _ in range(10):
+        store.increment_query_usage(user_id)
+    
+    assert store.get_query_usage(user_id) == 10
+    perm = store.check_query_permission(user_id, user_email=whitelisted_email)
+    assert perm["allowed"] is True
+    assert perm["tier"] == "paid"
+    assert perm["reason"] == "whitelisted_admin"
+    assert store.is_active(user_id, user_email=whitelisted_email) is True
 
 
 def test_entitlements_free_query_allowance_and_paywall(tmp_path):

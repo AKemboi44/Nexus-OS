@@ -1,6 +1,6 @@
 import os
-from dataclasses import dataclass
-from typing import Any, Dict
+from dataclasses import dataclass, field
+from typing import Any, Dict, Set
 
 
 @dataclass
@@ -8,6 +8,9 @@ class PricingConfig:
     """Configurable values for Nexus pricing, allowances, and A/B testing."""
     # Feature flag to enable/disable the new pricing model and paywall
     pricing_model_enabled: bool = True
+
+    # Whitelisted emails with unlimited query and full access privileges
+    whitelisted_emails: Set[str] = field(default_factory=lambda: {"akiptoo20@gmail.com"})
 
     # Free tier query allowance (queries per user per month)
     free_query_allowance: int = 1
@@ -41,9 +44,12 @@ class PricingConfig:
         bundle_queries = int(os.getenv("NEXUS_BUNDLE_QUERY_ALLOWANCE", "10"))
         bundle_price = float(os.getenv("NEXUS_BUNDLE_PRICE_USD", "29.00"))
         bundle_id = os.getenv("NEXUS_BUNDLE_ID", "review_bundle_standard")
+        whitelist_env = os.getenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com")
+        whitelisted = {email.strip().lower() for email in whitelist_env.split(",") if email.strip()}
 
         return cls(
             pricing_model_enabled=enabled_val,
+            whitelisted_emails=whitelisted,
             free_query_allowance=free_queries,
             free_candidate_cap=free_cap,
             bundle_id=bundle_id,
