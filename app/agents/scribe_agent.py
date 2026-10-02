@@ -129,17 +129,18 @@ class ScribeResearchAgent:
         contradictions = getattr(dossier, "contradictions", []) if dossier else []
         gaps = getattr(dossier, "research_gaps", []) if dossier else []
         opportunities = getattr(dossier, "opportunity_areas", []) if dossier else []
+        research_areas = getattr(dossier, "research_areas", []) if dossier else []
         problems = getattr(dossier, "problems_to_solve", []) if dossier else []
 
         if report_type == "full_starter":
             self._write_full_starter_sections(
                 doc, topic, included_sources, themes, contradictions,
-                gaps, opportunities, problems, domain
+                gaps, opportunities, problems, domain, research_areas=research_areas
             )
         else:
             self._write_proposal_sections(
                 doc, topic, included_sources, themes, contradictions,
-                gaps, opportunities, problems
+                gaps, opportunities, problems, research_areas=research_areas
             )
 
         # 4. References Page Layout Module (Hanging Indent)
@@ -193,7 +194,11 @@ class ScribeResearchAgent:
         heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         heading.paragraph_format.space_before = Pt(12)
         heading.paragraph_format.space_after = Pt(0)
-        heading.add_run(text).bold = True
+        heading.paragraph_format.keep_with_next = True
+        run = heading.add_run(text)
+        run.bold = True
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
 
     @staticmethod
     def _add_body_paragraph(doc, text):
@@ -213,11 +218,13 @@ class ScribeResearchAgent:
         paragraph.add_run(clean_text)
 
     def _write_proposal_sections(self, doc, topic, sources, themes,
-                                 contradictions, gaps, opportunities, problems):
+                                 contradictions, gaps, opportunities, problems,
+                                 research_areas=None):
         sections = [
             ("Key Themes", themes),
             ("Contradictions and Boundary Conditions", contradictions),
             ("Research Gaps", gaps),
+            ("Research Areas", research_areas or []),
             ("Opportunity Areas", opportunities),
             ("Research Problems", problems),
         ]
@@ -256,7 +263,8 @@ class ScribeResearchAgent:
         )
 
     def _write_full_starter_sections(self, doc, topic, sources, themes,
-                                     contradictions, gaps, opportunities, problems, domain):
+                                     contradictions, gaps, opportunities, problems, domain,
+                                     research_areas=None):
         theme_groups = self._cluster_sources_by_theme(themes, sources)
         self._add_heading(doc, "Research Problem and Rationale")
         problem = problems[0] if problems else (
@@ -328,6 +336,20 @@ class ScribeResearchAgent:
                         sources,
                         topic=topic,
                         section="Implications and Opportunities",
+                        report_type="full_starter",
+                    ),
+                )
+        unique_research_areas = self._unique_items(research_areas)
+        if unique_research_areas:
+            self._add_heading(doc, "Recommended Research Areas")
+            for item in unique_research_areas:
+                self._add_body_paragraph(
+                    doc,
+                    self._evidence_paragraph(
+                        item,
+                        self._sources_for_point(item, sources),
+                        topic=topic,
+                        section="Recommended Research Areas",
                         report_type="full_starter",
                     ),
                 )
@@ -509,7 +531,7 @@ class ScribeResearchAgent:
         report_type="proposal",
     ):
         """Build one focused six-sentence paragraph with a centered inline citation."""
-        claim = re.sub(r"\s+", " ", str(text).strip())
+        claim = self._clean_prose(text)
         claim = self._remove_parenthetical_years(claim)
         claim = claim.replace("###", "").replace("**", "").replace("...", ".")
         claim = claim.replace('"', "").replace("“", "").replace("”", "").strip(" .")
@@ -520,62 +542,9 @@ class ScribeResearchAgent:
 
         point_sources = self._sources_for_point(claim, sources)
         citation = self._citation_for_sources(point_sources)
-        source_titles = [
-            self._source_value(source, "title", "the selected studies")
-            for source in point_sources[:2]
-        ]
-        source_label = "; ".join(str(title) for title in source_titles if title)
-        if not source_label:
-            source_label = "the selected studies"
-        source_label = self._complete_sentence(source_label, terminal="").strip(" .")
-
-        proposal_mode = report_type != "full_starter"
-        lead = self._sentence(claim)
-        evidence_sentence = (
-            f"The evidence appears in {source_label}, situating the finding within a defined "
-            "research context rather than presenting it as universal."
-        )
-        scope_sentence = (
-            f"The claim remains limited to the source record's stated context, measures, "
-            f"and outcomes in the {section.lower()} section."
-        )
-        if proposal_mode:
-            implication_sentence = (
-                f"For the proposed study of {topic}, this finding defines a focused "
-                "research question."
-            )
-            limitation_sentence = (
-                "Its interpretation remains conditional because the evidence does not establish "
-                "universal transferability."
-            )
-            closing_sentence = (
-                "The theme is therefore a testable proposition, not a universal conclusion."
-            )
-        else:
-            implication_sentence = (
-                f"For the complete literature review on {topic}, the finding clarifies how the "
-                "literature can become a measurable construct."
-            )
-            limitation_sentence = (
-                "Uncertainty remains around transferability, measurement, and the boundary "
-                "between correlation and explanation."
-            )
-            closing_sentence = (
-                "The theme therefore contributes one defined part of the literature review."
-            )
-
-        paragraph = " ".join(
-            [
-                lead,
-                evidence_sentence,
-                scope_sentence,
-                citation,
-                implication_sentence,
-                limitation_sentence,
-                closing_sentence,
-            ]
-        )
-        return self._fit_sentence_paragraph(paragraph, minimum=75, maximum=None)
+        claim = self._complete_sentence(claim)
+        paragraph = f"{claim} {citation}" if citation else claim
+        return self._remove_incomplete_fragments(paragraph)
 
     @staticmethod
     def _remove_parenthetical_years(text):
@@ -624,10 +593,10 @@ class ScribeResearchAgent:
                 "year": self._source_value(source, "year", ""),
             })
         prompt = (
-            "Act as a senior academic researcher writing an original literature review paragraph. "
-            "Paraphrase and synthesize the claim; do not quote, copy phrases, or mention source titles. "
-            "Use an analytical voice that explains agreement, disagreement, extension, or limitation. "
-            "Return exactly two complete sentences, no bullets, no citations, and no ellipses. "
+            "Act as a careful academic editor. Rewrite the claim as two clear, grammatical sentences "
+            "of connected scholarly prose. Preserve its meaning, remove duplicated words and phrases, "
+            "avoid filler and unsupported findings, and do not mention source titles. "
+            "Return only the two sentences, with no bullets, citations, or ellipses. "
             f"Topic: {topic}\nSection: {section}\nClaim: {claim}\nEvidence: {evidence}"
         )
         try:
@@ -636,7 +605,7 @@ class ScribeResearchAgent:
                 model="gemini-3.6-flash",
                 contents=prompt,
             )
-            rewritten = re.sub(r"\s+", " ", str(response.text or "").strip())
+            rewritten = self._clean_prose(response.text)
             rewritten = rewritten.replace("...", ".").replace('"', "")
             if len(rewritten.split()) >= 20 and rewritten.endswith((".", "!", "?")):
                 self._editorial_cache[cache_key] = rewritten
@@ -646,8 +615,9 @@ class ScribeResearchAgent:
         return claim
 
     def _format_abstract(self, text, topic, sources):
-        """Preserve a generated abstract as connected prose and normalize its keyword line."""
-        clean = re.sub(r"\s+", " ", str(text or "").strip())
+        """Polish the abstract, reject visibly corrupted prose, and normalize its keyword line."""
+        source_is_corrupt = self._has_repeated_word_corruption(text)
+        clean = self._clean_prose(text)
         clean = re.sub(r"^(?:abstract\s*:?)\s*", "", clean, flags=re.I)
         keyword_position = self._keyword_label_position(clean)
         if keyword_position is not None:
@@ -661,21 +631,110 @@ class ScribeResearchAgent:
             ][:5]
             keywords = ", ".join(keyword_tokens + ["evidence synthesis", "research methods"])
 
-        if not body:
-            body = (
-                f"This review examines {topic} through a structured synthesis of the selected evidence. "
-                "It identifies recurring findings, methodological differences, and unresolved research gaps."
-            )
+        edited = self._editorial_abstract(body, topic, sources)
+        if edited:
+            body = edited
+        if (
+            not body
+            or "synthesis unavailable" in body.lower()
+            or (source_is_corrupt and not edited)
+            or self._has_repeated_word_corruption(body)
+        ):
+            body = self._fallback_abstract(topic, sources)
         if len(body.split()) < 100:
             body = (
-                f"{body}. The review compares the settings, populations, measures, and outcomes represented "
-                "in the source base, distinguishing recurring findings from claims that remain conditional. "
-                "It also identifies practical implications and limitations that should guide subsequent study design. "
-                "This structure links the evidence base to a coherent research problem while preserving the "
-                "distinction between established findings, plausible interpretations, and questions requiring "
-                "additional empirical validation."
+                f"{body.rstrip(' .')} The synthesis is limited to the sources retrieved for {topic}; "
+                "it should therefore be read as a structured account of the available evidence, not as "
+                "an exhaustive review of every relevant study. Differences in populations, research "
+                "designs, measures, and reporting may limit direct comparison across sources. Future "
+                "work should make these features explicit and test whether the reported patterns hold "
+                "in settings not represented in the current evidence base."
             )
         return f"{body.strip(' .')}. Keywords: {keywords}."
+
+    def _editorial_abstract(self, text, topic, sources):
+        if not self.client or not text or self._editorial_calls >= 5:
+            return ""
+        evidence = [
+            {
+                "title": self._source_value(source, "title", ""),
+                "year": self._source_value(source, "year", ""),
+                "abstract": self._shorten(self._source_value(source, "abstract", ""), 90),
+            }
+            for source in sources[:8]
+        ]
+        prompt = (
+            "Edit the supplied research abstract into professional, grammatical academic prose. "
+            "Correct duplicated words, broken sentences, and repetition; preserve supported meaning "
+            "and do not invent methods, findings, or conclusions. Use 150-200 words in one connected "
+            "paragraph, with no heading, citations, or keywords line. If the supplied draft is too "
+            "corrupted to preserve safely, write a cautious abstract using only the source records "
+            "and explicitly describe the evidence base without claiming unreported findings.\n"
+            f"Topic: {topic}\nDraft: {text}\nSource records: {evidence}"
+        )
+        try:
+            self._editorial_calls += 1
+            response = self.client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+            )
+            edited = self._clean_prose(response.text)
+            if (
+                100 <= len(edited.split()) <= 240
+                and edited.endswith((".", "!", "?"))
+                and not self._has_repeated_word_corruption(edited)
+            ):
+                return edited
+        except Exception as error:
+            print(f"[Scribe Abstract Warning]: {error}")
+        return ""
+
+    @staticmethod
+    def _clean_prose(text):
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        clean = re.sub(r"([—–-])(?:\s*\1)+", r"\1", clean)
+        clean = re.sub(
+            r"\b([\w'-]+)(?:[\s,;:—–-]+\1\b)+",
+            r"\1",
+            clean,
+            flags=re.I,
+        )
+        clean = re.sub(r"\s+([,.;!?])", r"\1", clean)
+        clean = re.sub(r"([,.;!?])(?:\s*[,.!?])+", r"\1", clean)
+        return re.sub(r"\s+", " ", clean).strip()
+
+    @staticmethod
+    def _has_repeated_word_corruption(text):
+        return bool(re.search(
+            r"\b([\w'-]+)(?:[\s,;:—–-]+\1\b){2,}",
+            str(text or ""),
+            flags=re.I,
+        ))
+
+    def _fallback_abstract(self, topic, sources):
+        source_count = len(sources)
+        source_label = "source record" if source_count == 1 else "source records"
+        source_types = sorted({
+            str(self._source_value(source, "venue", "")).strip()
+            for source in sources
+            if self._source_value(source, "venue", "")
+        })
+        source_scope = (
+            f"The review draws on {source_count} selected {source_label}"
+            + (f" from venues including {', '.join(source_types[:3])}." if source_types else ".")
+        )
+        return (
+            f"This report examines {topic} through a structured review of the available literature. "
+            f"{source_scope} It organizes the included material into recurring themes, disagreements, "
+            "research gaps, and directions for further investigation. The synthesis describes the "
+            "scope and limitations of the selected evidence rather than treating the retrieved records "
+            "as a complete account of the field. Differences in study design, population, measurement, "
+            "and reporting should be considered when comparing findings or applying them to other "
+            "settings. The resulting research directions are intended to support question development "
+            "and should be checked against the full text of each cited study before being adopted. "
+            "Additional evidence may be needed to establish the strength, consistency, and practical "
+            "relevance of any pattern identified in this report."
+        )
 
     @staticmethod
     def _keyword_label_position(text):

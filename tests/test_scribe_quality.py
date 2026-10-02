@@ -3,6 +3,7 @@ from app.agents.scribe_agent import ScribeResearchAgent
 
 def test_scribe_deduplicates_section_items():
     agent = ScribeResearchAgent()
+    agent.client = None
 
     items = agent._unique_items([
         "Evidence supports careful evaluation.",
@@ -18,6 +19,7 @@ def test_scribe_deduplicates_section_items():
 
 def test_scribe_does_not_append_repeated_citation_or_template_prose():
     agent = ScribeResearchAgent()
+    agent.client = None
     sources = [
         {
             "title": "Research quality study",
@@ -37,8 +39,9 @@ def test_scribe_does_not_append_repeated_citation_or_template_prose():
     assert "This distinction matters" not in paragraph
 
 
-def test_scribe_paragraph_has_centered_citation_and_required_length():
+def test_scribe_paragraph_is_concise_and_evidence_bounded():
     agent = ScribeResearchAgent()
+    agent.client = None
     sources = [
         {
             "title": "Research quality study",
@@ -60,14 +63,15 @@ def test_scribe_paragraph_has_centered_citation_and_required_length():
     before = paragraph[:citation_index]
     after = paragraph[citation_index + len("(Abdar, 2021)"):]
 
-    assert len(words) >= 75
-    assert len([s for s in before.split(".") if s.strip()]) >= 3
-    assert len([s for s in after.split(".") if s.strip()]) >= 3
+    assert len(words) < 60
+    assert before.strip().endswith("Evidence supports careful evaluation of the research problem.")
+    assert after == "."
     assert paragraph.count("(Abdar, 2021)") == 1
 
 
-def test_scribe_compacts_long_claims_without_losing_six_sentence_structure():
+def test_scribe_keeps_long_claims_focused_without_stock_padding():
     agent = ScribeResearchAgent()
+    agent.client = None
     sources = [
         {
             "title": "A very long source title describing an extensive multi-dimensional investigation of research quality, implementation, measurement, and transferability",
@@ -85,12 +89,29 @@ def test_scribe_compacts_long_claims_without_losing_six_sentence_structure():
         report_type="proposal",
     )
 
-    assert len(paragraph.split()) >= 75
-    assert paragraph.count(".") >= 6
+    assert len(paragraph.split()) < 80
+    assert paragraph.count(".") <= 3
+
+
+def test_scribe_replaces_garbled_repetitive_abstract_with_clean_fallback():
+    agent = ScribeResearchAgent()
+    abstract = agent._format_abstract(
+        "There is is is is a a a failure failure mode in in large large models.",
+        "language model reliability",
+        [],
+    )
+
+    assert "is is" not in abstract
+    assert "a a" not in abstract
+    assert "failure failure" not in abstract
+    assert "thatwe" not in abstract
+    assert "Keywords:" in abstract
+    assert len(abstract.split()) >= 100
 
 
 def test_scribe_formats_publication_style_abstract_with_keywords():
     agent = ScribeResearchAgent()
+    agent.client = None
     abstract = agent._format_abstract(
         "This review examines token optimization and compares prompt compression with dynamic pruning.",
         "token optimization",
@@ -112,6 +133,7 @@ def test_scribe_removes_parenthetical_year_citations_without_regex_backtracking(
 
 def test_scribe_parses_keyword_label_with_optional_spacing():
     agent = ScribeResearchAgent()
+    agent.client = None
 
     abstract = agent._format_abstract(
         "A sufficiently detailed review abstract discusses evidence across methods and settings. "
@@ -121,6 +143,29 @@ def test_scribe_parses_keyword_label_with_optional_spacing():
     )
 
     assert "Keywords: research quality, validation." in abstract
+
+
+def test_synthesis_parser_reads_research_areas_and_inline_abstract_heading():
+    from app.reports.dossier_generator import DossierGenerator
+    from models.research_dossier import ResearchDossier
+
+    dossier = ResearchDossier("research quality")
+    DossierGenerator()._parse_synthesis_payload(
+        "### ABSTRACT: This review evaluates research quality across study settings.\n"
+        "### RESEARCH AREAS\n"
+        "- Compare measurement approaches across the included study populations.\n"
+        "### OPPORTUNITY AREAS\n"
+        "- Test a practical quality-assessment workflow for research teams.\n",
+        dossier,
+    )
+
+    assert dossier.abstract == "This review evaluates research quality across study settings."
+    assert dossier.research_areas == [
+        "Compare measurement approaches across the included study populations."
+    ]
+    assert dossier.opportunity_areas == [
+        "Test a practical quality-assessment workflow for research teams."
+    ]
 
 
 def test_scribe_cleans_space_before_punctuation():
@@ -133,6 +178,7 @@ def test_scribe_cleans_space_before_punctuation():
 
 def test_complete_literature_review_contains_paper_components():
     agent = ScribeResearchAgent()
+    agent.client = None
     sections = []
 
     class FakeDoc:
@@ -143,7 +189,11 @@ def test_complete_literature_review_contains_paper_components():
 
                 def add_run(self, text=""):
                     sections.append(str(text))
-                    return type("Run", (), {})()
+                    return type(
+                        "Run",
+                        (),
+                        {"font": type("Font", (), {})()},
+                    )()
 
             return Paragraph()
 
@@ -163,11 +213,13 @@ def test_complete_literature_review_contains_paper_components():
         ["A practical opportunity."],
         ["A research problem."],
         "scholarly",
+        research_areas=["Compare methods across the included studies."],
     )
 
     output = " ".join(sections)
     for heading in (
         "Research Objectives",
+        "Recommended Research Areas",
         "Conceptual Framework",
         "Methodology",
         "Data Collection",

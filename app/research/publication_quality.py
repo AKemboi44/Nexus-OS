@@ -119,8 +119,8 @@ class PublicationQualityGate:
             f"Create a publication-quality {domain} synthesis for the research question: '{query}'.\n\n"
             "Hard rules:\n"
             "1. Ground every major claim in the supplied evidence; never invent studies, methods, results, or citations.\n"
-            "2. Use concise, evidence-based bullet points only.\n"
-            "3. Write in a formal academic tone.\n"
+            "2. Use concise, evidence-based bullet points for list sections and connected prose for the abstract.\n"
+            "3. Write in clear, grammatical, publication-quality academic prose. Remove duplicated words, phrases, and sentences; avoid fragments, awkward repetition, filler, and unsupported claims.\n"
             "4. Keep the structure exact and do not add conversational filler.\n"
             "5. Separate consensus findings, contradictions, and research gaps explicitly.\n"
             "6. If the evidence is weak or inconsistent, say so and avoid overclaiming.\n\n"
@@ -137,7 +137,8 @@ class PublicationQualityGate:
             "### KEY THEMES\n- 3 to 6 bullet points synthesizing recurring patterns.\n\n"
             "### CONTRADICTIONS\n- 2 to 5 explicit disagreements or boundary conditions.\n\n"
             "### RESEARCH GAPS\n- 2 to 5 specific unresolved methodological or evidence gaps.\n\n"
-            "### OPPORTUNITY AREAS\n- 2 to 5 downstream research or commercial opportunities.\n\n"
+            "### RESEARCH AREAS\n- 2 to 5 actionable future-research recommendations, each derived from a limitation, contradiction, or under-studied context in the supplied sources. Do not invent evidence.\n\n"
+            "### OPPORTUNITY AREAS\n- 2 to 5 focused research opportunities suggested by the user's topic, such as a comparison, population, setting, or application to investigate. Keep these distinct from evidence-derived research recommendations.\n\n"
             "### PROBLEMS TO SOLVE\n- 2 to 5 concrete problems future research should address.\n\n"
             "Quality control: cite sources by author-year when possible, avoid unsupported claims, and suppress speculation unless clearly labeled as a gap or opportunity."
         )
@@ -214,6 +215,7 @@ class PublicationQualityGate:
             "themes": bool(getattr(dossier, "themes", [])),
             "contradictions": bool(getattr(dossier, "contradictions", [])),
             "gaps": bool(getattr(dossier, "research_gaps", [])),
+            "research_areas": bool(getattr(dossier, "research_areas", [])),
             "opportunities": bool(getattr(dossier, "opportunity_areas", [])),
             "problems": bool(getattr(dossier, "problems_to_solve", [])),
         }
