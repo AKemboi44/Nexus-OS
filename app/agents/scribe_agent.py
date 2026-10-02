@@ -322,7 +322,7 @@ class ScribeResearchAgent:
             if not clean_text:
                 continue
             paragraph = doc.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.line_spacing = 2.0
             paragraph.paragraph_format.space_after = Pt(0)
