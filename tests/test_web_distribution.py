@@ -96,7 +96,7 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert 'id="reportProgress"' in html
     assert 'role="progressbar"' in html
     assert "function startReportProgress(reportType)" in js
-    assert "error.status === 503" in js
+    assert "`${error.message} Your research is still saved; please retry in a few minutes.`" in js
     assert ".report-progress-ring" in css
 
 
