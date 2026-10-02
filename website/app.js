@@ -765,8 +765,17 @@
                 report.document_name || 'nexus-research-report.docx'
             );
             rememberReportDownload(report);
-            finishReportProgress('Report ready and downloaded.');
-            setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
+            if (report.degraded) {
+                finishReportProgress('Limited evidence-grounded fallback downloaded.');
+                setMessage(
+                    reportStatus,
+                    'Limited evidence-grounded fallback downloaded. It is not AI-synthesized and was created only from your validated source metadata and dossier records because all configured AI providers are temporarily quota/rate-limited. It was not saved as an AI report; generate again later for the full AI-synthesized report.',
+                    'error'
+                );
+            } else {
+                finishReportProgress('Report ready and downloaded.');
+                setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
+            }
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
             failReportProgress();

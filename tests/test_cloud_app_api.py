@@ -153,6 +153,65 @@ def test_analytics_recording_failure_does_not_break_cached_report(monkeypatch):
     assert result["cache_hit"] is True
 
 
+def test_degraded_report_fallback_is_returned_but_never_cached(monkeypatch, tmp_path):
+    class Database:
+        def __init__(self):
+            self.uploads = []
+
+        def download_storage_object(self, bucket, path):
+            raise cloud_app.SupabaseRequestError(404, "not found")
+
+        def upload_storage_object(self, *args):
+            self.uploads.append(args)
+
+    class DossierGenerator:
+        def generate_comprehensive_dossier(self, **kwargs):
+            return type("Dossier", (), {"quality_report": {"passed": True}})()
+
+    class Scribe:
+        fallback_mode = "deterministic_evidence_fallback"
+        provider = "gemini"
+        model = "gemini-test"
+        telemetry_attempts = 2
+        telemetry_fallback_used = True
+        telemetry_correction_used = False
+
+        def generate_apa_dossier_report(self, **kwargs):
+            output = Path(kwargs["output_directory"]) / "fallback.docx"
+            output.write_bytes(b"limited fallback docx")
+            return str(output)
+
+    database = Database()
+    events = []
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+    monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
+    monkeypatch.setattr("app.reports.dossier_generator.DossierGenerator", DossierGenerator)
+    monkeypatch.setattr("app.agents.scribe_agent.ScribeResearchAgent", Scribe)
+
+    result = asyncio.run(cloud_app.generate_research_report(
+        cloud_app.ReportRequest(
+            topic="Quota-safe report",
+            included_sources=[{
+                "title": "Evidence", "authors": ["Author"], "year": 2024, "venue": "Journal",
+            }],
+        ),
+        authorization="******",
+    ))
+
+    assert result["status"] == "degraded"
+    assert result["action"] == "evidence_grounded_fallback_docx"
+    assert result["generation_mode"] == "deterministic_evidence_fallback"
+    assert result["degraded"] is True
+    assert result["cache_hit"] is False
+    assert result["report_cache_id"] is None
+    assert base64.b64decode(result["document_base64"]) == b"limited fallback docx"
+    assert database.uploads == []
+    assert events[-1]["event_name"] == "report_degraded_completed"
+    assert events[-1]["properties"]["outcome_category"] == "evidence_grounded_fallback"
+
+
 def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch):
     run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
     filename = "research_audit_ai_20261001_120000.xlsx"
