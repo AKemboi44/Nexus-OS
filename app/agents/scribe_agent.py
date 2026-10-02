@@ -29,11 +29,24 @@ class ScribeResearchAgent:
         self._editorial_synthesis_complete = False
         self._proposal_draft = None
         load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if api_key:
+        claude_api_key = os.getenv("CLAUDE_API_KEY")
+        gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.provider = None
+        self.model = None
+        if claude_api_key:
+            try:
+                import anthropic
+                self.client = anthropic.Anthropic(api_key=claude_api_key)
+                self.provider = "anthropic"
+                self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+            except Exception as error:
+                print(f"[Scribe Editorial Notice]: Claude editor unavailable: {error}")
+        elif gemini_api_key:
             try:
                 from google import genai
-                self.client = genai.Client(api_key=api_key)
+                self.client = genai.Client(api_key=gemini_api_key)
+                self.provider = "gemini"
+                self.model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
             except Exception as error:
                 print(f"[Scribe Editorial Notice]: Gemini editor unavailable: {error}")
 
@@ -487,8 +500,7 @@ class ScribeResearchAgent:
         )
         try:
             self._editorial_calls += 1
-            response = self.client.models.generate_content(
-                model="gemini-3.6-flash",
+            response = self._generate_content(
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
@@ -519,14 +531,49 @@ class ScribeResearchAgent:
             if isinstance(error, ReportSynthesisError):
                 raise
             error_message = str(error).casefold()
-            if "429" in error_message or "resource_exhausted" in error_message or "quota" in error_message:
+            if any(term in error_message for term in (
+                "429", "resource_exhausted", "quota", "rate_limit_error",
+                "rate limit", "overloaded_error",
+            )):
                 raise ReportSynthesisError(
-                    "The proposal language model is temporarily at its request limit. Retry later or configure a higher-quota API plan."
+                    "The configured report model is temporarily at its request limit. Retry later or check the provider's quota and billing settings."
                 ) from error
             print(f"[Scribe Proposal Warning]: Proposal synthesis unavailable: {error}")
             raise ReportSynthesisError(
                 "The proposal language model could not complete the report. Please retry shortly."
             ) from error
+
+    def _generate_content(self, contents, config=None):
+        if self.provider == "anthropic":
+            settings = config or {}
+            response = self.client.messages.create(
+                model=self.model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
+                max_tokens=settings.get("max_output_tokens", 8192),
+                temperature=settings.get("temperature", 0.2),
+                messages=[{"role": "user", "content": contents}],
+            )
+            text = "\n".join(
+                block.text for block in response.content
+                if getattr(block, "type", None) == "text"
+            )
+            return type("ModelResponse", (), {"text": text})()
+        if self.provider == "gemini":
+            return self.client.models.generate_content(
+                model=self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+                contents=contents,
+                config=config,
+            ) if config else self.client.models.generate_content(
+                model=self.model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+                contents=contents,
+            )
+        return self.client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+            config=config,
+        ) if config else self.client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+        )
 
     def _validate_proposal_draft(self, draft, source_ids):
         if not isinstance(draft, dict):
@@ -1217,10 +1264,7 @@ class ScribeResearchAgent:
         self._editorial_batch_attempted = True
         try:
             self._editorial_calls += 1
-            response = self.client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-            )
+            response = self._generate_content(contents=prompt)
             response_text = str(response.text or "").strip()
             if response_text.startswith("```"):
                 response_lines = response_text.splitlines()
@@ -1348,10 +1392,7 @@ class ScribeResearchAgent:
         )
         try:
             self._editorial_calls += 1
-            response = self.client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-            )
+            response = self._generate_content(contents=prompt)
             rewritten = self._clean_prose(response.text)
             rewritten = rewritten.replace("...", ".").replace('"', "")
             if len(rewritten.split()) >= 20 and rewritten.endswith((".", "!", "?")):
@@ -1426,10 +1467,7 @@ class ScribeResearchAgent:
         )
         try:
             self._editorial_calls += 1
-            response = self.client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-            )
+            response = self._generate_content(contents=prompt)
             edited = self._clean_prose(response.text)
             if (
                 100 <= len(edited.split()) <= 240

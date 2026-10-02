@@ -1,5 +1,7 @@
 from app.agents.scribe_agent import ScribeResearchAgent
 import json
+import sys
+import types
 from types import SimpleNamespace
 from docx import Document
 from docx.shared import Inches
@@ -435,6 +437,51 @@ def test_proposal_quota_errors_return_safe_actionable_message():
     agent.client = SimpleNamespace(models=QuotaModels())
     with pytest.raises(ReportSynthesisError, match="temporarily at its request limit"):
         agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
+
+
+def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
+    captured = {}
+
+    class FakeClaude:
+        class Messages:
+            @staticmethod
+            def create(**kwargs):
+                captured.update(kwargs)
+                return SimpleNamespace(content=[
+                    SimpleNamespace(type="text", text='{"ready": true}')
+                ])
+
+        messages = Messages()
+
+    def create_client(api_key):
+        captured["api_key"] = api_key
+        return FakeClaude()
+
+    anthropic = types.ModuleType("anthropic")
+    anthropic.Anthropic = create_client
+    monkeypatch.setitem(sys.modules, "anthropic", anthropic)
+    monkeypatch.setenv("CLAUDE_API_KEY", "claude-test-key")
+    monkeypatch.setenv("CLAUDE_MODEL", "claude-test-model")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+
+    agent = ScribeResearchAgent()
+    response = agent._generate_content(
+        contents="Return JSON.",
+        config={
+            "response_mime_type": "application/json",
+            "max_output_tokens": 4096,
+            "temperature": 0.2,
+        },
+    )
+
+    assert agent.provider == "anthropic"
+    assert agent.model == "claude-test-model"
+    assert captured["api_key"] == "claude-test-key"
+    assert captured["model"] == "claude-test-model"
+    assert captured["max_tokens"] == 4096
+    assert captured["temperature"] == 0.2
+    assert captured["messages"] == [{"role": "user", "content": "Return JSON."}]
+    assert response.text == '{"ready": true}'
 
 
 def test_scribe_quotes_direct_topic_references_in_report_body_only():
