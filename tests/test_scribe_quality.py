@@ -439,6 +439,25 @@ def test_proposal_quota_errors_return_safe_actionable_message():
         agent._prepare_proposal_draft("topic", [source], [], [], [], [], [], [], "scholarly")
 
 
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (SimpleNamespace(status_code=401), "Verify CLAUDE_API_KEY"),
+        (SimpleNamespace(status_code=403), "denied access to model"),
+        (SimpleNamespace(status_code=400), "HTTP 400"),
+        (TypeError("unexpected keyword"), "anthropic>=1.9.0"),
+    ],
+)
+def test_claude_api_errors_return_actionable_messages(error, expected):
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    agent.model = "claude-sonnet-5-5"
+
+    message = agent._provider_failure_message(error)
+
+    assert expected in message
+
+
 def test_scribe_prefers_claude_key_and_adapts_json_generation(monkeypatch):
     captured = {}
 
