@@ -492,9 +492,40 @@ def test_proposal_json_parser_accepts_fenced_and_prefaced_claude_output():
     assert parsed == {"introduction": []}
 
 
+def test_proposal_json_parser_removes_trailing_commas_without_changing_strings():
+    parsed = ScribeResearchAgent._parse_proposal_json(
+        '{"text": "keep ,} inside string", "items": [1, 2,],}'
+    )
+
+    assert parsed == {"text": "keep ,} inside string", "items": [1, 2]}
+
+
 def test_proposal_json_parser_rejects_truncated_claude_output():
     with pytest.raises(ValueError, match="complete JSON object"):
         ScribeResearchAgent._parse_proposal_json('{"introduction": [{"text": "unfinished')
+
+
+def test_claude_invalid_json_gets_one_repair_attempt():
+    agent = ScribeResearchAgent()
+    agent.provider = "anthropic"
+    prompts = []
+    responses = iter([
+        SimpleNamespace(text='{"draft":', stop_reason="end_turn"),
+        SimpleNamespace(text='```json\n{"draft": "repaired"}\n```', stop_reason="end_turn"),
+    ])
+
+    def generate_content(contents, config):
+        prompts.append(contents)
+        assert config["max_output_tokens"] == 16384
+        return next(responses)
+
+    agent._generate_content = generate_content
+    result = agent._generate_proposal_json("Original schema and proposal prompt")
+
+    assert result == {"draft": "repaired"}
+    assert len(prompts) == 2
+    assert "Original schema and proposal prompt" in prompts[1]
+    assert '"{\\"draft\\":"' in prompts[1]
 
 
 def test_proposal_editor_explains_claude_output_limit():
