@@ -444,6 +444,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function fetchBinaryReport(url) {
+        const fullUrl = url.startsWith('http') ? url : `${await getApiBaseUrl()}${url}`;
+        const response = await fetch(fullUrl, {
+            method: 'GET',
+            headers: await getApiHeaders()
+        });
+        if (!response.ok) {
+            const errJson = await response.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(errJson, response.status) || `Download failed (${response.status})`);
+        }
+        return await response.blob();
+    }
+
+    async function pollReportJobStatus(jobId, reportType) {
+        const maxAttempts = 60;
+        const intervalMs = 2500;
+        const baseUrl = await getApiBaseUrl();
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+            
+            const response = await fetch(`${baseUrl}/v1/reports/${encodeURIComponent(jobId)}/status`, {
+                headers: await getApiHeaders()
+            });
+            if (!response.ok) {
+                const errJson = await response.json().catch(() => ({}));
+                throw new Error(extractErrorMessage(errJson, response.status) || 'Status check failed.');
+            }
+
+            const job = await response.json();
+
+            if (job.status === 'completed' || job.status === 'ready') {
+                const downloadUrl = job.download_url || `/v1/reports/${encodeURIComponent(jobId)}/download`;
+                const filename = job.document_name || `${reportType}-report.docx`;
+                const blob = await fetchBinaryReport(downloadUrl);
+                return { blob, filename, job };
+            }
+
+            if (job.status === 'failed') {
+                const err = new Error(job.error_message || job.error_reason || 'Report generation could not be completed.');
+                err.jobId = jobId;
+                throw err;
+            }
+
+            if (sProgressBar) {
+                const pct = Math.min(95, 30 + Math.floor((attempt / maxAttempts) * 65));
+                sProgressBar.style.width = `${pct}%`;
+            }
+        }
+
+        const timeoutErr = new Error('Report synthesis timed out. Request is queued.');
+        timeoutErr.jobId = jobId;
+        throw timeoutErr;
+    }
+
     let currentRoutingSessionToken = "idle";
     async function sendBackgroundRequest(request) {
         const isReport = request.action === 'trigger_docx_generation';
@@ -482,10 +537,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error('The research API returned an invalid response.');
             }
             if (isReport) {
-                if (!data.document_base64 || !data.document_name ||
-                    data.action !== 'docx_generation_complete') {
-                    throw new Error('The research API returned an incomplete report.');
-                }
+                // Support queued, immediate base64, direct download URL, or cache ID
+                data.action = data.action || (data.status === 'queued' ? 'report_queued_pending' : 'docx_generation_complete');
             } else {
                 if (!Array.isArray(data.included)) {
                     throw new Error('The research API returned an incomplete scan result.');
@@ -886,39 +939,105 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // --- PRODUCTION LOGIC VECTOR A: INTERCEPT CITATION DOCUMENT SCRIBE WRITES & QUEUES ---
-        // Handle queued report synthesis
+        // Handle queued report synthesis or asynchronous jobs
         if ((currentRoutingSessionToken === "docx_generation_active" || lastRequestContext?.action === 'trigger_docx_generation') &&
-            (data.status === 'queued' || data.action === 'report_queued_pending' || (!data.document_base64 && !data.document_saved_at && data.message))) {
-            reportProcessingActive = false;
-            resetScribeButtonState();
-            if (activeReportButton) activeReportButton.disabled = false;
-            if (sProgContainer) sProgContainer.style.display = 'none';
-            if (cancelReportBtn) cancelReportBtn.style.display = 'none';
-            if (draftStatus) {
-                draftStatus.className = 'info';
-                draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
-                draftStatus.style.display = 'block';
+            (data.status === 'queued' || data.action === 'report_queued_pending' || (!data.document_base64 && !data.document_saved_at && !data.download_url && data.job_id))) {
+            const jobId = data.job_id || data.id;
+            if (jobId) {
+                if (draftStatus) {
+                    draftStatus.className = 'info';
+                    draftStatus.textContent = data.message || 'Report synthesis in progress. Polling for completed document…';
+                    draftStatus.style.display = 'block';
+                }
+                try {
+                    const { blob, filename, job } = await pollReportJobStatus(jobId, activeReportType);
+                    downloadReportBlob(blob, filename);
+                    
+                    try {
+                        const session = await window.NexusAuth.getSession();
+                        await cacheGeneratedReport(
+                            blob,
+                            filename,
+                            activeReportType,
+                            lastRequestContext?.topic || '',
+                            session?.user?.id
+                        );
+                        await loadCachedReportForUser(session?.user?.id);
+                    } catch (_) {}
+
+                    resetScribeButtonState();
+                    if (activeReportButton) activeReportButton.disabled = false;
+                    currentRoutingSessionToken = "idle";
+                    if (sProgContainer) sProgContainer.style.display = 'none';
+                    if (draftStatus) {
+                        draftStatus.className = 'success';
+                        draftStatus.textContent = `Project writeup compiled successfully. Downloaded: ${filename}`;
+                        draftStatus.style.display = 'block';
+                    }
+                    sendAnalytics('report_completed', { report_type: activeReportType });
+                    return;
+                } catch (pollErr) {
+                    reportProcessingActive = false;
+                    resetScribeButtonState();
+                    if (activeReportButton) activeReportButton.disabled = false;
+                    if (sProgContainer) sProgContainer.style.display = 'none';
+                    if (cancelReportBtn) cancelReportBtn.style.display = 'none';
+                    if (draftStatus) {
+                        draftStatus.className = 'info';
+                        draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
+                        draftStatus.style.display = 'block';
+                    }
+                    currentRoutingSessionToken = 'idle';
+                    return;
+                }
+            } else {
+                reportProcessingActive = false;
+                resetScribeButtonState();
+                if (activeReportButton) activeReportButton.disabled = false;
+                if (sProgContainer) sProgContainer.style.display = 'none';
+                if (cancelReportBtn) cancelReportBtn.style.display = 'none';
+                if (draftStatus) {
+                    draftStatus.className = 'info';
+                    draftStatus.textContent = data.message || 'Report synthesis request queued (usually under 20 minutes).';
+                    draftStatus.style.display = 'block';
+                }
+                currentRoutingSessionToken = 'idle';
+                return;
             }
-            currentRoutingSessionToken = 'idle';
-            return;
         }
 
         // By checking our request token, we block document passes from falling through into search logic
-        if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at) {
+        if (currentRoutingSessionToken === "docx_generation_active" || data.action === "docx_generation_complete" || data.document_saved_at || data.download_url) {
             if (reportGenerationCancelled) return;
             reportProcessingActive = false;
             let reportBlob;
             let cacheSaved = false;
+            const docName = data.document_name || `${activeReportType}-report.docx`;
             try {
-                reportBlob = createReportBlob(data.document_base64);
-                downloadReportBlob(reportBlob, data.document_name);
+                if (data.download_url) {
+                    reportBlob = await fetchBinaryReport(data.download_url);
+                } else if (data.report_cache_id) {
+                    reportBlob = await fetchBinaryReport(`/v1/reports/cache/${encodeURIComponent(data.report_cache_id)}/download?report_type=${encodeURIComponent(activeReportType)}`);
+                } else if (data.document_base64) {
+                    reportBlob = createReportBlob(data.document_base64);
+                } else {
+                    throw new Error('Report document content not returned.');
+                }
+                downloadReportBlob(reportBlob, docName);
             } catch (error) {
                 resetScribeButtonState();
                 if (activeReportButton) activeReportButton.disabled = false;
                 if (sProgContainer) sProgContainer.style.display = 'none';
                 if (draftStatus) {
+                    const referenceId = data.job_id || (lastRequestContext?.topic ? Math.random().toString(36).substring(2, 10) : 'nexus_err');
                     draftStatus.className = 'error';
-                    draftStatus.textContent = `The report was generated, but the download could not start: ${error.message}`;
+                    draftStatus.innerHTML = `
+                        <div>
+                            <strong>Report generation couldn't be completed.</strong>
+                            <div style="margin: 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</div>
+                            <div style="font-size: 0.85em; opacity: 0.85;">Reference: <code>${referenceId}</code></div>
+                        </div>
+                    `;
                     draftStatus.style.display = 'block';
                 }
                 currentRoutingSessionToken = 'idle';
@@ -928,7 +1047,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const session = await window.NexusAuth.getSession();
                 cacheSaved = await cacheGeneratedReport(
                     reportBlob,
-                    data.document_name,
+                    docName,
                     activeReportType,
                     lastRequestContext?.topic || '',
                     session?.user?.id
@@ -947,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (sProgContainer) sProgContainer.style.display = 'none';
                 if (draftStatus) {
                     // CRITICAL FIX: Extract the dynamic filename returned directly from your Python script execution run
-                    const savedFile = data.document_name || data.document_saved_at ||
+                    const savedFile = docName || data.document_saved_at ||
                         "comprehensive_pre_research_proposal_report.docx";
 
                     draftStatus.className = 'success';
