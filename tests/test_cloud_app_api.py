@@ -376,7 +376,8 @@ def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
 
 
 def test_cached_word_report_download_is_user_scoped(monkeypatch):
-    cache_id = "a" * 64
+    cache_digest = "a" * 64
+    cache_id = f"v{cloud_app.REPORT_CACHE_VERSION}-{cache_digest}"
 
     class Database:
         def download_storage_object(self, bucket, path):
@@ -398,7 +399,21 @@ def test_cached_word_report_download_is_user_scoped(monkeypatch):
     assert result["report_cache_id"] == cache_id
     assert base64.b64decode(result["document_base64"]) == b"cached docx"
     assert database.bucket == cloud_app.DOSSIER_STORAGE_BUCKET
-    assert database.path == f"user-id/report-cache/{cache_id}/proposal-report.docx"
+    assert database.path == f"user-id/report-cache/{cache_digest}/proposal-report.docx"
+
+
+def test_cached_word_report_download_rejects_outdated_cache_versions(monkeypatch):
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(cloud_app.download_cached_research_report(
+            "a" * 64,
+            authorization="******",
+        ))
+
+    assert error.value.status_code == 410
+    assert "outdated" in error.value.detail
 
 
 def test_word_report_rejects_sources_without_citable_metadata(monkeypatch):

@@ -503,6 +503,7 @@
         return new Blob([bytes], {type: mimeType});
     }
 
+    const REPORT_CACHE_VERSION = '5';
     let lastReportDownload = null;
 
     function reportDownloadStorageKey(reportType) {
@@ -520,13 +521,15 @@
             documentName: report.document_name || 'nexus-research-report.docx',
             documentBase64: report.document_base64,
             cacheId: report.report_cache_id || null,
+            cacheVersion: report.report_cache_version || null,
         };
         const storageKey = reportDownloadStorageKey(lastReportDownload.reportType);
-        if (storageKey && lastReportDownload.cacheId) {
+        if (storageKey && lastReportDownload.cacheId && lastReportDownload.cacheVersion === REPORT_CACHE_VERSION) {
             sessionStorage.setItem(storageKey, JSON.stringify({
                 reportType: lastReportDownload.reportType,
                 documentName: lastReportDownload.documentName,
                 cacheId: lastReportDownload.cacheId,
+                cacheVersion: lastReportDownload.cacheVersion,
             }));
         }
         updateReDownloadReportButton();
@@ -544,10 +547,15 @@
             if (!stored) continue;
             try {
                 const report = JSON.parse(stored);
-                if (report.cacheId && report.reportType === reportType) {
+                if (
+                    report.cacheId
+                    && report.cacheVersion === REPORT_CACHE_VERSION
+                    && report.reportType === reportType
+                ) {
                     lastReportDownload = report;
                     break;
                 }
+                sessionStorage.removeItem(reportDownloadStorageKey(reportType));
             } catch (error) {
                 sessionStorage.removeItem(reportDownloadStorageKey(reportType));
             }
@@ -557,6 +565,12 @@
 
     async function reDownloadLastReport() {
         if (!lastReportDownload) return;
+        if (lastReportDownload.cacheVersion !== REPORT_CACHE_VERSION) {
+            lastReportDownload = null;
+            updateReDownloadReportButton();
+            setMessage(reportStatus, 'This cached report is outdated. Generate a new report to download the corrected version.', 'error');
+            return;
+        }
         const button = byId('reDownloadReport');
         button.disabled = true;
         try {
