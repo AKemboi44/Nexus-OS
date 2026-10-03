@@ -36,8 +36,21 @@ from app.analytics.ab_experiment import ExperimentService
 from app.reports.proposal_service import generate_proposal
 from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.evidence_preparation import prepare_proposal_evidence
+from app.reports.queue_worker import start_queue_worker, stop_queue_worker
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: start/stop background tasks."""
+    # Startup
+    await start_queue_worker()
+    yield
+    # Shutdown
+    await stop_queue_worker()
+
+
+app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0", lifespan=lifespan)
 logger = logging.getLogger(__name__)
 allowed_origins = os.getenv("NEXUS_ALLOWED_ORIGINS", os.getenv("CORS_origins", "*"))
 app.add_middleware(
@@ -1080,6 +1093,7 @@ async def generate_research_report(
                 initial_error=str(provider_err),
                 user_email=user.get("email"),
                 is_paid=is_paid_user,
+                retry_after_seconds=classification.retry_after_seconds,
             )
             record_backend_analytics(
                 "report_queued",

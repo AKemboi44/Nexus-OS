@@ -125,10 +125,20 @@ class ReportQueueManager:
         immediate_retry: bool = False,
         is_paid: bool = False,
         priority: Optional[int] = None,
+        retry_after_seconds: Optional[int] = None,
     ) -> QueuedReportJob:
         job_id = str(uuid4())
         now = time.time()
         job_priority = priority if priority is not None else (10 if is_paid else 0)
+
+        # Use provider's retry-after delay if supplied, otherwise default backoff
+        if immediate_retry:
+            next_retry = now
+        elif retry_after_seconds:
+            next_retry = now + retry_after_seconds
+        else:
+            next_retry = now + self.config.initial_backoff_seconds
+
         job = QueuedReportJob(
             job_id=job_id,
             user_id=user_id,
@@ -140,7 +150,7 @@ class ReportQueueManager:
             status="queued",
             created_at=datetime.now(timezone.utc).isoformat(),
             attempts=1 if initial_error else 0,
-            next_retry_at=now if immediate_retry else now + self.config.initial_backoff_seconds,
+            next_retry_at=next_retry,
             error_reason=initial_error,
             audit_storage_path=audit_storage_path,
             audit_filename=audit_filename,
@@ -150,7 +160,8 @@ class ReportQueueManager:
             priority=job_priority,
         )
         self._jobs[job_id] = job
-        logger.info("Enqueued report job %s for user %s (is_paid=%s, priority=%s) on topic '%s'", job_id, user_id, is_paid, job_priority, topic)
+        logger.info("Enqueued report job %s for user %s (is_paid=%s, priority=%s, retry_at=+%ds) on topic '%s'",
+                    job_id, user_id, is_paid, job_priority, int(next_retry - now), topic)
         return job
 
     def get_job(self, job_id: str) -> Optional[QueuedReportJob]:
