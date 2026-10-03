@@ -898,7 +898,7 @@
 
         } catch (error) {
             failReportProgress();
-            const errorDetail = error.payload || {};
+            const errorDetail = (error.payload && error.payload.detail) || error.payload || {};
             const reference = errorDetail.reference || error.jobId || runRef;
             const errorCode = errorDetail.error_code || 'unknown';
             const retryable = errorDetail.retryable !== false;

@@ -555,7 +555,15 @@ document.addEventListener('DOMContentLoaded', () => {
             await handleBackgroundResponse({success: true, data});
             return {success: true, data};
         } catch (error) {
-            const data = {status: 'error', message: error.message, status_code: error.status};
+            const errorDetail = (error.payload && error.payload.detail) || error.payload || {};
+            const data = {
+                status: 'error',
+                message: error.message,
+                status_code: error.status,
+                error_code: errorDetail.error_code,
+                retryable: errorDetail.retryable,
+                retry_after_seconds: errorDetail.retry_after_seconds
+            };
             await handleBackgroundResponse({success: true, data});
             return {success: false, data};
         }
