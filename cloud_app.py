@@ -172,7 +172,9 @@ DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
 REPORT_CACHE_VERSION = "7"
 REPORT_CACHE_PREFIX = "report-cache"
-DOCX_CONTENT_TYPE = "application/octet-stream"
+DOCX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 def report_cache_id(cache_key: str) -> str:
