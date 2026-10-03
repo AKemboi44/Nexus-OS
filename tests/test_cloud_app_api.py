@@ -418,6 +418,7 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
     monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: True)
     monkeypatch.setattr(
         DossierGenerator,
         "generate_comprehensive_dossier",
@@ -440,7 +441,8 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
         ))
 
     assert error.value.status_code == 500
-    assert "editorial service unavailable" in str(error.value.detail)
+    assert error.value.detail == "Report generation failed."
+    assert "editorial service unavailable" in caplog.text
 
 
 def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
