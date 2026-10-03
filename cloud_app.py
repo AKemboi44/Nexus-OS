@@ -577,9 +577,16 @@ async def execute_cloud_scan(
     # Increment query usage for user
     entitlements.increment_query_usage(user_id)
     
-    # Attach A/B variant info
+    # Attach A/B variant and quota info
     result_data["ab_variant"] = ab_variant
     result_data["is_paid_user"] = not is_free_user
+
+    # Add quota information for paywall moments
+    quota_check = entitlements.check_query_permission(str(user["id"]))
+    result_data["queries_remaining"] = quota_check.get("queries_remaining")
+    result_data["free_allowance"] = quota_check.get("free_allowance")
+    result_data["requires_paywall"] = quota_check.get("requires_paywall", False)
+    result_data["paywall_copy"] = quota_check.get("paywall_copy")
 
     try:
         database = require_supabase_database()
@@ -761,7 +768,13 @@ async def download_research_dossier(
             )
             raise HTTPException(
                 status_code=403,
-                detail="You have used all 3 free Excel dossier downloads. Upgrade your plan for more downloads.",
+                detail={
+                    "message": "You have used all 3 free Excel dossier downloads. Upgrade your plan for more downloads.",
+                    "error_code": "download_quota_exhausted",
+                    "downloads_remaining": downloads_remaining,
+                    "downloads_limit": 3,
+                    "is_paid": entitlements.is_active(user_id),
+                },
             )
         download_status = {"unlimited": False, "remaining": downloads_remaining}
 
@@ -1624,8 +1637,10 @@ async def purchase_review_bundle(
     payload: PayPalCaptureRequest,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
+    x_admin_token: Optional[str] = Header(None),
 ):
-    """Simulates or fulfills direct bundle purchase."""
+    """Admin-only: award a bundle to a user (development/testing only)."""
+    require_admin(x_admin_token)  # Prevents unauthorized bundle crediting
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     user_id = supabase_user_id(user)
