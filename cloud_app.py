@@ -935,17 +935,14 @@ async def generate_research_report(
                 logger.info("Proposal: generated successfully (%d words, %d bytes)",
                            word_count, len(document_bytes))
 
-                # Upload to cache (non-fatal on failure)
-                try:
-                    database.upload_storage_object(
-                        DOSSIER_STORAGE_BUCKET,
-                        cache_key,
-                        document_bytes,
-                        DOCX_CONTENT_TYPE,
-                    )
-                    logger.info("Proposal: cached to storage")
-                except (RuntimeError, SupabaseRequestError) as e:
-                    logger.warning("Proposal: cache upload failed (non-fatal): %s", e)
+                # Upload to cache (required for download availability)
+                database.upload_storage_object(
+                    DOSSIER_STORAGE_BUCKET,
+                    cache_key,
+                    document_bytes,
+                    DOCX_CONTENT_TYPE,
+                )
+                logger.info("Proposal: cached to storage")
 
                 # Return success response
                 cache_id_val = report_cache_id(cache_key)
