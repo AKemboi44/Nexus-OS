@@ -131,8 +131,16 @@ async def generate_proposal(
             max_tokens=max_tokens,
         )
 
+        content = result.get("content", "")
+        logger.info("Proposal: provider returned %d chars, provider=%s", len(content), result.get("provider"))
+        if not content or not content.strip():
+            logger.error("Proposal: provider returned empty content")
+            raise ValueError("Provider returned empty content")
+
         # Parse response
-        draft_dict = json.loads(result.get("content", "{}"))
+        logger.info("Proposal: parsing JSON content")
+        draft_dict = json.loads(content)
+        logger.info("Proposal: JSON parsed, creating draft object")
         draft = ProposalDraftV2(**draft_dict)
 
         # Validate
