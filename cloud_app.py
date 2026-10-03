@@ -29,10 +29,13 @@ from app.agents.scribe_agent import ReportSynthesisError, ReportProviderLimitErr
 from app.reports.queue_config import default_queue_config, ReportQueueConfig
 from app.reports.report_queue import global_queue_manager, QueuedReportJob
 from app.notifications.notification_service import NotificationService
-from app.synthesis.providers import SynthesisProviderError, DegradationLogger
+from app.synthesis.providers import SynthesisProviderError, DegradationLogger, SynthesisProviderRegistry
 from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
+from app.reports.proposal_service import generate_proposal
+from app.reports.proposal_renderer import render_proposal_docx
+from app.reports.evidence_preparation import prepare_proposal_evidence
 
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -887,6 +890,92 @@ async def generate_research_report(
                 },
             )
             return response
+
+        # New proposal service path (one call, no dossier)
+        if payload.report_type == "proposal":
+            from app.synthesis.call_ledger import start_request_ledger
+            ledger = start_request_ledger(max_calls=2)
+
+            try:
+                provider_registry = SynthesisProviderRegistry()
+                provider = provider_registry.get_primary_provider()
+
+                result = await generate_proposal(
+                    topic=topic,
+                    domain=payload.domain,
+                    included_sources=included_sources,
+                    provider_interface=provider,
+                    model=provider.model,
+                )
+
+                if not result.success:
+                    raise HTTPException(status_code=503, detail={
+                        "message": result.error_message,
+                        "error_code": result.error_code,
+                        "provider": result.provider,
+                        "retryable": True,
+                        "reference": str(uuid4()),
+                        "is_paid": entitlements.is_active(user_id),
+                    })
+
+                # Render to DOCX
+                with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
+                    doc_path = Path(tmpdir) / "proposal.docx"
+                    render_proposal_docx(result.draft, prepare_proposal_evidence(
+                        topic, payload.domain, included_sources
+                    ), doc_path)
+
+                    document_bytes = doc_path.read_bytes()
+                    try:
+                        database.upload_storage_object(
+                            DOSSIER_STORAGE_BUCKET,
+                            cache_key,
+                            document_bytes,
+                            DOCX_CONTENT_TYPE,
+                        )
+                    except (RuntimeError, SupabaseRequestError) as e:
+                        logger.warning("Could not cache proposal: %s", e)
+
+                    ledger.log_summary()
+                    cache_id_val = report_cache_id(cache_key)
+                    response = {
+                        "status": "ready",
+                        "action": "docx_generation_complete",
+                        "generation_mode": "ai_synthesized",
+                        "degraded": False,
+                        "document_name": "proposal.docx",
+                        "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+                        "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
+                        "report_id": cache_id_val,
+                        "report_cache_id": cache_id_val,
+                    }
+                    record_backend_analytics(
+                        "report_completed",
+                        user_id,
+                        {
+                            "duration_ms": elapsed_milliseconds(started_at),
+                            "report_type": payload.report_type,
+                            "cache_hit": False,
+                            "included_source_count": len(included_sources),
+                            "quality_passed": True,
+                            "provider": result.provider,
+                            "input_tokens": result.input_tokens,
+                            "output_tokens": result.output_tokens,
+                        },
+                    )
+                    return response
+            except HTTPException:
+                raise
+            except Exception as error:
+                from app.agents.scribe_agent import ReportSynthesisError
+                raise HTTPException(status_code=503, detail={
+                    "message": str(error),
+                    "error_code": "proposal_generation_error",
+                    "reference": str(uuid4()),
+                    "is_paid": entitlements.is_active(user_id),
+                })
+
+        # Legacy path for full_starter
         from app.agents.scribe_agent import ScribeResearchAgent
         from app.reports.dossier_generator import DossierGenerator
 

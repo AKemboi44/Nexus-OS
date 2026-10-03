@@ -65,6 +65,7 @@ class DegradationLogger:
 class SynthesisProvider(ABC):
     """Unified interface for AI synthesis providers."""
     name: str = "base"
+    provider: str = "unknown"
 
     @abstractmethod
     def generate_text(self, prompt: str, **kwargs) -> str:
@@ -75,6 +76,18 @@ class SynthesisProvider(ABC):
     def is_configured(self) -> bool:
         """Check if provider credentials/client are configured."""
         pass
+
+    async def generate_structured_once(
+        self,
+        prompt_user: str,
+        prompt_system: str,
+        schema: dict,
+        model: str = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+    ) -> dict:
+        """Generate structured JSON matching a schema, no retries."""
+        raise NotImplementedError(f"{self.name} does not support structured generation")
 
 
 class GeminiSynthesisProvider(SynthesisProvider):
@@ -123,6 +136,43 @@ class GeminiSynthesisProvider(SynthesisProvider):
             DegradationLogger.log_degradation(self.name, err.error_type, str(e))
             raise err
 
+    async def generate_structured_once(
+        self,
+        prompt_user: str,
+        prompt_system: str,
+        schema: dict,
+        model: str = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+    ) -> dict:
+        """Generate JSON matching schema via Gemini."""
+        if not self.is_configured():
+            raise SynthesisUnavailableError("Gemini provider is not configured", provider=self.name)
+
+        model_name = model or self.model
+        try:
+            # Build JSON mode request
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=f"{prompt_system}\n\n{prompt_user}",
+                config={
+                    "temperature": temperature,
+                    "max_output_tokens": max_tokens,
+                    "response_mime_type": "application/json",
+                }
+            )
+            content = getattr(response, "text", "") or ""
+            return {
+                "content": content,
+                "provider": self.name,
+                "model": model_name,
+                "input_tokens": getattr(response.usage, "prompt_token_count", None),
+                "output_tokens": getattr(response.usage, "candidates_token_count", None),
+            }
+        except Exception as e:
+            DegradationLogger.log_degradation(self.name, "provider_error", str(e))
+            raise
+
 
 class ClaudeSynthesisProvider(SynthesisProvider):
     name = "anthropic"
@@ -168,6 +218,43 @@ class ClaudeSynthesisProvider(SynthesisProvider):
                 err = SynthesisProviderError(f"Anthropic generation error: {e}", provider=self.name, error_type="provider_error", raw_error=e)
             DegradationLogger.log_degradation(self.name, err.error_type, str(e))
             raise err
+
+    async def generate_structured_once(
+        self,
+        prompt_user: str,
+        prompt_system: str,
+        schema: dict,
+        model: str = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+    ) -> dict:
+        """Generate JSON matching schema via Claude."""
+        if not self.is_configured():
+            raise SynthesisUnavailableError("Anthropic provider is not configured", provider=self.name)
+
+        model_name = model or self.model
+        try:
+            response = self.client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=prompt_system,
+                messages=[{"role": "user", "content": prompt_user}],
+            )
+            content = "".join(
+                block.text for block in response.content
+                if getattr(block, "type", None) == "text"
+            )
+            return {
+                "content": content,
+                "provider": self.name,
+                "model": model_name,
+                "input_tokens": response.usage.input_tokens if hasattr(response, "usage") else None,
+                "output_tokens": response.usage.output_tokens if hasattr(response, "usage") else None,
+            }
+        except Exception as e:
+            DegradationLogger.log_degradation(self.name, "provider_error", str(e))
+            raise
 
 
 class SynthesisProviderRegistry:
