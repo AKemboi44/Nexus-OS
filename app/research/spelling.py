@@ -124,7 +124,53 @@ def correct_word(word: str) -> str:
                 return best_match.capitalize()
             return best_match
 
-    return word
+    return _dictionary_correct(word)
+
+
+_spell_checker = None
+_MIN_DICTIONARY_WORD_LENGTH = 6
+_MIN_CANDIDATE_FREQUENCY = 1e-6
+
+
+def _get_spell_checker():
+    global _spell_checker
+    if _spell_checker is None:
+        from spellchecker import SpellChecker
+        _spell_checker = SpellChecker(distance=1)
+    return _spell_checker
+
+
+def _dictionary_correct(word: str) -> str:
+    """Fix an unknown, lowercase word against a general English dictionary.
+
+    Deliberately conservative: short words, acronyms, capitalised names and anything
+    with digits are left alone so valid technical terms are never rewritten.
+    """
+    if not word.isalpha() or not word.islower() or len(word) < _MIN_DICTIONARY_WORD_LENGTH:
+        return word
+    try:
+        spell = _get_spell_checker()
+    except ImportError:
+        return word
+    if spell.known([word]):
+        return word
+
+    candidates = spell.known(spell.edit_distance_1(word))
+    if not candidates and len(word) >= 8:
+        candidates = spell.known(spell.edit_distance_2(word))
+    candidates = {
+        candidate for candidate in candidates
+        if candidate[0] == word[0]
+        and spell.word_usage_frequency(candidate) >= _MIN_CANDIDATE_FREQUENCY
+    }
+    if not candidates:
+        return word
+    # A dropped letter is the most common typo, so prefer candidates that restore one
+    # over equally close substitutions ("screning" -> "screening", not "screwing").
+    return max(
+        candidates,
+        key=lambda candidate: (len(candidate) > len(word), spell.word_usage_frequency(candidate)),
+    )
 
 
 def normalize_topic_spelling(topic: str) -> str:
@@ -138,9 +184,18 @@ def normalize_topic_spelling(topic: str) -> str:
 
     text = str(topic).strip()
 
+    is_first_token = True
+
     def replace_token(match: re.Match) -> str:
+        nonlocal is_first_token
         word = match.group(0)
-        return correct_word(word)
+        corrected = correct_word(word)
+        if is_first_token and corrected == word and word.istitle():
+            # Sentence-initial words are capitalised by position, not because they are names.
+            fixed = _dictionary_correct(word.lower())
+            corrected = fixed.capitalize() if fixed != word.lower() else word
+        is_first_token = False
+        return corrected
 
     # Replace word tokens preserving spacing and punctuation
     normalized = re.sub(r"[a-zA-Z]+(?:'[a-zA-Z]+)?", replace_token, text)

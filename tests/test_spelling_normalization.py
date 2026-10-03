@@ -26,6 +26,29 @@ def test_normalize_topic_spelling_preserves_valid():
     assert normalize_topic_spelling(valid) == valid
 
 
+def test_normalize_topic_spelling_fixes_typos_outside_the_domain_lexicon():
+    assert normalize_topic_spelling("Ethical evalution frameworks for resume screning") == (
+        "Ethical evaluation frameworks for resume screening"
+    )
+    assert normalize_topic_spelling("Langauge models and educatoin outcomes") == (
+        "Language models and education outcomes"
+    )
+    assert normalize_topic_spelling("Evalution of resume screening agents") == (
+        "Evaluation of resume screening agents"
+    )
+
+
+def test_normalize_topic_spelling_leaves_valid_terms_and_names_alone():
+    for topic in (
+        "BERT and GPT-4 benchmarks for LLM agents",
+        "OpenAlex coverage of Kenyan universities",
+        "Large language models in healthcare",
+        "Retrieval augmented generation with ChatGPT",
+        "Federated learning for Alzheimer's diagnosis",
+    ):
+        assert normalize_topic_spelling(topic) == topic
+
+
 def test_research_pipeline_normalizes_misspelled_query(monkeypatch, tmp_path):
     pipeline = ResearchPipeline()
 

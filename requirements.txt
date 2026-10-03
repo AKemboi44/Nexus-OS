@@ -3,6 +3,7 @@ google-genai>=0.1.0
 anthropic==1.11.0
 python-dotenv>=1.0.1
 pydantic>=2.6.0
+pyspellchecker>=0.8.1
 
 # --- PHASE 11 FEDERATED SEARCH MESH ENGINE ---
 requests>=2.31.0
