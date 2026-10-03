@@ -1,6 +1,7 @@
 import asyncio
 import json
 from uuid import uuid4
+import pytest
 from fastapi import HTTPException
 import cloud_app
 from app.payments.config import default_pricing_config
@@ -96,10 +97,22 @@ def test_staging_run_end_to_end_funnel_and_dashboard(tmp_path, monkeypatch):
         assert paywall_exc.detail["requires_bundle"] is True
         assert "Literature Review Bundle" in str(paywall_exc.detail["paywall"])
 
-    # 3. User A Purchases Review Bundle
+    # 3. Bundle crediting is admin-only: a request without the admin token is refused
+    bundle_request = cloud_app.PayPalCaptureRequest(
+        order_id="order_123", user_id=user_a_id, bundle_id="review_bundle_standard", variant=variant_a_user,
+    )
+    monkeypatch.setenv("NEXUS_ADMIN_TOKEN", "staging-admin-token")
+    with pytest.raises(HTTPException) as unauthorized:
+        asyncio.run(cloud_app.purchase_review_bundle(
+            bundle_request, authorization="Bearer user_a", x_admin_token=None,
+        ))
+    assert unauthorized.value.status_code == 401
+
+    # User A Purchases Review Bundle (with the admin token)
     buy_res = asyncio.run(cloud_app.purchase_review_bundle(
-        cloud_app.PayPalCaptureRequest(order_id="order_123", user_id=user_a_id, bundle_id="review_bundle_standard", variant=variant_a_user),
+        bundle_request,
         authorization="Bearer user_a",
+        x_admin_token="staging-admin-token",
     ))
     assert buy_res["status"] == "success"
     assert buy_res["queries_remaining"] == 10

@@ -355,7 +355,10 @@ def test_dossier_download_rejects_exhausted_free_allowance(monkeypatch):
         asyncio.run(cloud_app.download_research_dossier(run_id, authorization="Bearer token"))
 
     assert error.value.status_code == 403
-    assert "all 3 free" in error.value.detail
+    detail = error.value.detail
+    assert "all 3 free" in detail["message"]
+    assert detail["error_code"] == "download_quota_exhausted"
+    assert detail["downloads_limit"] == 3
 
 
 def test_dossier_download_paid_user_bypasses_quota(monkeypatch):

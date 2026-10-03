@@ -110,10 +110,11 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert "function reDownloadLastReport()" in js
     assert "/v1/reports/cache/" in js
     assert "const REPORT_CACHE_VERSION = '7';" in js
-    assert "`${error.message} Your research is still saved; please retry in a few minutes.`" in js
+    assert "errorDetail.error_code" in js, "report errors are classified by error_code"
+    assert "Daily quota reached" in js and "Service temporarily busy" in js
     assert "Limited evidence-grounded fallback downloaded." in js
-    assert "not AI-synthesized" in js
-    assert "It was not saved as an AI report" in js
+    assert "reportResponse.synthesis_note" in js, "fallback banner shows the server's reason"
+    assert "is safe" not in js, "reassurance copy implies something was at risk"
     assert ".report-progress-ring" in css
     assert "grid-template-columns: minmax(0, 1fr) minmax(0, .86fr)" in css
 
