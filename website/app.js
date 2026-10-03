@@ -867,7 +867,7 @@
                     finishReportProgress('Limited evidence-grounded fallback downloaded.');
                     setMessage(
                         reportStatus,
-                        `Limited evidence-grounded fallback downloaded. ${reportResponse.synthesis_note || 'It was created from validated source metadata because AI providers are temporarily at capacity.'} Your dossier is safe.`,
+                        `Limited evidence-grounded fallback downloaded. ${reportResponse.synthesis_note || 'It was created from validated source metadata because AI providers are temporarily at capacity.'} Your Excel dossier is unaffected.`,
                         'error'
                     );
                 } else {

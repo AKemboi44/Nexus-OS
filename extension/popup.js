@@ -1106,7 +1106,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     draftStatus.innerHTML = `
                         <div>
                             <strong>Report generation couldn't be completed.</strong>
-                            <div style="margin: 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</div>
+                            <div style="margin: 4px 0;">We generated your Excel dossier successfully, but the report couldn't be completed this time.</div>
                             <div style="font-size: 0.85em; opacity: 0.85;">Reference: <code>${referenceId}</code></div>
                         </div>
                     `;
