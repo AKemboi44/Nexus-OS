@@ -33,6 +33,27 @@ def test_fenced_json_from_the_model_is_accepted(fake_provider, synthesized_draft
     assert _generate(provider).generation_mode == AI_SYNTHESIZED
 
 
+def test_each_fallback_reports_its_specific_reason(fake_provider, synthesized_draft_json):
+    class Unconfigured:
+        name = "unconfigured"
+
+        def is_configured(self):
+            return False
+
+    uncited = json.loads(synthesized_draft_json())
+    uncited["research_gap"][0]["evidence_ids"] = []
+    cases = {
+        "not_configured": Unconfigured(),
+        "provider_error": fake_provider(error=RuntimeError("401 invalid x-api-key")),
+        "invalid_output": fake_provider(content="Sorry, I cannot do that."),
+        "quality_gate": fake_provider(content=json.dumps(uncited)),
+    }
+    for reason, provider in cases.items():
+        document = _generate(provider)
+        assert document.synthesis_failure == reason
+        assert document.synthesis_note
+
+
 def test_draft_that_copies_source_wording_is_rejected(fake_provider, synthesized_draft_json):
     copied = json.loads(synthesized_draft_json())
     copied["overview"][0]["text"] += " " + SOURCES[0]["abstract"]

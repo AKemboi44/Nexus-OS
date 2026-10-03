@@ -14,15 +14,19 @@ from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.proposal_schema import ProposalDraftV2
 from app.reports.proposal_synthesis import synthesize_proposal
 from app.reports.proposal_validation import validate_proposal_draft, validate_synthesized_draft
+from app.synthesis.providers import SynthesisUnavailableError
 
 logger = logging.getLogger(__name__)
 
 AI_SYNTHESIZED = "ai_synthesized"
 TEMPLATE_FALLBACK = "template_fallback"
-FALLBACK_NOTE = (
-    "AI synthesis was unavailable for this request, so a structured template draft was produced "
-    "from the source metadata instead."
-)
+_TEMPLATE_SUFFIX = "so a structured template draft was produced from the source metadata instead."
+FALLBACK_NOTES = {
+    "not_configured": f"AI writing is not configured on the server, {_TEMPLATE_SUFFIX}",
+    "provider_error": f"The AI writing service returned an error, {_TEMPLATE_SUFFIX}",
+    "invalid_output": f"The AI response could not be used, {_TEMPLATE_SUFFIX}",
+    "quality_gate": f"The AI draft did not pass the citation, originality or length checks, {_TEMPLATE_SUFFIX}",
+}
 
 
 @dataclass
@@ -33,6 +37,7 @@ class ProposalDocument:
     document_name: str = "proposal.docx"
     generation_mode: str = TEMPLATE_FALLBACK
     synthesis_note: Optional[str] = None
+    synthesis_failure: Optional[str] = None
 
 
 _ILLEGAL_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -88,7 +93,7 @@ def generate_proposal_docx(
         logger.exception("ProposalService: evidence preparation failed")
         raise RuntimeError(f"Could not prepare evidence: {error}")
 
-    draft, word_count, mode = _synthesized_draft(packet, topic, domain, provider)
+    draft, word_count, mode, failure_reason = _synthesized_draft(packet, topic, domain, provider)
     if draft is None:
         draft, word_count = _template_draft(packet, topic, domain, included_sources)
         mode = TEMPLATE_FALLBACK
@@ -110,22 +115,34 @@ def generate_proposal_docx(
         word_count=word_count,
         document_name=document_filename(topic),
         generation_mode=mode,
-        synthesis_note=FALLBACK_NOTE if mode == TEMPLATE_FALLBACK else None,
+        synthesis_note=FALLBACK_NOTES.get(failure_reason) if mode == TEMPLATE_FALLBACK else None,
+        synthesis_failure=failure_reason,
     )
 
 
+def _failure_reason(error: Exception) -> str:
+    if isinstance(error, SynthesisUnavailableError):
+        return "not_configured"
+    if isinstance(error, ProposalValidationError):
+        return "quality_gate"
+    if isinstance(error, (ValueError, TypeError)):  # includes JSON and pydantic validation errors
+        return "invalid_output"
+    return "provider_error"
+
+
 def _synthesized_draft(packet: EvidencePacket, topic: str, domain: str, provider):
-    """Return (draft, word_count, mode), or (None, 0, None) when synthesis cannot be used."""
+    """Return (draft, word_count, mode, failure_reason); draft is None when synthesis is unusable."""
     try:
         draft = synthesize_proposal(packet, topic, domain, provider or _default_provider())
         validation = validate_synthesized_draft(draft, packet)
         if not validation.passed:
             raise ProposalValidationError(validation.errors)
-        return draft, validation.word_count, AI_SYNTHESIZED
+        return draft, validation.word_count, AI_SYNTHESIZED, None
     except Exception as error:
-        logger.warning("ProposalService: synthesis unavailable, using template (%s: %s)",
-                       type(error).__name__, error)
-        return None, 0, None
+        reason = _failure_reason(error)
+        logger.warning("ProposalService: synthesis failed, using template (reason=%s, %s: %s)",
+                       reason, type(error).__name__, error)
+        return None, 0, None, reason
 
 
 def _template_draft(packet: EvidencePacket, topic: str, domain: str, included_sources: List[Dict[str, Any]]):

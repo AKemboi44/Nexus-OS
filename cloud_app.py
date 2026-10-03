@@ -950,6 +950,7 @@ async def generate_research_report(
                 }
                 if doc.synthesis_note:
                     response["synthesis_note"] = doc.synthesis_note
+                    response["synthesis_failure"] = doc.synthesis_failure
 
                 # Only AI-synthesized documents are cached. A fallback is returned inline so the
                 # next request retries synthesis instead of replaying the weaker document.
