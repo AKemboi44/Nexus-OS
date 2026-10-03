@@ -1,4 +1,4 @@
-"""Orchestration service for one-call proposal generation."""
+"""Orchestration service for proposal generation - LLM with fallback to templates."""
 
 import json
 import logging
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from app.reports.proposal_schema import ProposalDraftV2, proposal_json_schema
 from app.reports.evidence_preparation import prepare_proposal_evidence, EvidencePacket
 from app.reports.proposal_validation import validate_proposal_draft, ValidationResult
+from app.reports.proposal_builder import build_proposal_from_research
 from app.synthesis.errors import classify_provider_error
 from app.synthesis.call_ledger import get_request_ledger
 
@@ -77,6 +78,66 @@ def build_proposal_prompt(
     user_prompt += f"\n\nJSON Schema:\n{schema_json}"
 
     return system_prompt, user_prompt
+
+
+async def generate_proposal_with_fallback(
+    topic: str,
+    domain: str,
+    included_sources: list,
+    provider_interface,
+    model: str,
+    dossier: Dict[str, Any] = None,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+) -> ProposalGenerationResult:
+    """
+    Generate proposal: try LLM first, fall back to template-based builder.
+
+    This ensures proposal generation always succeeds even if LLM providers fail.
+    """
+    # Prepare evidence packet once
+    packet = prepare_proposal_evidence(topic, domain, included_sources)
+
+    # Try LLM approach first
+    llm_result = await generate_proposal(
+        topic=topic,
+        domain=domain,
+        included_sources=included_sources,
+        provider_interface=provider_interface,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    if llm_result.success:
+        logger.info("Proposal: LLM synthesis succeeded")
+        return llm_result
+
+    # LLM failed, use template builder
+    logger.warning("Proposal: LLM synthesis failed, falling back to template builder")
+    try:
+        if not dossier:
+            dossier = {}
+
+        draft = build_proposal_from_research(topic, domain, dossier, packet)
+        validation = validate_proposal_draft(draft, packet)
+
+        return ProposalGenerationResult(
+            success=validation.passed,
+            draft=draft if validation.passed else None,
+            validation=validation,
+            provider="template",
+            model="deterministic",
+            input_tokens=None,
+            output_tokens=None,
+        )
+    except Exception as e:
+        logger.exception("Proposal: template fallback also failed: %s", e)
+        return ProposalGenerationResult(
+            success=False,
+            error_code="fallback_failed",
+            error_message=f"Both LLM and template synthesis failed: {str(e)}",
+        )
 
 
 async def generate_proposal(

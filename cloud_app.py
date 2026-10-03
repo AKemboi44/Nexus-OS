@@ -33,7 +33,8 @@ from app.synthesis.providers import SynthesisProviderError, DegradationLogger, S
 from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
-from app.reports.proposal_service import generate_proposal
+from app.reports.proposal_builder import build_proposal_from_research
+from app.reports.proposal_validation import validate_proposal_draft
 from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.evidence_preparation import prepare_proposal_evidence
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
@@ -917,36 +918,37 @@ async def generate_research_report(
             )
             return response
 
-        # New proposal service path (one call, no dossier)
+        # Proposal generation using deterministic template-based builder
         if payload.report_type == "proposal":
-            from app.synthesis.call_ledger import start_request_ledger
-
             try:
-                logger.info("Proposal: starting with %d sources", len(included_sources))
-                ledger = start_request_ledger(max_calls=2)
+                logger.info("Proposal: generating from %d sources using template builder", len(included_sources))
 
-                provider_registry = SynthesisProviderRegistry()
-                provider = provider_registry.get_primary_provider()
-                logger.info("Proposal: provider=%s, model=%s", provider.name, provider.model)
+                # Prepare evidence packet
+                packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
 
-                result = await generate_proposal(
+                # Build proposal from research data (no LLM dependency)
+                dossier_data = {
+                    "abstract": dossier.abstract if dossier else "",
+                    "themes": dossier.themes if dossier else [],
+                    "research_gaps": dossier.research_gaps if dossier else [],
+                    "opportunity_areas": dossier.opportunity_areas if dossier else [],
+                    "research_areas": dossier.research_areas if dossier else [],
+                }
+
+                draft = build_proposal_from_research(
                     topic=topic,
                     domain=payload.domain,
-                    included_sources=included_sources,
-                    provider_interface=provider,
-                    model=provider.model,
+                    dossier=dossier_data,
+                    packet=packet,
                 )
 
-                if not result.success:
-                    logger.warning("Proposal: generation failed error_code=%s message=%s", result.error_code, result.error_message)
-                    raise HTTPException(status_code=503, detail={
-                        "message": result.error_message,
-                        "error_code": result.error_code,
-                        "provider": result.provider,
-                        "retryable": True,
-                        "reference": str(uuid4()),
-                        "is_paid": entitlements.is_active(user_id),
-                    })
+                # Validate
+                validation = validate_proposal_draft(draft, packet)
+                logger.info("Proposal: draft created, validation passed=%s", validation.passed)
+
+                if not validation.passed:
+                    logger.warning("Proposal: validation failed with errors: %s", validation.errors)
+                    raise ValueError(f"Proposal validation failed: {validation.errors}")
 
                 logger.info("Proposal: draft generated, rendering DOCX")
                 with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
