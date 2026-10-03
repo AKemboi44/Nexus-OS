@@ -237,7 +237,6 @@ class ClaudeSynthesisProvider(SynthesisProvider):
             response = self.client.messages.create(
                 model=model_name,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 system=prompt_system,
                 messages=[{"role": "user", "content": prompt_user}],
             )
