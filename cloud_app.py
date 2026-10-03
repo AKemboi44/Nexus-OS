@@ -927,12 +927,13 @@ async def generate_research_report(
                 packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
 
                 # Build proposal from research data (no LLM dependency)
+                # Use empty dossier data since we're not running dossier generation
                 dossier_data = {
-                    "abstract": dossier.abstract if dossier else "",
-                    "themes": dossier.themes if dossier else [],
-                    "research_gaps": dossier.research_gaps if dossier else [],
-                    "opportunity_areas": dossier.opportunity_areas if dossier else [],
-                    "research_areas": dossier.research_areas if dossier else [],
+                    "abstract": "",
+                    "themes": [],
+                    "research_gaps": [],
+                    "opportunity_areas": [],
+                    "research_areas": [],
                 }
 
                 draft = build_proposal_from_research(
@@ -953,8 +954,7 @@ async def generate_research_report(
                 logger.info("Proposal: draft generated, rendering DOCX")
                 with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
                     doc_path = Path(tmpdir) / "proposal.docx"
-                    evidence_packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
-                    render_proposal_docx(result.draft, evidence_packet, doc_path)
+                    render_proposal_docx(draft, packet, doc_path)
 
                     document_bytes = doc_path.read_bytes()
                     logger.info("Proposal: DOCX rendered, size=%d bytes", len(document_bytes))
