@@ -901,47 +901,38 @@
             const errorDetail = (error.payload && error.payload.detail) || error.payload || {};
             const reference = errorDetail.reference || error.jobId || runRef;
             const errorCode = errorDetail.error_code || 'unknown';
-            const retryable = errorDetail.retryable !== false;
-            const retryAfter = errorDetail.retry_after_seconds;
 
-            // Build context-specific error card
-            let errorTitle = "Report generation couldn't be completed.";
-            let errorMessage = "We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.";
-            let showRetry = retryable;
+            // Build error display
+            let errorTitle = "Report could not be generated";
+            let errorMessage = "The report generation service encountered an issue. Your Excel dossier was completed successfully.";
             let statusClass = 'error';
 
-            if (errorCode === 'quota_daily' && retryAfter) {
+            if (errorCode === 'quota_daily') {
                 statusClass = 'warning';
-                const hours = Math.ceil(retryAfter / 3600);
-                errorTitle = "Synthesis service quota exhausted.";
-                errorMessage = `The report service's daily quota is exhausted. It will reset in about ${hours} hour${hours > 1 ? 's' : ''}. Your Excel dossier is safe and ready to download.`;
-                showRetry = false;
+                errorTitle = "Daily quota reached";
+                errorMessage = "The synthesis service has reached its daily limit. Please try again tomorrow.";
             } else if (errorCode === 'unavailable') {
-                errorTitle = "Synthesis service temporarily overloaded.";
-                errorMessage = "The report service is busy right now. We've saved your request and it will retry automatically. Your Excel dossier is ready now.";
-                showRetry = false;
+                statusClass = 'warning';
+                errorTitle = "Service temporarily busy";
+                errorMessage = "The report service is at capacity. Try again in a few minutes.";
             } else if (errorCode === 'auth' || errorCode === 'config') {
-                errorTitle = "Service configuration error.";
-                errorMessage = "There's a configuration issue with the report service. Please contact support.";
-                showRetry = false;
+                errorTitle = "Service error";
+                errorMessage = "A configuration issue occurred. Contact support if this persists.";
             }
 
-            const retryButton = showRetry
-                ? `<button type="button" class="button secondary small" onclick="window.NexusUI ? window.NexusUI.retryReport('${reportType}') : null">Try Again</button>`
-                : '';
-
-            const errorMessageHtml = `
-                <div style="margin: 6px 0;">
-                    <strong>${errorTitle}</strong>
-                    <p style="margin: 6px 0 4px 0;">${errorMessage}</p>
-                    <div style="font-size: 0.85em; opacity: 0.85; margin-bottom: 8px;">Reference: <code>${reference}</code></div>
-                    ${retryButton}
+            const errorHtml = `
+                <div style="padding: 12px; border-radius: 4px; background: ${statusClass === 'error' ? '#fee' : '#fef3c7'}; border-left: 4px solid ${statusClass === 'error' ? '#dc2626' : '#f59e0b'};">
+                    <div style="font-weight: 600; color: ${statusClass === 'error' ? '#991b1b' : '#92400e'}; margin-bottom: 4px;">${errorTitle}</div>
+                    <div style="color: ${statusClass === 'error' ? '#7f1d1d' : '#78350f'}; font-size: 0.95em; margin-bottom: 8px;">${errorMessage}</div>
+                    <div style="font-size: 0.85em; color: ${statusClass === 'error' ? '#991b1b' : '#92400e'}; opacity: 0.8;">
+                        <span style="font-weight: 500;">Reference ID:</span> <code style="background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 2px; font-family: monospace;">${reference}</code>
+                    </div>
                 </div>
             `;
 
             if (reportStatus) {
-                reportStatus.className = `form-message ${statusClass}${statusClass === 'warning' ? ' limit-callout' : ' is-error'}`;
-                reportStatus.innerHTML = errorMessageHtml;
+                reportStatus.className = 'form-message';
+                reportStatus.innerHTML = errorHtml;
                 reportStatus.hidden = false;
             }
         } finally {

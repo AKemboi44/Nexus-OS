@@ -907,32 +907,43 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (isReportRequest && draftStatus) {
                 const errorCode = data.error_code || (data.status_code === 403 ? 'paywall' : 'unknown');
-                const retryable = data.retryable !== false && data.status_code !== 403;
-                const retryAfter = data.retry_after_seconds;
 
-                let errorTitle = "Report generation couldn't be completed.";
-                let errorMsg = "We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.";
-                let className = 'error';
+                let errorTitle = "Report could not be generated";
+                let errorMsg = "The report generation service encountered an issue. Your Excel dossier was completed successfully.";
+                let bgColor = '#fee';
+                let borderColor = '#dc2626';
+                let textColor = '#991b1b';
+                let accentColor = '#7f1d1d';
 
-                if (errorCode === 'quota_daily' && retryAfter) {
-                    className = 'warning';
-                    const hours = Math.ceil(retryAfter / 3600);
-                    errorTitle = "Synthesis service quota exhausted.";
-                    errorMsg = `The report service's daily quota is exhausted. It will reset in about ${hours} hour${hours > 1 ? 's' : ''}. Your Excel dossier is ready.`;
+                if (errorCode === 'quota_daily') {
+                    errorTitle = "Daily quota reached";
+                    errorMsg = "The synthesis service has reached its daily limit. Please try again tomorrow.";
+                    bgColor = '#fef3c7';
+                    borderColor = '#f59e0b';
+                    textColor = '#92400e';
+                    accentColor = '#78350f';
                 } else if (errorCode === 'unavailable') {
-                    errorTitle = "Synthesis service temporarily overloaded.";
-                    errorMsg = "The report service is busy. We've saved your request and it will retry automatically. Your Excel dossier is ready.";
+                    errorTitle = "Service temporarily busy";
+                    errorMsg = "The report service is at capacity. Try again in a few minutes.";
+                    bgColor = '#fef3c7';
+                    borderColor = '#f59e0b';
+                    textColor = '#92400e';
+                    accentColor = '#78350f';
                 } else if (errorCode === 'paywall') {
-                    errorTitle = "Premium report type.";
-                    errorMsg = "Complete Literature Review is available to paid users. Upgrade to access this report type.";
+                    errorTitle = "Premium feature";
+                    errorMsg = "Complete Literature Review is available to paid users. Upgrade to access.";
+                    bgColor = '#dbeafe';
+                    borderColor = '#3b82f6';
+                    textColor = '#1e3a8a';
+                    accentColor = '#1e40af';
                 }
 
-                draftStatus.className = className;
+                draftStatus.className = 'error';
                 draftStatus.innerHTML = `
-                    <div>
-                        <strong>${errorTitle}</strong>
-                        <div style="margin: 4px 0;">${errorMsg}</div>
-                        <div style="font-size: 0.85em; opacity: 0.85;">Reference: <code>${referenceId}</code></div>
+                    <div style="padding: 10px; border-radius: 3px; background: ${bgColor}; border-left: 4px solid ${borderColor};">
+                        <div style="font-weight: 600; color: ${textColor}; margin-bottom: 4px;">${errorTitle}</div>
+                        <div style="color: ${accentColor}; font-size: 0.9em; margin-bottom: 8px;">${errorMsg}</div>
+                        <div style="font-size: 0.8em; color: ${accentColor};">Ref: <code style="background: rgba(0,0,0,0.1); padding: 1px 3px; border-radius: 2px;">${referenceId}</code></div>
                     </div>
                 `;
                 draftStatus.style.display = 'block';
@@ -948,10 +959,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (activeReportButton) activeReportButton.disabled = false;
             if (cancelScanBtn) cancelScanBtn.style.display = 'none';
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
-            if (retryReportBtn && isReportRequest) {
-                const errorCode = data.error_code || (data.status_code === 403 ? 'paywall' : 'unknown');
-                const retryable = data.retryable !== false && data.status_code !== 403;
-                retryReportBtn.style.display = retryable ? 'block' : 'none';
+            if (retryReportBtn) {
+                retryReportBtn.style.display = 'none';
             }
             if (cancelReportBtn) cancelReportBtn.style.display = 'none';
             if (sProgContainer) sProgContainer.style.display = 'none';
