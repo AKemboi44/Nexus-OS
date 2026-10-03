@@ -151,17 +151,25 @@ class GeminiSynthesisProvider(SynthesisProvider):
 
         model_name = model or self.model
         try:
-            # Build JSON mode request
+            # Request JSON-only output from Gemini
             response = self.client.models.generate_content(
                 model=model_name,
-                contents=f"{prompt_system}\n\n{prompt_user}",
+                contents=f"{prompt_system}\n\nRespond ONLY with valid JSON, no markdown or extra text:\n\n{prompt_user}",
                 config={
-                    "temperature": temperature,
                     "max_output_tokens": max_tokens,
                     "response_mime_type": "application/json",
                 }
             )
+
             content = getattr(response, "text", "") or ""
+            if not content or content.strip() == "":
+                logger.warning("Gemini returned empty response for JSON request")
+                raise SynthesisProviderError(
+                    "Gemini returned empty response",
+                    provider=self.name,
+                    error_type="empty_response"
+                )
+
             return {
                 "content": content,
                 "provider": self.name,
