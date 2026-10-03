@@ -38,6 +38,7 @@ from app.reports.proposal_validation import validate_proposal_draft
 from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.evidence_preparation import prepare_proposal_evidence
 from app.reports.metadata_extractor import extract_research_metadata
+from app.reports.proposal_synthesis import ProposalSynthesizer
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
 from contextlib import asynccontextmanager
 
@@ -939,11 +940,24 @@ async def generate_research_report(
 
                 # Validate
                 validation = validate_proposal_draft(draft, packet)
-                logger.info("Proposal: draft created, validation passed=%s", validation.passed)
+                logger.info("Proposal: draft created, validation passed=%s, word_count=%d",
+                           validation.passed, validation.word_count)
 
                 if not validation.passed:
                     logger.warning("Proposal: validation failed with errors: %s", validation.errors)
                     raise ValueError(f"Proposal validation failed: {validation.errors}")
+
+                # Optional: Enhance proposal with Claude if API key available
+                # Graceful degradation - if Claude unavailable, uses template-only draft
+                if os.getenv("ANTHROPIC_API_KEY"):
+                    try:
+                        logger.info("Proposal: attempting Claude enhancement")
+                        synthesizer = ProposalSynthesizer()
+                        draft = synthesizer.enhance_proposal(draft, topic)
+                        logger.info("Proposal: Claude enhancement complete")
+                    except Exception as e:
+                        logger.warning("Proposal: Claude enhancement failed (%s), using template draft", str(e))
+                        # Continue with original template draft
 
                 logger.info("Proposal: draft generated, rendering DOCX")
                 with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
