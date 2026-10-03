@@ -107,12 +107,15 @@ def validate_proposal_draft(
 
 
 SYNTHESIZED_MIN_WORDS = 1000
+SYNTHESIZED_MAX_WORDS = 3500
 VERBATIM_RUN_WORDS = 8
 
 
 def validate_synthesized_draft(draft: ProposalDraftV2, packet: EvidencePacket) -> ValidationResult:
     """Stricter gate for model-written drafts: grounded, integrative, and not copied from sources."""
-    base = validate_proposal_draft(draft, packet, min_words=SYNTHESIZED_MIN_WORDS)
+    base = validate_proposal_draft(
+        draft, packet, min_words=SYNTHESIZED_MIN_WORDS, max_words=SYNTHESIZED_MAX_WORDS
+    )
     errors = list(base.errors)
 
     blocks = _all_blocks(draft)

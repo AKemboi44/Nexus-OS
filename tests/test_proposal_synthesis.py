@@ -28,6 +28,29 @@ def test_valid_synthesis_is_used_with_a_single_provider_call(fake_provider, synt
     assert "Zimmerman et al., 2024" in text and "Baker & Lee, 2023" in text
 
 
+def _with_extra_overview_paragraphs(draft_json, count):
+    draft = json.loads(draft_json)
+    draft["overview"].extend(draft["overview"][0] for _ in range(count))
+    return json.dumps(draft)
+
+
+def test_overlong_but_valid_draft_is_kept(fake_provider, synthesized_draft_json):
+    # The model returned 2,802 words in production; that must not discard a good synthesis.
+    provider = fake_provider(content=_with_extra_overview_paragraphs(synthesized_draft_json(), 8))
+    document = _generate(provider)
+
+    assert document.generation_mode == AI_SYNTHESIZED
+    assert 2000 < document.word_count < 3500
+
+
+def test_runaway_length_still_falls_back(fake_provider, synthesized_draft_json):
+    provider = fake_provider(content=_with_extra_overview_paragraphs(synthesized_draft_json(), 20))
+    document = _generate(provider)
+
+    assert document.generation_mode == TEMPLATE_FALLBACK
+    assert document.synthesis_failure == "quality_gate"
+
+
 def test_fenced_json_from_the_model_is_accepted(fake_provider, synthesized_draft_json):
     provider = fake_provider(content=f"Here is the proposal:\n```json\n{synthesized_draft_json()}\n```")
     assert _generate(provider).generation_mode == AI_SYNTHESIZED
