@@ -56,12 +56,12 @@ def render_proposal_docx(
     doc.add_heading("Research Questions", level=1)
     for question in draft.research_questions:
         label = f"{question.question_id}: " if question.question_id else ""
-        _add_body(doc, packet, f"{label}{question.text}", question.evidence_ids, indent=False)
+        _add_body(doc, packet, f"{label}{question.text}", question.evidence_ids)
 
     doc.add_heading("Research Objectives", level=1)
     for number, objective in enumerate(draft.research_objectives, start=1):
         linked = f" (addresses {', '.join(objective.question_ids)})" if objective.question_ids else ""
-        _add_body(doc, packet, f"Objective {number}{linked}: {objective.text}", objective.evidence_ids, indent=False)
+        _add_body(doc, packet, f"Objective {number}{linked}: {objective.text}", objective.evidence_ids)
 
     doc.add_heading("Methodology", level=1)
     methodology_parts = (
@@ -130,10 +130,10 @@ def _format(paragraph, alignment, first_line_indent=Inches(0)) -> None:
     paragraph_format.first_line_indent = first_line_indent
 
 
-def _add_body(doc, packet: EvidencePacket, text: str, evidence_ids: List[str], indent: bool = True) -> None:
+def _add_body(doc, packet: EvidencePacket, text: str, evidence_ids: List[str]) -> None:
     sources = [packet.source_dicts[source_id] for source_id in evidence_ids if source_id in packet.source_dicts]
     paragraph = doc.add_paragraph(append_citation(text, sources))
-    _format(paragraph, WD_ALIGN_PARAGRAPH.JUSTIFY, Inches(0.5) if indent else Inches(0))
+    _format(paragraph, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
 
 def _add_references(doc, draft: ProposalDraftV2, packet: EvidencePacket) -> None:

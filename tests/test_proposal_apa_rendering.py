@@ -55,6 +55,7 @@ def test_body_paragraphs_are_justified_and_free_of_markdown_or_brackets():
     prose = [p for p in body if p.style.name == "Normal" and p.text.strip()][1:]  # skip title
     assert len(prose) > 8
     assert all(p.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY for p in prose)
+    assert all(not p.paragraph_format.first_line_indent for p in prose), "paragraphs start flush left"
     full_text = "\n".join(p.text for p in doc.paragraphs)
     assert "[" not in full_text and "]" not in full_text
     assert "*" not in full_text
