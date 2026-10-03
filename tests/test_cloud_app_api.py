@@ -445,6 +445,66 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
     assert "editorial service unavailable" in caplog.text
 
 
+def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch):
+    import io
+    import zipfile
+    from urllib.parse import urlparse, parse_qs
+
+    from docx import Document
+
+    class Database:
+        def __init__(self):
+            self.objects = {}
+
+        def download_storage_object(self, bucket, path):
+            if path not in self.objects:
+                raise cloud_app.SupabaseRequestError(404, "not found")
+            return self.objects[path]
+
+        def upload_storage_object(self, bucket, path, content, content_type):
+            self.objects[path] = content
+            self.content_type = content_type
+
+    database = Database()
+    monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
+    monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
+    monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
+    monkeypatch.setattr(cloud_app, "record_backend_analytics", lambda *args, **kwargs: None)
+
+    result = asyncio.run(cloud_app.generate_research_report(
+        cloud_app.ReportRequest(
+            topic="AI evaluation frameworks",
+            included_sources=[{
+                "title": "Evidence",
+                "authors": ["Author, A."],
+                "year": 2024,
+                "venue": "Journal of Evidence",
+                "abstract": "Scalability remains a limitation. A novel approach is proposed.",
+            }],
+        ),
+        authorization="Bearer token",
+    ))
+
+    assert result["status"] == "ready"
+    assert database.content_type == cloud_app.DOCX_CONTENT_TYPE
+
+    inline = base64.b64decode(result["document_base64"])
+    assert zipfile.ZipFile(io.BytesIO(inline)).testzip() is None
+    assert Document(io.BytesIO(inline)).paragraphs
+
+    parsed = urlparse(result["download_url"])
+    assert parsed.path.endswith("/download"), "browser would save JSON metadata as .docx"
+    cache_id = parsed.path.split("/")[-2]
+    response = asyncio.run(cloud_app.download_cached_research_report_file(
+        cache_id=cache_id,
+        report_type=parse_qs(parsed.query)["report_type"][0],
+        authorization="Bearer token",
+    ))
+    assert response.media_type == cloud_app.DOCX_CONTENT_TYPE
+    assert response.body == inline
+    assert Document(io.BytesIO(response.body)).paragraphs
+
+
 def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
     class Database:
         def download_storage_object(self, bucket, path):

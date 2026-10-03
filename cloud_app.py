@@ -360,7 +360,7 @@ def cached_report_response(
         "degraded": False,
         "document_name": Path(cache_key).name,
         "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-        "download_url": f"/v1/reports/cache/{cache_id}?report_type={report_type}",
+        "download_url": f"/v1/reports/cache/{cache_id}/download?report_type={report_type}",
         "report_id": cache_id,
         "report_type": report_type,
         "cache_hit": True,
@@ -953,9 +953,12 @@ async def generate_research_report(
                     "degraded": False,
                     "document_name": "proposal.docx",
                     "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-                    "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
+                    "download_url": f"/v1/reports/cache/{cache_id_val}/download?report_type={payload.report_type}",
                     "report_id": cache_id_val,
+                    "report_type": payload.report_type,
+                    "cache_hit": False,
                     "report_cache_id": cache_id_val,
+                    "report_cache_version": REPORT_CACHE_VERSION,
                 }
 
                 record_backend_analytics(
@@ -1056,7 +1059,7 @@ async def generate_research_report(
                     "degraded": False,
                     "document_name": report_path.name,
                     "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-                    "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
+                    "download_url": f"/v1/reports/cache/{cache_id_val}/download?report_type={payload.report_type}",
                     "report_id": cache_id_val,
                     "report_type": payload.report_type,
                     "quality_report": jsonable_encoder(dossier.quality_report),
