@@ -77,15 +77,32 @@ def test_each_fallback_reports_its_specific_reason(fake_provider, synthesized_dr
         assert document.synthesis_note
 
 
-def test_draft_that_copies_source_wording_is_rejected(fake_provider, synthesized_draft_json):
-    copied = json.loads(synthesized_draft_json())
+def _copied_draft_json(draft_json):
+    copied = json.loads(draft_json)
     copied["overview"][0]["text"] += " " + SOURCES[0]["abstract"]
-    provider = fake_provider(content=json.dumps(copied))
+    return json.dumps(copied)
+
+
+def test_draft_that_keeps_copying_source_wording_falls_back_after_one_repair(fake_provider, synthesized_draft_json):
+    provider = fake_provider(content=_copied_draft_json(synthesized_draft_json()))
     document = _generate(provider)
 
     assert document.generation_mode == TEMPLATE_FALLBACK
+    assert document.synthesis_failure == "quality_gate"
     assert document.synthesis_note
-    assert provider.calls == 1, "no retry: the budget is one call"
+    assert provider.calls == 2, "one repair attempt, then the template"
+
+
+def test_copied_draft_is_repaired_once_with_specific_feedback(fake_provider, synthesized_draft_json):
+    clean = synthesized_draft_json()
+    provider = fake_provider(content=[_copied_draft_json(clean), clean])
+    document = _generate(provider)
+
+    assert document.generation_mode == AI_SYNTHESIZED
+    assert provider.calls == 2
+    assert "previous draft was rejected" not in provider.prompts[0]
+    assert "previous draft was rejected" in provider.prompts[1]
+    assert "reproduces 8+ consecutive words" in provider.prompts[1]
 
 
 def test_provider_error_falls_back_without_retrying(fake_provider):
@@ -94,8 +111,10 @@ def test_provider_error_falls_back_without_retrying(fake_provider):
     assert provider.calls == 1
 
 
-def test_unparsable_output_falls_back(fake_provider):
-    assert _generate(fake_provider(content="Sorry, I cannot do that.")).generation_mode == TEMPLATE_FALLBACK
+def test_unparsable_output_falls_back_without_retrying(fake_provider):
+    provider = fake_provider(content="Sorry, I cannot do that.")
+    assert _generate(provider).generation_mode == TEMPLATE_FALLBACK
+    assert provider.calls == 1
 
 
 def test_unknown_source_id_falls_back(fake_provider, synthesized_draft_json):

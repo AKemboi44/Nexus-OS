@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from typing import List, Optional
 
 from app.reports.evidence_preparation import EvidencePacket
 from app.reports.proposal_schema import ProposalDraftV2, proposal_json_schema
@@ -19,7 +20,9 @@ SYSTEM_PROMPT = (
     "their findings, show where they agree or diverge, and explain how they bear on the topic. "
     "At least three paragraphs must draw on two or more sources.\n\n"
     "ORIGINALITY: Never reproduce sentences or distinctive phrases from the supplied titles or "
-    "abstracts. Paraphrase and combine ideas instead.\n\n"
+    "abstracts. Paraphrase and combine ideas instead. This includes definitions: do not open with, or "
+    "reuse, a source's definition of a key term; define concepts in new words. No run of eight or more "
+    "consecutive words may match any title or abstract.\n\n"
     "CITATIONS: Cite only by listing source IDs (for example \"S1\") in each paragraph's "
     "evidence_ids field. Do not write author names, years, brackets, citations or markdown inside "
     "the text. Every paragraph of kind \"evidence\" needs at least one evidence_id.\n\n"
@@ -32,7 +35,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_user_prompt(packet: EvidencePacket, topic: str, domain: str) -> str:
+def build_user_prompt(packet: EvidencePacket, topic: str, domain: str, feedback: Optional[List[str]] = None) -> str:
     lines = [f"Research topic: {topic}", f"Research domain: {domain}", "", f"Sources ({len(packet.sources)}):"]
     for source in packet.sources:
         lines.append(
@@ -48,12 +51,19 @@ def build_user_prompt(packet: EvidencePacket, topic: str, domain: str) -> str:
             f"\nNote: {len(packet.omitted_source_ids)} further sources were available but are not "
             "included; base the proposal only on the sources above."
         )
+    if feedback:
+        lines.append(
+            "\nYour previous draft was rejected for these reasons. Write the whole proposal again and fix "
+            "them, paraphrasing in new words wherever text matched a source:\n- " + "\n- ".join(feedback)
+        )
     lines.append(f"\nJSON schema:\n{json.dumps(proposal_json_schema())}")
     return "\n".join(lines)
 
 
-def synthesize_proposal(packet: EvidencePacket, topic: str, domain: str, provider) -> ProposalDraftV2:
-    """Make exactly one provider call and parse the result; callers validate and fall back."""
+def synthesize_proposal(
+    packet: EvidencePacket, topic: str, domain: str, provider, feedback: Optional[List[str]] = None
+) -> ProposalDraftV2:
+    """Make one provider call and parse the result; callers validate, retry once, and fall back."""
     if not provider.is_configured():
         raise SynthesisUnavailableError(
             "Proposal synthesis provider is not configured", provider=getattr(provider, "name", "unknown")
@@ -61,7 +71,7 @@ def synthesize_proposal(packet: EvidencePacket, topic: str, domain: str, provide
 
     result = asyncio.run(
         provider.generate_structured_once(
-            prompt_user=build_user_prompt(packet, topic, domain),
+            prompt_user=build_user_prompt(packet, topic, domain, feedback),
             prompt_system=SYSTEM_PROMPT,
             schema=proposal_json_schema(),
             max_tokens=MAX_OUTPUT_TOKENS,

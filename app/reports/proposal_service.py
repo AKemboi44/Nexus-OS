@@ -18,6 +18,7 @@ from app.synthesis.providers import SynthesisUnavailableError
 
 logger = logging.getLogger(__name__)
 
+MAX_SYNTHESIS_ATTEMPTS = 2
 AI_SYNTHESIZED = "ai_synthesized"
 TEMPLATE_FALLBACK = "template_fallback"
 _TEMPLATE_SUFFIX = "so a structured template draft was produced from the source metadata instead."
@@ -71,7 +72,8 @@ def generate_proposal_docx(
     """
     Generate an APA-styled proposal and render it to DOCX.
 
-    Makes at most one model call. Any synthesis failure (not configured, provider error,
+    Makes at most two model calls (the second only to repair a draft that failed the quality
+    gate). Any synthesis failure (not configured, provider error,
     unparsable output, failed quality gate) falls back to the deterministic template so a
     download is always produced; `generation_mode` says which path was used.
 
@@ -131,18 +133,28 @@ def _failure_reason(error: Exception) -> str:
 
 
 def _synthesized_draft(packet: EvidencePacket, topic: str, domain: str, provider):
-    """Return (draft, word_count, mode, failure_reason); draft is None when synthesis is unusable."""
-    try:
-        draft = synthesize_proposal(packet, topic, domain, provider or _default_provider())
-        validation = validate_synthesized_draft(draft, packet)
-        if not validation.passed:
-            raise ProposalValidationError(validation.errors)
-        return draft, validation.word_count, AI_SYNTHESIZED, None
-    except Exception as error:
-        reason = _failure_reason(error)
-        logger.warning("ProposalService: synthesis failed, using template (reason=%s, %s: %s)",
-                       reason, type(error).__name__, error)
-        return None, 0, None, reason
+    """Return (draft, word_count, mode, failure_reason); draft is None when synthesis is unusable.
+
+    A draft that fails the quality gate gets one repair attempt with the specific problems
+    fed back; provider errors and a missing key are not retried.
+    """
+    provider = provider or _default_provider()
+    feedback: Optional[List[str]] = None
+    for attempt in range(1, MAX_SYNTHESIS_ATTEMPTS + 1):
+        try:
+            draft = synthesize_proposal(packet, topic, domain, provider, feedback)
+            validation = validate_synthesized_draft(draft, packet)
+            if not validation.passed:
+                raise ProposalValidationError(validation.errors)
+            return draft, validation.word_count, AI_SYNTHESIZED, None
+        except Exception as error:
+            reason = _failure_reason(error)
+            logger.warning("ProposalService: synthesis attempt %d/%d failed (reason=%s, %s: %s)",
+                           attempt, MAX_SYNTHESIS_ATTEMPTS, reason, type(error).__name__, error)
+            if reason != "quality_gate" or attempt == MAX_SYNTHESIS_ATTEMPTS:
+                return None, 0, None, reason
+            feedback = error.errors
+    return None, 0, None, "quality_gate"
 
 
 def _template_draft(packet: EvidencePacket, topic: str, domain: str, included_sources: List[Dict[str, Any]]):

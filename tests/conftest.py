@@ -15,18 +15,24 @@ class FakeProvider:
     name = "fake"
 
     def __init__(self, content=None, error=None):
+        # `content` may be a list of responses served in order (the last one repeats).
         self.content = content
         self.error = error
         self.calls = 0
+        self.prompts = []
 
     def is_configured(self):
         return True
 
     async def generate_structured_once(self, **kwargs):
         self.calls += 1
+        self.prompts.append(kwargs.get("prompt_user", ""))
         if self.error:
             raise self.error
-        return {"content": self.content, "provider": "fake", "model": "fake-model",
+        content = self.content
+        if isinstance(content, list):
+            content = content[min(self.calls, len(content)) - 1]
+        return {"content": content, "provider": "fake", "model": "fake-model",
                 "input_tokens": 1, "output_tokens": 1}
 
 
