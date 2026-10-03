@@ -85,7 +85,7 @@ def _build_overview(topic: str, abstract: str, packet: EvidencePacket) -> List[P
 
 
 def _build_literature_insights(themes: List[str], packet: EvidencePacket) -> List[ThemeBlock]:
-    """Build literature insights with coherent theme analysis."""
+    """Build literature insights with coherent theme analysis and relevance."""
     blocks = []
 
     for theme in themes[:5]:
@@ -96,7 +96,14 @@ def _build_literature_insights(themes: List[str], packet: EvidencePacket) -> Lis
             "attention across diverse contexts and methodologies demonstrates that this theme remains central to current "
             f"research endeavors and carries substantial implications for both future investigations and real-world application. "
             "The convergence of scholarly inquiry around this thematic area strongly suggests its foundational relevance "
-            "to the proposed research direction and its potential to generate meaningful insights."
+            "to the proposed research direction and its potential to generate meaningful insights. "
+        )
+
+        # Add how this theme connects to the research
+        text += (
+            "This theme directly informs the research questions and objectives proposed herein, providing both theoretical "
+            "grounding and empirical justification for the investigation. Understanding how this theme manifests, evolves, and "
+            "influences outcomes is integral to addressing the identified research gaps and advancing knowledge in this domain."
         )
 
         block = ParagraphBlock(
@@ -180,6 +187,13 @@ def _build_research_problem(topic: str, opportunities: List[str], packet: Eviden
             "generate novel insights, and contribute meaningfully to both scholarly and practical domains. "
         )
 
+    # Add stakeholder implications
+    text += (
+        "The resolution of this research problem holds implications not only for advancing theoretical understanding "
+        "but also for stakeholders who engage with this domain in practice. The research is positioned to provide "
+        "evidence-based guidance that will inform practice decisions and shape future research directions. "
+    )
+
     text += (
         "Systematic investigation of this research problem will generate evidence-based insights that advance scholarly "
         "knowledge, inform practice, and establish direction for future work. The research is explicitly designed to "
@@ -221,26 +235,33 @@ def _build_research_questions(topic: str, gaps: List[str], opportunities: List[s
 
 
 def _build_research_objectives(questions: List[ResearchQuestion]) -> List[ResearchObjective]:
-    """Build specific, measurable research objectives."""
+    """Build specific, measurable research objectives with success metrics."""
     objectives = []
 
     if questions:
         objectives.append(ResearchObjective(
-            text="To systematically investigate the primary research question through rigorous, evidence-based inquiry employing sound methodology and careful attention to research quality and validity.",
+            text="To systematically investigate the primary research question through rigorous, evidence-based inquiry employing sound methodology and careful attention to research quality and validity. Success will be measured by the comprehensiveness of the investigation and the rigor of conclusions drawn.",
             question_ids=["RQ1"]
         ))
 
         for q in questions[1:]:
             objectives.append(ResearchObjective(
-                text=f"To explore and elucidate the factors and mechanisms central to {q.question_id}, generating evidence-based insights through targeted investigation.",
+                text=f"To explore and elucidate the factors and mechanisms central to {q.question_id}, generating evidence-based insights through targeted investigation with clear success metrics and measurable indicators of progress.",
                 question_ids=[q.question_id]
+            ))
+
+        # Add timeline/phase objective
+        if len(questions) > 1:
+            objectives.append(ResearchObjective(
+                text="To establish clear milestones and phases for the research, with periodic evaluation of progress against stated objectives and adaptation where necessary to ensure meaningful outcomes.",
+                question_ids=["RQ1"]
             ))
 
     return objectives
 
 
 def _build_methodology(domain: str, areas: List[str]) -> MethodologySection:
-    """Build domain-appropriate methodology with specific approaches."""
+    """Build domain-appropriate methodology with comprehensive procedures."""
 
     design_templates = {
         "scholarly": "A mixed-methods approach integrating systematic literature review with empirical analysis will provide both breadth and depth of understanding necessary to comprehensively address the research questions. This methodological design leverages complementary strengths of qualitative and quantitative approaches.",
@@ -263,6 +284,14 @@ def _build_methodology(domain: str, areas: List[str]) -> MethodologySection:
         "social": "Thematic analysis will employ systematic coding and constant comparison across interview transcripts. This iterative process generates emergent themes and develops theoretical insights grounded in qualitative data."
     }
 
+    # Add quality assurance section
+    qa_text = (
+        "Quality assurance procedures will include regular validation checks, inter-rater reliability assessments where applicable, "
+        "and peer review of analytic decisions. Data management protocols will ensure accuracy, security, and traceability throughout "
+        "the research process. The research timeline will be structured in phases with clear milestones, anticipated deliverables at "
+        "each phase, and provisions for adaptive methodology where evidence warrants adjustment to approach."
+    )
+
     research_domain = domain.lower() if domain else "scholarly"
     if research_domain not in design_templates:
         research_domain = "scholarly"
@@ -272,7 +301,7 @@ def _build_methodology(domain: str, areas: List[str]) -> MethodologySection:
         data_collection=[ParagraphBlock(text=collection_templates[research_domain], kind="proposal")],
         analysis=[ParagraphBlock(text=analysis_templates[research_domain], kind="proposal")],
         limitations=[ParagraphBlock(
-            text="This research acknowledges inherent limitations in scope, temporal constraints, and generalizability. Findings should be interpreted with careful attention to these constraints and consideration of contextual factors that may influence applicability.",
+            text=f"Quality assurance and data management: {qa_text}",
             kind="limitation"
         )],
     )

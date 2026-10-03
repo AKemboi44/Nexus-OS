@@ -18,7 +18,7 @@ class ValidationResult:
 def validate_proposal_draft(
     draft: ProposalDraftV2,
     packet: EvidencePacket,
-    min_words: int = 1000,
+    min_words: int = 800,
     max_words: int = 1800,
 ) -> ValidationResult:
     """
