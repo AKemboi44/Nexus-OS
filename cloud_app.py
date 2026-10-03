@@ -33,7 +33,8 @@ from app.synthesis.providers import SynthesisProviderError, DegradationLogger, S
 from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
-from app.reports.proposal_service import generate_proposal_docx, ProposalValidationError
+from app.reports.proposal_service import AI_SYNTHESIZED, generate_proposal_docx, ProposalValidationError
+from fastapi.concurrency import run_in_threadpool
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
 from contextlib import asynccontextmanager
 
@@ -922,44 +923,50 @@ async def generate_research_report(
                 logger.info("Proposal: generating from %d sources (reference=%s)",
                            len(included_sources), reference_id)
 
-                # Generate proposal document using service
-                doc = generate_proposal_docx(
-                    topic=topic,
-                    domain=payload.domain,
-                    included_sources=included_sources,
+                # Blocking model call and DOCX rendering: keep them off the event loop
+                doc = await run_in_threadpool(
+                    generate_proposal_docx,
+                    topic,
+                    payload.domain,
+                    included_sources,
                 )
 
                 document_bytes = doc.document_bytes
                 word_count = doc.word_count
+                synthesized = doc.generation_mode == AI_SYNTHESIZED
 
-                logger.info("Proposal: generated successfully (%d words, %d bytes)",
-                           word_count, len(document_bytes))
+                logger.info("Proposal: generated (mode=%s, %d words, %d bytes)",
+                           doc.generation_mode, word_count, len(document_bytes))
 
-                # Upload to cache (required for download availability)
-                database.upload_storage_object(
-                    DOSSIER_STORAGE_BUCKET,
-                    cache_key,
-                    document_bytes,
-                    DOCX_CONTENT_TYPE,
-                )
-                logger.info("Proposal: cached to storage")
-
-                # Return success response
-                cache_id_val = report_cache_id(cache_key)
                 response = {
                     "status": "ready",
                     "action": "docx_generation_complete",
-                    "generation_mode": "template",
-                    "degraded": False,
-                    "document_name": "proposal.docx",
+                    "generation_mode": doc.generation_mode,
+                    "degraded": not synthesized,
+                    "document_name": doc.document_name,
                     "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-                    "download_url": f"/v1/reports/cache/{cache_id_val}/download?report_type={payload.report_type}",
-                    "report_id": cache_id_val,
                     "report_type": payload.report_type,
                     "cache_hit": False,
-                    "report_cache_id": cache_id_val,
-                    "report_cache_version": REPORT_CACHE_VERSION,
                 }
+                if doc.synthesis_note:
+                    response["synthesis_note"] = doc.synthesis_note
+
+                # Only AI-synthesized documents are cached. A fallback is returned inline so the
+                # next request retries synthesis instead of replaying the weaker document.
+                if synthesized:
+                    database.upload_storage_object(
+                        DOSSIER_STORAGE_BUCKET,
+                        cache_key,
+                        document_bytes,
+                        DOCX_CONTENT_TYPE,
+                    )
+                    cache_id_val = report_cache_id(cache_key)
+                    response.update({
+                        "download_url": f"/v1/reports/cache/{cache_id_val}/download?report_type={payload.report_type}",
+                        "report_id": cache_id_val,
+                        "report_cache_id": cache_id_val,
+                        "report_cache_version": REPORT_CACHE_VERSION,
+                    })
 
                 record_backend_analytics(
                     "report_completed",
@@ -970,6 +977,7 @@ async def generate_research_report(
                         "cache_hit": False,
                         "included_source_count": len(included_sources),
                         "word_count": word_count,
+                        "outcome_category": doc.generation_mode,
                     },
                 )
                 logger.info("Proposal: completed successfully (reference=%s)", reference_id)

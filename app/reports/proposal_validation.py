@@ -1,5 +1,6 @@
 """Deterministic validation for proposal v2 drafts."""
 
+import re
 from dataclasses import dataclass
 from typing import List, Set, Optional
 from app.reports.proposal_schema import ProposalDraftV2
@@ -103,6 +104,86 @@ def validate_proposal_draft(
         warnings=warnings,
         word_count=word_count,
     )
+
+
+SYNTHESIZED_MIN_WORDS = 1000
+VERBATIM_RUN_WORDS = 8
+
+
+def validate_synthesized_draft(draft: ProposalDraftV2, packet: EvidencePacket) -> ValidationResult:
+    """Stricter gate for model-written drafts: grounded, integrative, and not copied from sources."""
+    base = validate_proposal_draft(draft, packet, min_words=SYNTHESIZED_MIN_WORDS)
+    errors = list(base.errors)
+
+    blocks = _all_blocks(draft)
+    uncited = [block for block in blocks if block.kind == "evidence" and not block.evidence_ids]
+    if uncited:
+        errors.append(f"{len(uncited)} evidence paragraph(s) have no source citation")
+
+    integrative = [block for block in blocks if len(set(block.evidence_ids)) >= 2]
+    if len(packet.sent_source_ids) >= 2 and len(integrative) < 2:
+        errors.append("Fewer than 2 paragraphs integrate multiple sources")
+
+    source_runs = _source_word_runs(packet)
+    for text in _all_texts(draft):
+        if _word_runs(text) & source_runs:
+            errors.append(f"Text reproduces {VERBATIM_RUN_WORDS}+ consecutive words from a source: {text[:60]!r}")
+            break
+
+    if any("[" in text or "]" in text for text in _all_texts(draft)):
+        errors.append("Square brackets found in synthesized text")
+
+    return ValidationResult(
+        passed=not errors,
+        errors=errors,
+        warnings=base.warnings,
+        word_count=base.word_count,
+    )
+
+
+def _all_blocks(draft: ProposalDraftV2) -> list:
+    blocks = [
+        *draft.overview,
+        *draft.contradictions_and_limitations,
+        *draft.research_gap,
+        *draft.research_problem,
+        *draft.methodology.research_design,
+        *draft.methodology.data_collection,
+        *draft.methodology.analysis,
+        *draft.methodology.limitations,
+        *draft.conclusion,
+        *draft.evidence_limitations,
+    ]
+    for theme in draft.literature_insights:
+        blocks.extend(theme.blocks)
+    return blocks
+
+
+def _all_texts(draft: ProposalDraftV2) -> List[str]:
+    return [
+        *(block.text for block in _all_blocks(draft)),
+        *(question.text for question in draft.research_questions),
+        *(objective.text for objective in draft.research_objectives),
+    ]
+
+
+def _word_runs(text: str) -> Set[tuple]:
+    words = re.findall(r"[a-z0-9']+", str(text).lower())
+    return {
+        tuple(words[index:index + VERBATIM_RUN_WORDS])
+        for index in range(len(words) - VERBATIM_RUN_WORDS + 1)
+    }
+
+
+def _source_word_runs(packet: EvidencePacket) -> Set[tuple]:
+    runs: Set[tuple] = set()
+    for record in packet.sources:
+        original = packet.source_dicts.get(record.source_id, {})
+        for text in (record.title, record.abstract, original.get("abstract"), original.get("title")):
+            if isinstance(text, list):
+                text = " ".join(str(part) for part in text)
+            runs |= _word_runs(text or "")
+    return runs
 
 
 def _collect_cited_ids(draft: ProposalDraftV2) -> Set[str]:

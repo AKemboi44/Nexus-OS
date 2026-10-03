@@ -4,6 +4,8 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional
 import hashlib
 
+ABSTRACT_CHAR_LIMIT = 700
+
 
 @dataclass
 class SourceRecord:
@@ -29,6 +31,7 @@ class EvidencePacket:
     omitted_source_ids: List[str] = field(default_factory=list)
     truncation_notes: List[str] = field(default_factory=list)
     content_hash: str = field(default="")
+    source_dicts: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # src_id -> original source
 
     def compute_hash(self) -> str:
         """Compute deterministic hash for caching."""
@@ -111,11 +114,11 @@ def prepare_proposal_evidence(
             abstract = str(abstract_raw)
         abstract = abstract.strip()
         original_length = len(abstract)
-        if len(abstract) > 150:
+        if len(abstract) > ABSTRACT_CHAR_LIMIT:
             # Find sentence boundary
-            truncated = abstract[:150]
+            truncated = abstract[:ABSTRACT_CHAR_LIMIT]
             last_period = truncated.rfind(".")
-            if last_period > 100:
+            if last_period > ABSTRACT_CHAR_LIMIT * 2 // 3:
                 abstract = truncated[: last_period + 1]
             else:
                 abstract = truncated
@@ -135,14 +138,11 @@ def prepare_proposal_evidence(
             relevance=source.get("relevance", "unknown"),
         )
         source_records.append(record)
+        packet.source_dicts[source_id] = source
 
     packet.sources = source_records
     packet.sent_source_ids = [s.source_id for s in source_records]
-    packet.omitted_source_ids = (
-        [f"S{i}" for i in range(len(sources) + 1, len(sources) + 100)]
-        if len(sources) > max_sources
-        else []
-    )
+    packet.omitted_source_ids = [f"S{i}" for i in range(max_sources + 1, len(sources) + 1)]
     packet.compute_hash()
 
     return packet

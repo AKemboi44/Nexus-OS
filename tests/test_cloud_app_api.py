@@ -445,12 +445,8 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
     assert "editorial service unavailable" in caplog.text
 
 
-def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch):
-    import io
-    import zipfile
-    from urllib.parse import urlparse, parse_qs
-
-    from docx import Document
+def _proposal_endpoint_setup(monkeypatch, provider):
+    from tests.test_proposal_apa_rendering import SOURCES
 
     class Database:
         def __init__(self):
@@ -470,22 +466,52 @@ def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app, "record_backend_analytics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.reports.proposal_service._default_provider", lambda: provider)
+    request = cloud_app.ReportRequest(
+        topic="Ethical AI: Evaluation/Frameworks for Resume Screening",
+        included_sources=[dict(source) for source in SOURCES],
+    )
+    return database, request
 
-    result = asyncio.run(cloud_app.generate_research_report(
-        cloud_app.ReportRequest(
-            topic="AI evaluation frameworks",
-            included_sources=[{
-                "title": "Evidence",
-                "authors": ["Author, A."],
-                "year": 2024,
-                "venue": "Journal of Evidence",
-                "abstract": "Scalability remains a limitation. A novel approach is proposed.",
-            }],
-        ),
-        authorization="Bearer token",
-    ))
+
+def test_proposal_fallback_is_returned_inline_and_not_cached(monkeypatch):
+    import io
+
+    from docx import Document
+
+    class Unconfigured:
+        name = "unconfigured"
+
+        def is_configured(self):
+            return False
+
+    database, request = _proposal_endpoint_setup(monkeypatch, Unconfigured())
+    result = asyncio.run(cloud_app.generate_research_report(request, authorization="Bearer token"))
 
     assert result["status"] == "ready"
+    assert result["generation_mode"] == "template_fallback"
+    assert result["degraded"] is True
+    assert result["synthesis_note"]
+    assert "download_url" not in result and "report_cache_id" not in result
+    assert database.objects == {}, "a fallback must not be cached or the next request replays it"
+    assert Document(io.BytesIO(base64.b64decode(result["document_base64"]))).paragraphs
+    assert result["document_name"] == "Ethical AI Evaluation Frameworks for Resume Screening.docx"
+
+
+def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch, fake_provider, synthesized_draft_json):
+    import io
+    import zipfile
+    from urllib.parse import urlparse, parse_qs
+
+    from docx import Document
+
+    provider = fake_provider(content=synthesized_draft_json())
+    database, request = _proposal_endpoint_setup(monkeypatch, provider)
+    result = asyncio.run(cloud_app.generate_research_report(request, authorization="Bearer token"))
+
+    assert result["generation_mode"] == "ai_synthesized" and result["degraded"] is False
+    assert provider.calls == 1
+    assert result["document_name"] == "Ethical AI Evaluation Frameworks for Resume Screening.docx"
     assert database.content_type == cloud_app.DOCX_CONTENT_TYPE
 
     inline = base64.b64decode(result["document_base64"])
@@ -502,7 +528,6 @@ def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch):
     ))
     assert response.media_type == cloud_app.DOCX_CONTENT_TYPE
     assert response.body == inline
-    assert Document(io.BytesIO(response.body)).paragraphs
 
 
 def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
