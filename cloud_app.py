@@ -37,6 +37,7 @@ from app.reports.proposal_builder import build_proposal_from_research
 from app.reports.proposal_validation import validate_proposal_draft
 from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.evidence_preparation import prepare_proposal_evidence
+from app.reports.metadata_extractor import extract_research_metadata
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
 from contextlib import asynccontextmanager
 
@@ -926,15 +927,8 @@ async def generate_research_report(
                 # Prepare evidence packet
                 packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
 
-                # Build proposal from research data (no LLM dependency)
-                # Use empty dossier data since we're not running dossier generation
-                dossier_data = {
-                    "abstract": "",
-                    "themes": [],
-                    "research_gaps": [],
-                    "opportunity_areas": [],
-                    "research_areas": [],
-                }
+                # Extract research metadata deterministically from sources (no LLM)
+                dossier_data = extract_research_metadata(included_sources, topic)
 
                 draft = build_proposal_from_research(
                     topic=topic,
