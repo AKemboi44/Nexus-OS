@@ -978,7 +978,6 @@ async def generate_research_report(
                     except (RuntimeError, SupabaseRequestError) as e:
                         logger.warning("Proposal: upload failed (non-fatal): %s", e)
 
-                    ledger.log_summary()
                     cache_id_val = report_cache_id(cache_key)
                     response = {
                         "status": "ready",

@@ -3,10 +3,14 @@
 import os
 import logging
 from typing import Optional
-from anthropic import Anthropic, APIError, APIConnectionError
 from app.reports.proposal_schema import ProposalDraftV2, ParagraphBlock
 
 logger = logging.getLogger(__name__)
+
+# Lazy imports - only loaded when ProposalSynthesizer is instantiated
+APIError = None
+APIConnectionError = None
+Anthropic = None
 
 
 class ProposalSynthesisError(Exception):
@@ -23,14 +27,22 @@ class ProposalSynthesizer:
     
     def __init__(self, api_key: Optional[str] = None, model: str = "claude-3-5-sonnet-20241022"):
         """Initialize with Claude client."""
+        # Lazy import anthropic only when instantiated
+        global APIError, APIConnectionError, Anthropic
+        if Anthropic is None:
+            from anthropic import Anthropic as AnthropicClient, APIError as APIErrorClass, APIConnectionError as APIConnectionErrorClass
+            Anthropic = AnthropicClient
+            APIError = APIErrorClass
+            APIConnectionError = APIConnectionErrorClass
+
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self.model = model
         self.max_retries = 2
         self.timeout = 30
-        
+
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY not configured")
-        
+
         self.client = Anthropic(api_key=self.api_key, timeout=self.timeout)
     
     def enhance_proposal(
