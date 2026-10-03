@@ -33,12 +33,7 @@ from app.synthesis.providers import SynthesisProviderError, DegradationLogger, S
 from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
-from app.reports.proposal_builder import build_proposal_from_research
-from app.reports.proposal_validation import validate_proposal_draft
-from app.reports.proposal_renderer import render_proposal_docx
-from app.reports.evidence_preparation import prepare_proposal_evidence
-from app.reports.metadata_extractor import extract_research_metadata
-from app.reports.proposal_synthesis import ProposalSynthesizer
+from app.reports.proposal_service import generate_proposal_docx, ProposalValidationError
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
 from contextlib import asynccontextmanager
 
@@ -920,106 +915,88 @@ async def generate_research_report(
             )
             return response
 
-        # Proposal generation using deterministic template-based builder
+        # Proposal generation: deterministic templates with extracted metadata
         if payload.report_type == "proposal":
+            reference_id = str(uuid4())
             try:
-                logger.info("Proposal: generating from %d sources using template builder", len(included_sources))
+                logger.info("Proposal: generating from %d sources (reference=%s)",
+                           len(included_sources), reference_id)
 
-                # Prepare evidence packet
-                packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
-
-                # Extract research metadata deterministically from sources (no LLM)
-                dossier_data = extract_research_metadata(included_sources, topic)
-
-                draft = build_proposal_from_research(
+                # Generate proposal document using service
+                doc = generate_proposal_docx(
                     topic=topic,
                     domain=payload.domain,
-                    dossier=dossier_data,
-                    packet=packet,
+                    included_sources=included_sources,
                 )
 
-                # Validate
-                validation = validate_proposal_draft(draft, packet)
-                logger.info("Proposal: draft created, validation passed=%s, word_count=%d",
-                           validation.passed, validation.word_count)
+                document_bytes = doc.document_bytes
+                word_count = doc.word_count
 
-                if not validation.passed:
-                    logger.warning("Proposal: validation failed with errors: %s", validation.errors)
-                    raise ValueError(f"Proposal validation failed: {validation.errors}")
+                logger.info("Proposal: generated successfully (%d words, %d bytes)",
+                           word_count, len(document_bytes))
 
-                # Optional: Enhance proposal with Claude if API key available
-                # Graceful degradation - if Claude unavailable, uses template-only draft
-                if os.getenv("ANTHROPIC_API_KEY"):
-                    try:
-                        logger.info("Proposal: attempting Claude enhancement")
-                        synthesizer = ProposalSynthesizer()
-                        draft = synthesizer.enhance_proposal(draft, topic)
-                        logger.info("Proposal: Claude enhancement complete")
-                    except Exception as e:
-                        logger.warning("Proposal: Claude enhancement failed (%s), using template draft", str(e))
-                        # Continue with original template draft
-
-                logger.info("Proposal: draft generated, rendering DOCX")
-                with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
-                    doc_path = Path(tmpdir) / "proposal.docx"
-                    render_proposal_docx(draft, packet, doc_path)
-
-                    document_bytes = doc_path.read_bytes()
-                    logger.info("Proposal: DOCX rendered, size=%d bytes", len(document_bytes))
-
-                    try:
-                        database.upload_storage_object(
-                            DOSSIER_STORAGE_BUCKET,
-                            cache_key,
-                            document_bytes,
-                            DOCX_CONTENT_TYPE,
-                        )
-                        logger.info("Proposal: uploaded to storage")
-                    except (RuntimeError, SupabaseRequestError) as e:
-                        logger.warning("Proposal: upload failed (non-fatal): %s", e)
-
-                    cache_id_val = report_cache_id(cache_key)
-                    response = {
-                        "status": "ready",
-                        "action": "docx_generation_complete",
-                        "generation_mode": "ai_synthesized",
-                        "degraded": False,
-                        "document_name": "proposal.docx",
-                        "document_base64": base64.b64encode(document_bytes).decode("ascii"),
-                        "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
-                        "report_id": cache_id_val,
-                        "report_cache_id": cache_id_val,
-                    }
-                    record_backend_analytics(
-                        "report_completed",
-                        user_id,
-                        {
-                            "duration_ms": elapsed_milliseconds(started_at),
-                            "report_type": payload.report_type,
-                            "cache_hit": False,
-                            "included_source_count": len(included_sources),
-                            "quality_passed": True,
-                            "provider": result.provider,
-                            "input_tokens": result.input_tokens,
-                            "output_tokens": result.output_tokens,
-                        },
+                # Upload to cache (non-fatal on failure)
+                try:
+                    database.upload_storage_object(
+                        DOSSIER_STORAGE_BUCKET,
+                        cache_key,
+                        document_bytes,
+                        DOCX_CONTENT_TYPE,
                     )
-                    logger.info("Proposal: completed successfully")
-                    return response
+                    logger.info("Proposal: cached to storage")
+                except (RuntimeError, SupabaseRequestError) as e:
+                    logger.warning("Proposal: cache upload failed (non-fatal): %s", e)
+
+                # Return success response
+                cache_id_val = report_cache_id(cache_key)
+                response = {
+                    "status": "ready",
+                    "action": "docx_generation_complete",
+                    "generation_mode": "template",
+                    "degraded": False,
+                    "document_name": "proposal.docx",
+                    "document_base64": base64.b64encode(document_bytes).decode("ascii"),
+                    "download_url": f"/v1/reports/cache/{cache_id_val}?report_type={payload.report_type}",
+                    "report_id": cache_id_val,
+                    "report_cache_id": cache_id_val,
+                }
+
+                record_backend_analytics(
+                    "report_completed",
+                    user_id,
+                    {
+                        "duration_ms": elapsed_milliseconds(started_at),
+                        "report_type": payload.report_type,
+                        "cache_hit": False,
+                        "included_source_count": len(included_sources),
+                        "word_count": word_count,
+                    },
+                )
+                logger.info("Proposal: completed successfully (reference=%s)", reference_id)
+                return response
+
+            except ProposalValidationError as error:
+                # User-fixable: validation failure (missing themes, too brief, etc.)
+                logger.warning("Proposal: validation failed (reference=%s): %s", reference_id, error.errors)
+                raise HTTPException(status_code=422, detail={
+                    "message": str(error),
+                    "error_code": "proposal_validation_failed",
+                    "retryable": False,
+                    "reference": reference_id,
+                    "is_paid": entitlements.is_active(user_id),
+                })
 
             except HTTPException:
                 raise
+
             except Exception as error:
-                logger.exception("Proposal: unhandled exception in service pipeline")
-                provider_name = getattr(provider, 'name', 'unknown') if 'provider' in locals() else 'unknown'
-                classification = classify_provider_error(error, provider_name)
-                raise HTTPException(status_code=503, detail={
-                    "message": str(error),
-                    "error_code": classification.kind or "proposal_generation_error",
-                    "provider": classification.provider,
-                    "retryable": classification.retryable,
-                    "retry_after_seconds": classification.retry_after_seconds,
-                    "reference": str(uuid4()),
+                # System error: rendering, I/O, etc.
+                logger.exception("Proposal: generation failed (reference=%s)", reference_id)
+                raise HTTPException(status_code=500, detail={
+                    "message": f"Proposal generation failed: {str(error)}",
+                    "error_code": "proposal_generation_failed",
+                    "retryable": False,
+                    "reference": reference_id,
                     "is_paid": entitlements.is_active(user_id),
                 })
 

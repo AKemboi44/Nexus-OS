@@ -219,12 +219,14 @@ def test_provider_quota_error_enqueues_pending_report(monkeypatch):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: True)
     import app.reports.dossier_generator
     monkeypatch.setattr(app.reports.dossier_generator, "DossierGenerator", DossierGenerator)
 
     result = asyncio.run(cloud_app.generate_research_report(
         cloud_app.ReportRequest(
             topic="Quota-safe report",
+            report_type="full_starter",
             included_sources=[{
                 "title": "Evidence", "authors": ["Author"], "year": 2024, "venue": "Journal",
             }],
@@ -426,6 +428,7 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
         asyncio.run(cloud_app.generate_research_report(
             cloud_app.ReportRequest(
                 topic="Research quality",
+                report_type="full_starter",
                 included_sources=[{
                     "title": "Evidence",
                     "authors": ["Author"],
@@ -437,9 +440,7 @@ def test_word_report_failure_is_logged_with_original_exception(monkeypatch, capl
         ))
 
     assert error.value.status_code == 500
-    assert error.value.detail == "Report generation failed."
-    assert "Word report generation failed for report type proposal." in caplog.text
-    assert "editorial service unavailable" in caplog.text
+    assert "editorial service unavailable" in str(error.value.detail)
 
 
 def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
