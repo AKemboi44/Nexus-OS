@@ -920,11 +920,14 @@ async def generate_research_report(
         # New proposal service path (one call, no dossier)
         if payload.report_type == "proposal":
             from app.synthesis.call_ledger import start_request_ledger
-            ledger = start_request_ledger(max_calls=2)
 
             try:
+                logger.info("Proposal: starting with %d sources", len(included_sources))
+                ledger = start_request_ledger(max_calls=2)
+
                 provider_registry = SynthesisProviderRegistry()
                 provider = provider_registry.get_primary_provider()
+                logger.info("Proposal: provider=%s, model=%s", provider.name, provider.model)
 
                 result = await generate_proposal(
                     topic=topic,
@@ -935,6 +938,7 @@ async def generate_research_report(
                 )
 
                 if not result.success:
+                    logger.warning("Proposal: generation failed error_code=%s message=%s", result.error_code, result.error_message)
                     raise HTTPException(status_code=503, detail={
                         "message": result.error_message,
                         "error_code": result.error_code,
@@ -944,14 +948,15 @@ async def generate_research_report(
                         "is_paid": entitlements.is_active(user_id),
                     })
 
-                # Render to DOCX
+                logger.info("Proposal: draft generated, rendering DOCX")
                 with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
                     doc_path = Path(tmpdir) / "proposal.docx"
-                    render_proposal_docx(result.draft, prepare_proposal_evidence(
-                        topic, payload.domain, included_sources
-                    ), doc_path)
+                    evidence_packet = prepare_proposal_evidence(topic, payload.domain, included_sources)
+                    render_proposal_docx(result.draft, evidence_packet, doc_path)
 
                     document_bytes = doc_path.read_bytes()
+                    logger.info("Proposal: DOCX rendered, size=%d bytes", len(document_bytes))
+
                     try:
                         database.upload_storage_object(
                             DOSSIER_STORAGE_BUCKET,
@@ -959,8 +964,9 @@ async def generate_research_report(
                             document_bytes,
                             DOCX_CONTENT_TYPE,
                         )
+                        logger.info("Proposal: uploaded to storage")
                     except (RuntimeError, SupabaseRequestError) as e:
-                        logger.warning("Could not cache proposal: %s", e)
+                        logger.warning("Proposal: upload failed (non-fatal): %s", e)
 
                     ledger.log_summary()
                     cache_id_val = report_cache_id(cache_key)
@@ -989,14 +995,21 @@ async def generate_research_report(
                             "output_tokens": result.output_tokens,
                         },
                     )
+                    logger.info("Proposal: completed successfully")
                     return response
+
             except HTTPException:
                 raise
             except Exception as error:
-                from app.agents.scribe_agent import ReportSynthesisError
+                logger.exception("Proposal: unhandled exception in service pipeline")
+                provider_name = getattr(provider, 'name', 'unknown') if 'provider' in locals() else 'unknown'
+                classification = classify_provider_error(error, provider_name)
                 raise HTTPException(status_code=503, detail={
                     "message": str(error),
-                    "error_code": "proposal_generation_error",
+                    "error_code": classification.kind or "proposal_generation_error",
+                    "provider": classification.provider,
+                    "retryable": classification.retryable,
+                    "retry_after_seconds": classification.retry_after_seconds,
                     "reference": str(uuid4()),
                     "is_paid": entitlements.is_active(user_id),
                 })
