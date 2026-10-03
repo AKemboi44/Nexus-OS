@@ -898,20 +898,49 @@
 
         } catch (error) {
             failReportProgress();
-            const referenceId = error.jobId || runRef;
-            
-            // Build user-friendly error card HTML
+            const errorDetail = error.payload || {};
+            const reference = errorDetail.reference || error.jobId || runRef;
+            const errorCode = errorDetail.error_code || 'unknown';
+            const retryable = errorDetail.retryable !== false;
+            const retryAfter = errorDetail.retry_after_seconds;
+
+            // Build context-specific error card
+            let errorTitle = "Report generation couldn't be completed.";
+            let errorMessage = "We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.";
+            let showRetry = retryable;
+            let statusClass = 'error';
+
+            if (errorCode === 'quota_daily' && retryAfter) {
+                statusClass = 'warning';
+                const hours = Math.ceil(retryAfter / 3600);
+                errorTitle = "Synthesis service quota exhausted.";
+                errorMessage = `The report service's daily quota is exhausted. It will reset in about ${hours} hour${hours > 1 ? 's' : ''}. Your Excel dossier is safe and ready to download.`;
+                showRetry = false;
+            } else if (errorCode === 'unavailable') {
+                errorTitle = "Synthesis service temporarily overloaded.";
+                errorMessage = "The report service is busy right now. We've saved your request and it will retry automatically. Your Excel dossier is ready now.";
+                showRetry = false;
+            } else if (errorCode === 'auth' || errorCode === 'config') {
+                errorTitle = "Service configuration error.";
+                errorMessage = "There's a configuration issue with the report service. Please contact support.";
+                showRetry = false;
+            }
+
+            const retryButton = showRetry
+                ? `<button type="button" class="button secondary small" onclick="window.NexusUI ? window.NexusUI.retryReport('${reportType}') : null">Try Again</button>`
+                : '';
+
             const errorMessageHtml = `
-                <div class="report-error-card">
-                    <strong>Report generation couldn't be completed.</strong>
-                    <p style="margin: 6px 0 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</p>
-                    <div style="font-size: 0.85em; opacity: 0.85; margin-bottom: 8px;">Reference: <code>${referenceId}</code></div>
-                    <button type="button" class="button secondary small" onclick="window.NexusUI ? window.NexusUI.retryReport('${reportType}') : null">Try Again</button>
+                <div style="margin: 6px 0;">
+                    <strong>${errorTitle}</strong>
+                    <p style="margin: 6px 0 4px 0;">${errorMessage}</p>
+                    <div style="font-size: 0.85em; opacity: 0.85; margin-bottom: 8px;">Reference: <code>${reference}</code></div>
+                    ${retryButton}
                 </div>
             `;
-            
+
             if (reportStatus) {
-                reportStatus.className = 'form-message error is-error';
+                reportStatus.className = `form-message ${statusClass}${statusClass === 'warning' ? ' limit-callout' : ' is-error'}`;
                 reportStatus.innerHTML = errorMessageHtml;
                 reportStatus.hidden = false;
             }

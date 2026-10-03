@@ -181,6 +181,7 @@ body { font-size: 16px; }
 .status-callout { min-height: 0; margin: 14px 0 0; padding: 13px 15px; border: 1px solid #cbd8f8; border-radius: 10px; color: #354a78; background: #edf3ff; font-size: 14px; font-weight: 700; line-height: 1.5; }
 .status-callout.success { border-color: #8dd6b6; color: #116448; background: #e9fbf2; }
 .status-callout.error, .status-callout.limit-callout { border-color: #eaa2a6; color: #962e39; background: #fff0f0; }
+.status-callout.warning { border-color: #fbbf24; color: #92400e; background: #fef3c7; }
 .report-progress { display: flex; align-items: center; gap: 12px; margin-top: 12px; color: #354a78; }
 .report-progress[hidden] { display: none; }
 .report-progress-ring { --report-progress: 0%; display: grid; width: 46px; height: 46px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #1e4f9b; background: conic-gradient(#2878d4 var(--report-progress), #d7e5fb 0); font-size: 11px; font-weight: 800; }

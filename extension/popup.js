@@ -898,11 +898,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const referenceId = data.job_id || data.run_id || (lastRequestContext?.topic ? Math.random().toString(36).substring(2, 10) : 'nexus_err');
             
             if (isReportRequest && draftStatus) {
-                draftStatus.className = 'error';
+                const errorCode = data.error_code || (data.status_code === 403 ? 'paywall' : 'unknown');
+                const retryable = data.retryable !== false && data.status_code !== 403;
+                const retryAfter = data.retry_after_seconds;
+
+                let errorTitle = "Report generation couldn't be completed.";
+                let errorMsg = "We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.";
+                let className = 'error';
+
+                if (errorCode === 'quota_daily' && retryAfter) {
+                    className = 'warning';
+                    const hours = Math.ceil(retryAfter / 3600);
+                    errorTitle = "Synthesis service quota exhausted.";
+                    errorMsg = `The report service's daily quota is exhausted. It will reset in about ${hours} hour${hours > 1 ? 's' : ''}. Your Excel dossier is ready.`;
+                } else if (errorCode === 'unavailable') {
+                    errorTitle = "Synthesis service temporarily overloaded.";
+                    errorMsg = "The report service is busy. We've saved your request and it will retry automatically. Your Excel dossier is ready.";
+                } else if (errorCode === 'paywall') {
+                    errorTitle = "Premium report type.";
+                    errorMsg = "Complete Literature Review is available to paid users. Upgrade to access this report type.";
+                }
+
+                draftStatus.className = className;
                 draftStatus.innerHTML = `
                     <div>
-                        <strong>Report generation couldn't be completed.</strong>
-                        <div style="margin: 4px 0;">We generated your Excel dossier successfully, but the report synthesis couldn't be completed this time. Your data is safe.</div>
+                        <strong>${errorTitle}</strong>
+                        <div style="margin: 4px 0;">${errorMsg}</div>
                         <div style="font-size: 0.85em; opacity: 0.85;">Reference: <code>${referenceId}</code></div>
                     </div>
                 `;
@@ -920,7 +941,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (cancelScanBtn) cancelScanBtn.style.display = 'none';
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
             if (retryReportBtn && isReportRequest) {
-                retryReportBtn.style.display = data.status_code === 403 ? 'none' : 'block';
+                const errorCode = data.error_code || (data.status_code === 403 ? 'paywall' : 'unknown');
+                const retryable = data.retryable !== false && data.status_code !== 403;
+                retryReportBtn.style.display = retryable ? 'block' : 'none';
             }
             if (cancelReportBtn) cancelReportBtn.style.display = 'none';
             if (sProgContainer) sProgContainer.style.display = 'none';
@@ -955,9 +978,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const jobId = data.job_id || data.report_id || data.id;
             if (jobId) {
                 if (draftStatus) {
+                    const isPaid = data.is_paid === true;
+                    let queuedMessage = data.message || `Report synthesis request queued (${data.estimated_wait || 'usually under 20 minutes'}).`;
+
+                    if (isPaid) {
+                        queuedMessage = `Your report is in the priority lane. The writing service is busy, so we saved your request and will retry with priority. Your Excel dossier is ready now. (${data.estimated_wait || 'usually under 20 minutes'})`;
+                    } else {
+                        queuedMessage = `Your report is in the queue. The writing service is busy, so we saved your request and will retry automatically. Your Excel dossier is ready now. (${data.estimated_wait || 'usually under 20 minutes'}). Upgrade to skip the line.`;
+                    }
+
                     draftStatus.className = 'info';
-                    draftStatus.textContent = data.message || `Report synthesis request queued (${data.estimated_wait || 'usually under 20 minutes'}).`;
+                    draftStatus.textContent = queuedMessage;
                     draftStatus.style.display = 'block';
+
+                    if (upgradeFromReportBtn && !isPaid) {
+                        upgradeFromReportBtn.style.display = 'block';
+                    }
                 }
                 try {
                     const { blob, filename, job } = await pollReportJobStatus(jobId, activeReportType);

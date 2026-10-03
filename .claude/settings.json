@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "bash",
+      "git",
+      "mcp_pycharm_*",
+      "python-tools",
+      "read_file",
+      "write_file",
+      "edit_file",
+      "grep",
+      "glob"
+    ]
+  },
+  "codeReviewLevel": "high",
+  "excludedPaths": [
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    ".pytest_cache",
+    "*.sqlite3"
+  ],
+  "toolDefaults": {
+    "readAhead": true,
+    "batchToolCalls": true,
+    "shortOutput": true
+  }
+}

@@ -30,6 +30,7 @@ from app.reports.queue_config import default_queue_config, ReportQueueConfig
 from app.reports.report_queue import global_queue_manager, QueuedReportJob
 from app.notifications.notification_service import NotificationService
 from app.synthesis.providers import SynthesisProviderError, DegradationLogger
+from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
 
@@ -976,6 +977,11 @@ async def generate_research_report(
             logger.warning("Synthesis provider failed on submit, enqueueing report request: %s", provider_err)
             is_paid_user = entitlements.is_active(user_id)
             ab_variant = ExperimentService.get_variant_for_user(user_id)
+
+            # Classify the error for structured queueing response
+            provider = getattr(provider_err, "provider", "synthesis_provider") or "synthesis_provider"
+            classification = classify_provider_error(provider_err, provider)
+
             job = global_queue_manager.enqueue(
                 user_id=user_id,
                 topic=topic,
@@ -993,11 +999,13 @@ async def generate_research_report(
                     "duration_ms": elapsed_milliseconds(started_at),
                     "wait_time_seconds": round(elapsed_milliseconds(started_at) / 1000.0, 2),
                     "report_type": payload.report_type,
-                    "provider": getattr(provider_err, "provider", "synthesis_provider") or "synthesis_provider",
+                    "provider": provider,
+                    "error_kind": classification.kind,
                     "job_id": job.id,
                     "estimated_wait": default_queue_config.estimated_wait_range,
                     "error_reason": str(provider_err)[:80],
                     "variant": ab_variant,
+                    "reference": job.id,
                 },
             )
             return {
@@ -1005,12 +1013,18 @@ async def generate_research_report(
                 "action": "report_queued_pending",
                 "job_id": job.id,
                 "report_id": job.id,
+                "reference": job.id,
                 "topic": topic,
                 "report_type": payload.report_type,
                 "estimated_wait": default_queue_config.estimated_wait_range,
                 "message": f"Report synthesis request queued ({default_queue_config.estimated_wait_range}).",
                 "created_at": job.created_at,
                 "degraded": False,
+                "error_code": classification.kind,
+                "retryable": classification.retryable,
+                "retry_after_seconds": classification.retry_after_seconds,
+                "is_paid": is_paid_user,
+                "priority": 10 if is_paid_user else 0,
             }
     except HTTPException:
         record_backend_analytics(
@@ -1026,6 +1040,11 @@ async def generate_research_report(
         raise
     except ReportSynthesisError as error:
         logger.warning("Word report failed its synthesis quality gate: %s", error)
+
+        # Classify the error to provide structured response
+        provider = getattr(scribe, 'telemetry_last_provider', None) or getattr(scribe, 'provider', 'unknown') if scribe else 'unknown'
+        classification = classify_provider_error(error, provider)
+
         record_backend_analytics(
             "report_failed",
             user_id,
@@ -1033,10 +1052,25 @@ async def generate_research_report(
                 "duration_ms": elapsed_milliseconds(started_at),
                 "report_type": payload.report_type,
                 "error_category": "quality_or_provider",
+                "error_kind": classification.kind,
+                "provider": classification.provider,
                 **(scribe_telemetry(scribe) if scribe else {}),
             },
         )
-        raise HTTPException(status_code=503, detail=str(error)) from error
+
+        # Return structured error response
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": str(error),
+                "error_code": classification.kind,
+                "provider": classification.provider,
+                "retryable": classification.retryable,
+                "retry_after_seconds": classification.retry_after_seconds,
+                "reference": str(uuid4()),
+                "is_paid": entitlements.is_active(user_id),
+            }
+        ) from error
     except Exception as error:
         logger.exception("Word report generation failed for report type %s.", payload.report_type)
         record_backend_analytics(
