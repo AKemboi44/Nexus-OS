@@ -210,7 +210,6 @@ body { font-size: 16px; }
 .contact-copy h2 { margin: 12px 0 10px; font: 800 29px/1.2 Manrope, sans-serif; letter-spacing: -1px; }
 .contact-copy > p { color: #64738a; font-size: 14px; line-height: 1.7; }
 .whatsapp-button { margin-top: 12px; }
-.whatsapp-hint { display: block; min-height: 18px; margin-top: 8px; color: #65738a; font-size: 11px; }
 .contact-form { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .contact-form label { color: #34435c; font-size: 12px; font-weight: 700; }
 .contact-form input, .contact-form textarea { width: 100%; padding: 11px 12px; border: 1px solid #dce3ee; border-radius: 8px; color: var(--ink); background: #fff; font-size: 13px; }
@@ -219,7 +218,8 @@ body { font-size: 16px; }
 .contact-note { margin: 0; color: #7c879a; font-size: 10px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
 .auth-divider, .google-button { display: none !important; }
-.hero, .how-section, .feature-section, .products-section { position: relative; isolation: isolate; }
+/* Their decorative background shapes reach past the screen edge; without the clip, phones widen the page to fit them. */
+.hero, .how-section, .feature-section, .products-section { position: relative; isolation: isolate; overflow-x: clip; }
 .hero::before, .feature-section::before, .how-section::before { position: absolute; z-index: -1; pointer-events: none; content: ""; }
 .hero::before { inset: 0 -8vw; background: url("/images/evidence-network.svg") no-repeat 75% 50% / min(78vw, 980px) auto, radial-gradient(ellipse at 78% 38%, #dbe6ff99, transparent 36%), radial-gradient(ellipse at 85% 77%, #e5dcff70, transparent 28%); animation: aurora-drift 18s ease-in-out infinite alternate, hero-art-drift 32s ease-in-out infinite alternate; }
 .feature-section::before { inset: 0; background: url("/images/research-layers.svg") no-repeat 88% 100% / min(92vw, 1120px) auto, radial-gradient(ellipse at 83% 30%, #dce9ff70, transparent 34%), radial-gradient(ellipse at 15% 80%, #d9f3e96b, transparent 28%); animation: aurora-drift 22s ease-in-out infinite alternate-reverse, section-art-drift 38s ease-in-out infinite alternate; }
@@ -380,3 +380,19 @@ body { font-size: 16px; }
 .locked-row span { flex: 1 1 auto; min-width: 0; }
 .locked-row .button-cta { flex: 0 0 auto; padding: 9px 14px; font-size: 14px; }
 @media (max-width: 720px) { .locked-row { flex-wrap: wrap; } .locked-row .button-cta { width: 100%; } }
+
+/* WhatsApp support: a floating button on every page, and quiet "need help" links next to problems. */
+.whatsapp-float { position: fixed; right: 18px; bottom: 18px; z-index: 9; display: inline-flex; align-items: center; gap: 9px; padding: 11px 16px 11px 12px; border-radius: 999px; color: #fff; background: #0b7a3e; box-shadow: 0 8px 22px rgba(11, 122, 62, .4); font-size: 14px; font-weight: 700; text-decoration: none; transition: transform .15s ease, box-shadow .15s ease; }
+.whatsapp-float svg { width: 26px; height: 26px; flex: 0 0 auto; fill: #fff; }
+.whatsapp-float svg .glyph { fill: #0b7a3e; }
+.whatsapp-float:hover { transform: translateY(-2px); box-shadow: 0 12px 26px rgba(11, 122, 62, .5); }
+.whatsapp-float:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+.plan-help-row { grid-column: 1 / -1; margin: 0; font-size: 13px; }
+.plan-help-row a, .status-help { color: #0b6a37; font-weight: 700; text-decoration: underline; }
+.status-help { display: block; margin-top: 8px; font-size: 13px; }
+@media (max-width: 720px) {
+  .whatsapp-float { padding: 12px; }
+  .whatsapp-float span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .sticky-upgrade:not([hidden]) ~ .whatsapp-float { bottom: 78px; }
+}
+@media (prefers-reduced-motion: reduce) { .whatsapp-float, .whatsapp-float:hover { transition: none; transform: none; } }

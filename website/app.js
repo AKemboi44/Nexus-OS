@@ -4,6 +4,8 @@
     const SUPABASE_URL = 'https://mdjgrtkjjcwmhuhpsjsk.supabase.co';
     const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_xp5XQM7DThmmgsVpG4wZog_QVVnOOmw';
     const API_URL = 'https://nexus-os-production-2e14.up.railway.app';
+    const SUPPORT_WHATSAPP = '254743852707';
+    const SUPPORT_EMAIL = 'brisklightke@gmail.com';
     const SESSION_KEY = 'nexus_web_supabase_session';
     const FREE_MAX_SOURCES = 20;
     const FREE_MAX_CRITERIA = 3;
@@ -1144,7 +1146,14 @@
         const code = document.createElement('code');
         code.textContent = String(reference || '');
         ref.append(code);
-        reportStatus.append(heading, body, ref);
+        const help = document.createElement('a');
+        help.className = 'status-help';
+        help.href = supportLink(`an error (reference ID ${String(reference || 'unknown').slice(0, 64)})`);
+        help.target = '_blank';
+        help.rel = 'noopener noreferrer';
+        help.dataset.support = 'report_error';
+        help.textContent = 'Chat with support on WhatsApp';
+        reportStatus.append(heading, body, ref, help);
     }
 
     const FEEDBACK_REASON_IDS = ['inaccurate', 'not_synthesized', 'citations', 'formatting', 'too_long', 'too_short'];
@@ -1420,6 +1429,18 @@
         byId('scanStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
     }
 
+    // The message is prefilled with what the user is looking at (a reference or order id they already
+    // see), never an email address or other personal data. They can edit it before sending.
+    function supportLink(context) {
+        return `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(`Hi Nexus support, I need help with ${context}.`)}`;
+    }
+
+    function setPlanHelp(context, placement) {
+        const link = byId('planHelp');
+        link.href = supportLink(context);
+        link.dataset.support = placement;
+    }
+
     function sendContactEmail(event) {
         event.preventDefault();
         const subject = `Nexus Research AI support — ${byId('contactName').value.trim()}`;
@@ -1429,7 +1450,7 @@
             '',
             byId('contactMessage').value.trim()
         ].join('\n');
-        window.location.href = `mailto:support@brisklightai.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
 
     async function startPackCheckout(packId) {
@@ -1484,6 +1505,7 @@
         // pricing options remain open below it.
         byId('plansCard').hidden = false;
         setMessage(byId('billingStatus'), '');
+        setPlanHelp(`my payment (PayPal order ${String(orderId).slice(0, 40)})`, 'payment_status');
         setPlanNotice('Confirming your payment with PayPal…');
         try {
             const result = await apiJson(`/v1/checkout/orders/${encodeURIComponent(orderId)}/capture`, {method: 'POST'});
@@ -1614,9 +1636,9 @@
             renderEvidencePage(false);
         });
         byId('contactForm').addEventListener('submit', sendContactEmail);
-        byId('whatsappContact').addEventListener('click', () => {
-            byId('whatsappHint').textContent = 'WhatsApp support is coming soon. Please use the contact form for now.';
-            byId('whatsappHint').classList.add('whatsapp-hint-visible');
+        document.addEventListener('click', event => {
+            const link = event.target.closest('a[data-support]');
+            if (link) track('support_chat_clicked', {placement: link.dataset.support});
         });
         byId('refreshHistory').addEventListener('click', async () => {
             try {

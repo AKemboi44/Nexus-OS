@@ -298,6 +298,11 @@ register(
     "User clicked an upgrade button; placement says which one, so conversion can be compared.",
 )
 register(
+    "support_chat_clicked", "quality", _BOTH_CLIENTS,
+    {"placement": text("floating", "contact", "plan_panel", "report_error", "payment_status", "extension", required=True)},
+    "User opened the WhatsApp support chat; placement says which link, so support demand can be located.",
+)
+register(
     "deliverable_clicked", "activation", _BOTH_CLIENTS,
     {"kind": text("excel", "proposal", "full_starter", required=True)},
     "User asked for a deliverable (Excel dossier or Word report).",

@@ -370,6 +370,15 @@ document.addEventListener('DOMContentLoaded', () => {
         ...document.querySelectorAll('.tab-content')
     ];
 
+    // Prefilled with the reference id the user already sees; never an email address or personal data.
+    function supportLink(reference) {
+        const text = `Hi Nexus support, I need help with an error (reference ID ${String(reference || 'unknown').slice(0, 64)}).`;
+        return `https://wa.me/254743852707?text=${encodeURIComponent(text)}`;
+    }
+    document.addEventListener('click', event => {
+        if (event.target.closest('a[data-support]')) sendAnalytics('support_chat_clicked', {placement: 'extension'});
+    });
+
     function showUpgradeFlow(screen = 'details') {
         mainSurface.forEach(element => {
             if (element) element.style.display = 'none';
@@ -1056,6 +1065,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div style="font-weight: 600; color: ${textColor}; margin-bottom: 4px;">${errorTitle}</div>
                         <div style="color: ${accentColor}; font-size: 0.9em; margin-bottom: 8px;">${errorMsg}</div>
                         <div style="font-size: 0.8em; color: ${accentColor};">Ref: <code style="background: rgba(0,0,0,0.1); padding: 1px 3px; border-radius: 2px;">${referenceId}</code></div>
+                        <a data-support="extension" href="${supportLink(referenceId)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; margin-top: 6px; font-size: 0.85em; color: ${accentColor}; font-weight: 600;">Chat with support on WhatsApp</a>
                     </div>
                 `;
                 draftStatus.style.display = 'block';

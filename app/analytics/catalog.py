@@ -398,6 +398,16 @@ def upgrade_cta_click_rate(ctx):
                             for placement in {e.props.get("placement") for e in clicks} - {None}}})
 
 
+@metric("support_chat_rate", "Troubled users who opened support chat", CX, "rate",
+        "Users who saw an error or the paywall and then opened the WhatsApp support chat; the breakdown shows "
+        "clicks per placement, so you can see where people look for help.", sparkline=False)
+def support_chat_rate(ctx):
+    clicks = [e for source in ("web", "extension", "client") for e in ctx.of("support_chat_clicked", source)]
+    clickers, troubled = {e.user for e in clicks}, ctx.users("error_displayed", "paywall_shown", source=None)
+    return Measurement(rate(len(clickers & troubled), len(troubled)), len(clickers & troubled), len(troubled),
+                       len(troubled), {"clicks_by_placement": _counts(e.props.get("placement") for e in clicks)})
+
+
 @metric("cta_to_checkout", "Upgrade click to checkout", MONEY, "rate",
         "Users who clicked an upgrade button and then started a PayPal checkout.", sparkline=False)
 def cta_to_checkout(ctx):
