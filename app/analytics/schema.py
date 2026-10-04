@@ -280,3 +280,43 @@ register(
      "status_code": integer(), "reference_id": text()},
     "An error message was shown to the user.",
 )
+
+# --- Registry: instrumentation V1 events (tracing, quality, feedback) ----------------------
+
+register(
+    "span", "system", _SERVER,
+    {
+        "name": text(required=True), "duration_ms": integer(required=True),
+        "outcome": text("ok", "error"), "report_type": text(), "cache_hit": flag(),
+    },
+    "A timed section of a request (scan.discovery, report.synthesis, ...).",
+)
+register(
+    "llm_call", "system", _SERVER,
+    {
+        "purpose": text(required=True), "provider": text(), "model": text(), "attempt": integer(),
+        "outcome": text("ok", "provider_error", "invalid_output", "quality_gate"),
+        "latency_ms": integer(), "input_tokens": integer(), "output_tokens": integer(),
+        "http_status": integer(), "error_kind": text(),
+    },
+    "One model call. Tokens are billed even when the output is unusable.",
+)
+register(
+    "proposal_quality", "quality", _SERVER,
+    {
+        "generation_mode": text("ai_synthesized", "template_fallback", required=True),
+        "synthesis_failure": text("not_configured", "provider_error", "invalid_output", "quality_gate"),
+        "attempts": integer(), "repair_used": flag(), "word_count": integer(),
+        "source_count": integer(), "cited_source_count": integer(), "integrative_paragraphs": integer(),
+        "gate_errors": text(),
+    },
+    "How a proposal was produced and how it scored against the quality gate.",
+)
+register(
+    "feedback_submitted", "quality", _SERVER,
+    {
+        "reference_id": text(required=True), "rating": text("up", "down", required=True),
+        "reasons": text(), "report_type": text("proposal", "full_starter"),
+    },
+    "User rating of a delivered report; reference_id is the report's request id.",
+)

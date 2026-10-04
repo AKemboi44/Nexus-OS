@@ -1,19 +1,29 @@
-"""Proposal generation: one model synthesis call, falling back to deterministic templates."""
+"""Proposal generation: model synthesis with one repair attempt, falling back to deterministic templates."""
 
 import logging
 import re
 import tempfile
-from dataclasses import dataclass
+import time
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from app.analytics.context import current_request_id
 from app.reports.evidence_preparation import EvidencePacket, prepare_proposal_evidence
 from app.reports.metadata_extractor import extract_research_metadata
 from app.reports.proposal_builder import build_proposal_from_research
 from app.reports.proposal_renderer import render_proposal_docx
 from app.reports.proposal_schema import ProposalDraftV2
 from app.reports.proposal_synthesis import synthesize_proposal
-from app.reports.proposal_validation import validate_proposal_draft, validate_synthesized_draft
+from app.reports.proposal_validation import (
+    cited_source_count,
+    gate_error_codes,
+    integrative_paragraph_count,
+    validate_proposal_draft,
+    validate_synthesized_draft,
+)
+from app.synthesis.call_ledger import QUALITY_GATE, RequestLedger
 from app.synthesis.providers import SynthesisUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -32,13 +42,24 @@ FALLBACK_NOTES = {
 
 @dataclass
 class ProposalDocument:
-    """Generated proposal document ready for download."""
+    """Generated proposal document ready for download, with the telemetry of how it was made."""
     document_bytes: bytes
     word_count: int
     document_name: str = "proposal.docx"
     generation_mode: str = TEMPLATE_FALLBACK
     synthesis_note: Optional[str] = None
     synthesis_failure: Optional[str] = None
+    ledger: Optional[RequestLedger] = None
+    quality: Dict[str, Any] = field(default_factory=dict)
+    timings_ms: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class _Synthesis:
+    draft: Optional[ProposalDraftV2] = None
+    word_count: int = 0
+    failure: Optional[str] = None
+    gate_codes: List[str] = field(default_factory=list)
 
 
 _ILLEGAL_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -63,19 +84,25 @@ def _default_provider():
     return ClaudeSynthesisProvider()
 
 
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
 def generate_proposal_docx(
     topic: str,
     domain: str,
     included_sources: List[Dict[str, Any]],
     provider=None,
+    ledger: Optional[RequestLedger] = None,
 ) -> ProposalDocument:
     """
     Generate an APA-styled proposal and render it to DOCX.
 
     Makes at most two model calls (the second only to repair a draft that failed the quality
-    gate). Any synthesis failure (not configured, provider error,
-    unparsable output, failed quality gate) falls back to the deterministic template so a
-    download is always produced; `generation_mode` says which path was used.
+    gate). Any synthesis failure (not configured, provider error, unparsable output, failed
+    quality gate) falls back to the deterministic template so a download is always produced;
+    `generation_mode` says which path was used, and `ledger`/`quality`/`timings_ms` describe how.
+    Pass `ledger` to keep the model calls even if generation later raises.
 
     Raises:
         ProposalValidationError: even the template draft failed validation
@@ -95,11 +122,21 @@ def generate_proposal_docx(
         logger.exception("ProposalService: evidence preparation failed")
         raise RuntimeError(f"Could not prepare evidence: {error}")
 
-    draft, word_count, mode, failure_reason = _synthesized_draft(packet, topic, domain, provider)
-    if draft is None:
+    if ledger is None:
+        ledger = RequestLedger(request_id=current_request_id() or str(uuid.uuid4()))
+    timings: Dict[str, int] = {}
+
+    started = time.monotonic()
+    synthesis = _synthesize(packet, topic, domain, provider, ledger)
+    timings["synthesis_ms"] = _elapsed_ms(started)
+
+    if synthesis.draft is not None:
+        draft, word_count, mode = synthesis.draft, synthesis.word_count, AI_SYNTHESIZED
+    else:
         draft, word_count = _template_draft(packet, topic, domain, included_sources)
         mode = TEMPLATE_FALLBACK
 
+    started = time.monotonic()
     try:
         with tempfile.TemporaryDirectory(prefix="nexus-proposal-") as tmpdir:
             doc_path = Path(tmpdir) / "proposal.docx"
@@ -110,15 +147,31 @@ def generate_proposal_docx(
         raise RuntimeError(f"Could not render proposal to DOCX: {error}")
     if not document_bytes:
         raise RuntimeError("DOCX file is empty")
+    timings["render_ms"] = _elapsed_ms(started)
 
-    logger.info("ProposalService: done (mode=%s, words=%d, bytes=%d)", mode, word_count, len(document_bytes))
+    quality = {
+        "generation_mode": mode,
+        "synthesis_failure": synthesis.failure,
+        "attempts": len(ledger.calls),
+        "repair_used": mode == AI_SYNTHESIZED and len(ledger.calls) > 1,
+        "word_count": word_count,
+        "source_count": len(packet.sources),
+        "cited_source_count": cited_source_count(draft),
+        "integrative_paragraphs": integrative_paragraph_count(draft),
+        "gate_errors": ",".join(synthesis.gate_codes),
+    }
+    logger.info("ProposalService: done (mode=%s, words=%d, bytes=%d, calls=%d, timings=%s)",
+                mode, word_count, len(document_bytes), len(ledger.calls), timings)
     return ProposalDocument(
         document_bytes=document_bytes,
         word_count=word_count,
         document_name=document_filename(topic),
         generation_mode=mode,
-        synthesis_note=FALLBACK_NOTES.get(failure_reason) if mode == TEMPLATE_FALLBACK else None,
-        synthesis_failure=failure_reason,
+        synthesis_note=FALLBACK_NOTES.get(synthesis.failure) if mode == TEMPLATE_FALLBACK else None,
+        synthesis_failure=synthesis.failure,
+        ledger=ledger,
+        quality=quality,
+        timings_ms=timings,
     )
 
 
@@ -132,32 +185,42 @@ def _failure_reason(error: Exception) -> str:
     return "provider_error"
 
 
-def _synthesized_draft(packet: EvidencePacket, topic: str, domain: str, provider):
-    """Return (draft, word_count, mode, failure_reason); draft is None when synthesis is unusable.
+def _synthesize(packet: EvidencePacket, topic: str, domain: str, provider, ledger: RequestLedger) -> _Synthesis:
+    """Try synthesis; `draft` is None when it is unusable.
 
     A draft that fails the quality gate gets one repair attempt with the specific problems
     fed back; provider errors and a missing key are not retried.
     """
+    result = _Synthesis()
     provider = provider or _default_provider()
     feedback: Optional[List[str]] = None
     for attempt in range(1, MAX_SYNTHESIS_ATTEMPTS + 1):
         try:
-            draft = synthesize_proposal(packet, topic, domain, provider, feedback)
+            draft = synthesize_proposal(packet, topic, domain, provider, feedback, ledger, attempt)
             validation = validate_synthesized_draft(draft, packet)
             if not validation.passed:
+                ledger.calls[-1].outcome = QUALITY_GATE
                 raise ProposalValidationError(validation.errors)
-            return draft, validation.word_count, AI_SYNTHESIZED, None
+            result.draft, result.word_count, result.failure = draft, validation.word_count, None
+            return result
         except Exception as error:
             reason = _failure_reason(error)
+            if isinstance(error, ProposalValidationError):
+                for code in gate_error_codes(error.errors):
+                    if code not in result.gate_codes:
+                        result.gate_codes.append(code)
             logger.warning("ProposalService: synthesis attempt %d/%d failed (reason=%s, %s: %s)",
                            attempt, MAX_SYNTHESIS_ATTEMPTS, reason, type(error).__name__, error)
+            result.failure = reason
             if reason != "quality_gate" or attempt == MAX_SYNTHESIS_ATTEMPTS:
-                return None, 0, None, reason
+                return result
             feedback = error.errors
-    return None, 0, None, "quality_gate"
+    return result
 
 
-def _template_draft(packet: EvidencePacket, topic: str, domain: str, included_sources: List[Dict[str, Any]]):
+def _template_draft(
+    packet: EvidencePacket, topic: str, domain: str, included_sources: List[Dict[str, Any]]
+) -> Tuple[ProposalDraftV2, int]:
     try:
         metadata = extract_research_metadata(included_sources, topic)
     except Exception as error:

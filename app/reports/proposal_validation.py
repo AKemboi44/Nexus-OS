@@ -123,8 +123,7 @@ def validate_synthesized_draft(draft: ProposalDraftV2, packet: EvidencePacket) -
     if uncited:
         errors.append(f"{len(uncited)} evidence paragraph(s) have no source citation")
 
-    integrative = [block for block in blocks if len(set(block.evidence_ids)) >= 2]
-    if len(packet.sent_source_ids) >= 2 and len(integrative) < 2:
+    if len(packet.sent_source_ids) >= 2 and integrative_paragraph_count(draft) < 2:
         errors.append("Fewer than 2 paragraphs integrate multiple sources")
 
     source_runs = _source_word_runs(packet)
@@ -142,6 +141,38 @@ def validate_synthesized_draft(draft: ProposalDraftV2, packet: EvidencePacket) -
         warnings=base.warnings,
         word_count=base.word_count,
     )
+
+
+def integrative_paragraph_count(draft: ProposalDraftV2) -> int:
+    """Paragraphs that draw on two or more distinct sources."""
+    return sum(1 for block in _all_blocks(draft) if len(set(block.evidence_ids)) >= 2)
+
+
+_GATE_ERROR_CODES = (
+    (r"too brief", "too_brief"),
+    (r"too long", "too_long"),
+    (r"unknown source citations|not in evidence packet", "unknown_citation"),
+    (r"required section empty", "empty_section"),
+    (r"no source citation", "uncited_evidence"),
+    (r"integrate multiple sources", "no_integration"),
+    (r"reproduces \d+\+ consecutive words", "verbatim_copy"),
+    (r"square brackets", "brackets"),
+    (r"schema", "schema"),
+)
+
+
+def gate_error_codes(errors: List[str]) -> List[str]:
+    """Stable codes for gate failures, so telemetry never carries draft or source text."""
+    codes = []
+    for error in errors:
+        code = next((c for pattern, c in _GATE_ERROR_CODES if re.search(pattern, error, re.I)), "other")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def cited_source_count(draft: ProposalDraftV2) -> int:
+    return len(_collect_cited_ids(draft))
 
 
 def _all_blocks(draft: ProposalDraftV2) -> list:

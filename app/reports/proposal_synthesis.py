@@ -3,10 +3,13 @@
 import asyncio
 import json
 import logging
+import time
 from typing import List, Optional
 
 from app.reports.evidence_preparation import EvidencePacket
 from app.reports.proposal_schema import ProposalDraftV2, proposal_json_schema
+from app.synthesis.call_ledger import INVALID_OUTPUT, OK, PROVIDER_ERROR, RequestLedger
+from app.synthesis.errors import classify_provider_error
 from app.synthesis.providers import SynthesisUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -61,27 +64,65 @@ def build_user_prompt(packet: EvidencePacket, topic: str, domain: str, feedback:
 
 
 def synthesize_proposal(
-    packet: EvidencePacket, topic: str, domain: str, provider, feedback: Optional[List[str]] = None
+    packet: EvidencePacket,
+    topic: str,
+    domain: str,
+    provider,
+    feedback: Optional[List[str]] = None,
+    ledger: Optional[RequestLedger] = None,
+    attempt: int = 1,
 ) -> ProposalDraftV2:
-    """Make one provider call and parse the result; callers validate, retry once, and fall back."""
-    if not provider.is_configured():
-        raise SynthesisUnavailableError(
-            "Proposal synthesis provider is not configured", provider=getattr(provider, "name", "unknown")
-        )
+    """Make one provider call and parse the result; callers validate, retry once, and fall back.
 
-    result = asyncio.run(
-        provider.generate_structured_once(
-            prompt_user=build_user_prompt(packet, topic, domain, feedback),
-            prompt_system=SYSTEM_PROMPT,
-            schema=proposal_json_schema(),
-            max_tokens=MAX_OUTPUT_TOKENS,
+    Each call made is recorded in `ledger` (outcome, latency, tokens), including calls whose
+    output turns out to be unusable, because those tokens are billed regardless.
+    """
+    provider_name = getattr(provider, "name", "unknown")
+    if not provider.is_configured():
+        raise SynthesisUnavailableError("Proposal synthesis provider is not configured", provider=provider_name)
+
+    ledger = ledger if ledger is not None else RequestLedger()
+    call = ledger.add_call("proposal_synthesis", provider_name, getattr(provider, "model", "unknown"), attempt)
+    started = time.monotonic()
+    try:
+        result = asyncio.run(
+            provider.generate_structured_once(
+                prompt_user=build_user_prompt(packet, topic, domain, feedback),
+                prompt_system=SYSTEM_PROMPT,
+                schema=proposal_json_schema(),
+                max_tokens=MAX_OUTPUT_TOKENS,
+            )
         )
+    except Exception as error:
+        classification = classify_provider_error(error, provider_name)
+        ledger.complete_call(
+            call, PROVIDER_ERROR,
+            http_status=classification.http_status,
+            latency_ms=_elapsed_ms(started),
+            error_kind=classification.kind,
+        )
+        raise
+
+    call.model = result.get("model") or call.model
+    ledger.complete_call(
+        call, OK,
+        input_tokens=result.get("input_tokens"),
+        output_tokens=result.get("output_tokens"),
+        latency_ms=_elapsed_ms(started),
     )
     logger.info(
-        "ProposalSynthesis: provider=%s model=%s input_tokens=%s output_tokens=%s",
-        result.get("provider"), result.get("model"), result.get("input_tokens"), result.get("output_tokens"),
+        "ProposalSynthesis: attempt=%d provider=%s model=%s latency_ms=%s input_tokens=%s output_tokens=%s",
+        attempt, call.provider, call.model, call.latency_ms, call.input_tokens, call.output_tokens,
     )
 
     from app.agents.scribe_agent import ScribeResearchAgent
 
-    return ProposalDraftV2(**ScribeResearchAgent._parse_proposal_json(result.get("content")))
+    try:
+        return ProposalDraftV2(**ScribeResearchAgent._parse_proposal_json(result.get("content")))
+    except Exception:
+        call.outcome = INVALID_OUTPUT
+        raise
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))

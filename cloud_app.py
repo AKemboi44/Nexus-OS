@@ -16,12 +16,16 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, constr
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, constr, field_validator
+from typing import Optional, List, Dict, Any, Literal
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
 from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
-from app.analytics.context import accept_request_id, configure_logging, reset_request_id, set_request_id
+from app.analytics import tracing
+from app.analytics.tracing import traced
+from app.analytics.context import (
+    accept_request_id, configure_logging, current_request_id, reset_request_id, set_request_id,
+)
 from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_properties
 from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
@@ -36,6 +40,7 @@ from app.synthesis.errors import classify_provider_error
 from app.payments.config import default_pricing_config, PricingConfig
 from app.analytics.ab_experiment import ExperimentService
 from app.reports.proposal_service import AI_SYNTHESIZED, generate_proposal_docx, ProposalValidationError
+from app.synthesis.call_ledger import RequestLedger
 from fastapi.concurrency import run_in_threadpool
 from app.reports.queue_worker import start_queue_worker, stop_queue_worker
 from contextlib import asynccontextmanager
@@ -98,6 +103,25 @@ class AnalyticsEvent(BaseModel):
     timestamp: Optional[str] = None
     source: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
+
+
+FEEDBACK_REASONS = ("inaccurate", "not_synthesized", "citations", "formatting", "too_long", "too_short")
+
+
+class FeedbackRequest(BaseModel):
+    """A rating of one delivered report. Fixed reasons only; free text is never collected."""
+    reference: constr(pattern=r"^[A-Za-z0-9._-]{8,64}$")
+    rating: Literal["up", "down"]
+    reasons: List[str] = Field(default_factory=list, max_length=len(FEEDBACK_REASONS))
+    report_type: Literal["proposal", "full_starter"] = "proposal"
+
+    @field_validator("reasons")
+    @classmethod
+    def reasons_must_be_known(cls, reasons):
+        unknown = [reason for reason in reasons if reason not in FEEDBACK_REASONS]
+        if unknown:
+            raise ValueError(f"Unknown feedback reasons: {unknown}")
+        return reasons
 
 
 class PayPalOrderRequest(BaseModel):
@@ -226,8 +250,29 @@ def record_backend_analytics(
         logger.exception("Could not persist backend analytics event %s.", event_name)
 
 
+tracing.set_sink(record_backend_analytics)
+
+
 def elapsed_milliseconds(started_at: float) -> int:
     return max(0, int((time.monotonic() - started_at) * 1000))
+
+
+def record_llm_calls(user_id: str, ledger) -> None:
+    """One event per model call; tokens are billed even when the call's output was unusable."""
+    for call in ledger.calls:
+        record_backend_analytics("llm_call", user_id, {
+            "purpose": call.purpose, "provider": call.provider, "model": call.model,
+            "attempt": call.attempt, "outcome": call.outcome, "latency_ms": call.latency_ms,
+            "input_tokens": call.input_tokens, "output_tokens": call.output_tokens,
+            "http_status": call.http_status, "error_kind": call.error_kind,
+        })
+
+
+def record_proposal_quality(user_id: str, doc, report_type: str) -> None:
+    """Stage spans and the quality summary for a proposal that was produced."""
+    for stage, duration_ms in doc.timings_ms.items():
+        tracing.record_span(user_id, f"report.{stage.removesuffix('_ms')}", duration_ms, report_type=report_type)
+    record_backend_analytics("proposal_quality", user_id, dict(doc.quality))
 
 
 def normalized_error_category(error: Exception) -> str:
@@ -452,7 +497,8 @@ async def execute_cloud_scan(
     topic = normalize_topic_spelling(payload.topic.strip())
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
-    
+    topic_corrected = topic != payload.topic.strip()
+
     user_id = supabase_user_id(user)
     session_id = x_session_id or "unknown"
     started_at = time.monotonic()
@@ -539,19 +585,21 @@ async def execute_cloud_scan(
             "inclusion_rule_count": len(payload.selected_inclusion_reasons),
             "domain_category": str(payload.domain or "scholarly")[:40],
             "variant": ab_variant,
+            "topic_corrected": topic_corrected,
         },
     )
     try:
         uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain or "scholarly")
         dossier_bytes = None
         with tempfile.TemporaryDirectory(prefix="nexus-dossier-") as dossier_directory:
-            result_data = pipeline.run_research(
-                query=topic,
-                max_sources=effective_max_sources,
-                additional_sources=uploaded_sources,
-                selected_inclusion_reasons=payload.selected_inclusion_reasons,
-                output_directory=dossier_directory,
-            )
+            with traced(user_id, "scan.discovery"):
+                result_data = pipeline.run_research(
+                    query=topic,
+                    max_sources=effective_max_sources,
+                    additional_sources=uploaded_sources,
+                    selected_inclusion_reasons=payload.selected_inclusion_reasons,
+                    output_directory=dossier_directory,
+                )
             if hasattr(result_data, "to_dict"):
                 result_data = result_data.to_dict()
             elif hasattr(result_data, "model_dump"):
@@ -613,12 +661,13 @@ async def execute_cloud_scan(
         storage_path = f"{supabase_user_id(user)}/{run_id}/{result_data['discovery_report_name']}"
         if not dossier_bytes:
             raise RuntimeError("Research dossier was empty.")
-        database.upload_storage_object(
-            DOSSIER_STORAGE_BUCKET,
-            storage_path,
-            dossier_bytes,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        with traced(user_id, "scan.export"):
+            database.upload_storage_object(
+                DOSSIER_STORAGE_BUCKET,
+                storage_path,
+                dossier_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
         result_data["excel_dossier_storage_path"] = storage_path
         try:
             run_record = database.insert(
@@ -937,18 +986,25 @@ async def generate_research_report(
 
         # Proposal generation: deterministic templates with extracted metadata
         if payload.report_type == "proposal":
-            reference_id = str(uuid4())
+            reference_id = current_request_id() or str(uuid4())
             try:
                 logger.info("Proposal: generating from %d sources (reference=%s)",
                            len(included_sources), reference_id)
 
                 # Blocking model call and DOCX rendering: keep them off the event loop
-                doc = await run_in_threadpool(
-                    generate_proposal_docx,
-                    topic,
-                    payload.domain,
-                    included_sources,
-                )
+                ledger = RequestLedger(request_id=reference_id)
+                try:
+                    doc = await run_in_threadpool(
+                        generate_proposal_docx,
+                        topic,
+                        payload.domain,
+                        included_sources,
+                        None,
+                        ledger,
+                    )
+                finally:
+                    record_llm_calls(user_id, ledger)
+                record_proposal_quality(user_id, doc, payload.report_type)
 
                 document_bytes = doc.document_bytes
                 word_count = doc.word_count
@@ -966,6 +1022,7 @@ async def generate_research_report(
                     "document_base64": base64.b64encode(document_bytes).decode("ascii"),
                     "report_type": payload.report_type,
                     "cache_hit": False,
+                    "reference": reference_id,
                 }
                 if doc.synthesis_note:
                     response["synthesis_note"] = doc.synthesis_note
@@ -974,12 +1031,13 @@ async def generate_research_report(
                 # Only AI-synthesized documents are cached. A fallback is returned inline so the
                 # next request retries synthesis instead of replaying the weaker document.
                 if synthesized:
-                    database.upload_storage_object(
-                        DOSSIER_STORAGE_BUCKET,
-                        cache_key,
-                        document_bytes,
-                        DOCX_CONTENT_TYPE,
-                    )
+                    with traced(user_id, "report.storage_upload", report_type=payload.report_type):
+                        database.upload_storage_object(
+                            DOSSIER_STORAGE_BUCKET,
+                            cache_key,
+                            document_bytes,
+                            DOCX_CONTENT_TYPE,
+                        )
                     cache_id_val = report_cache_id(cache_key)
                     response.update({
                         "download_url": f"/v1/reports/cache/{cache_id_val}/download?report_type={payload.report_type}",
@@ -1169,14 +1227,16 @@ async def generate_research_report(
                 "is_paid": is_paid_user,
                 "priority": 10 if is_paid_user else 0,
             }
-    except HTTPException:
+    except HTTPException as error:
+        detail = error.detail if isinstance(error.detail, dict) else {}
         record_backend_analytics(
             "report_failed",
             user_id,
             {
                 "duration_ms": elapsed_milliseconds(started_at),
                 "report_type": payload.report_type,
-                "error_category": "client_request",
+                "error_category": normalized_error_category(error),
+                **({"error_kind": str(detail["error_code"])[:60]} if detail.get("error_code") else {}),
                 **(scribe_telemetry(scribe) if scribe else {}),
             },
         )
@@ -1647,6 +1707,28 @@ async def log_telemetry_event(
         logger.exception("Could not persist client analytics event %s.", event.event)
         return {"status": "accepted"}
     return {"status": "logged"}
+
+
+@app.post("/v1/feedback")
+@app.post("/api/feedback")
+async def submit_report_feedback(
+    payload: FeedbackRequest,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    user = require_supabase_user(authorization)
+    require_api_access(x_api_key)
+    record_backend_analytics(
+        "feedback_submitted",
+        supabase_user_id(user),
+        {
+            "reference_id": payload.reference,
+            "rating": payload.rating,
+            "reasons": ",".join(sorted(set(payload.reasons))),
+            "report_type": payload.report_type,
+        },
+    )
+    return {"status": "recorded"}
 
 
 @app.get("/v1/admin/analytics")
