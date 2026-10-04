@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Nexus metrics</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Nexus metrics</h1>
+    <div class="controls" id="controls" hidden>
+      <div class="segmented" role="group" aria-label="Time window" id="windowPicker">
+        <button type="button" data-days="7" aria-pressed="false">7 days</button>
+        <button type="button" data-days="30" aria-pressed="true">30 days</button>
+        <button type="button" data-days="90" aria-pressed="false">90 days</button>
+      </div>
+      <button type="button" id="refresh">Refresh</button>
+      <button type="button" id="signOut">Sign out</button>
+    </div>
+  </header>
+
+  <section class="login" id="login">
+    <form id="loginForm">
+      <label for="tokenInput">Admin token</label>
+      <input id="tokenInput" type="password" autocomplete="off" required>
+      <button type="submit">Open dashboard</button>
+      <p class="message" id="loginMessage" role="alert"></p>
+    </form>
+  </section>
+
+  <main id="app" hidden>
+    <nav class="tabs" role="tablist" id="tabs"></nav>
+    <p class="notice" id="notice" role="status" hidden></p>
+    <div id="view"></div>
+  </main>
+
+  <aside class="detail" id="detail" hidden aria-live="polite"></aside>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

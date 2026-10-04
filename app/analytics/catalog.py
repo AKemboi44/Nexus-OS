@@ -162,20 +162,20 @@ def activation_rate(ctx):
 
 
 @metric("funnel_scan_to_report", "Scan to report conversion", PE, "rate",
-        "Users with a completed scan who also received a report; breakdown shows each step.",
-        sparkline=False)
+        "Users with a completed scan who went on to receive a report. Each step counts only users who "
+        "also reached every earlier step, so no step can exceed the one before it.", sparkline=False)
 def funnel_scan_to_report(ctx):
     stages = [("scan_started", "Scan started"), ("scan_completed", "Scan completed"),
-              ("excel_download_completed", "Excel downloaded"), ("report_started", "Report requested"),
-              ("report_completed", "Report delivered")]
-    steps, previous = [], None
+              ("report_started", "Report requested"), ("report_completed", "Report delivered")]
+    steps, reached = [], None
     for name, label in stages:
-        users = len(ctx.users(name))
-        steps.append({"stage": name, "label": label, "users": users,
-                      "step_rate": None if previous is None else rate(users, previous)})
-        previous = users
-    scanned, reported = len(ctx.users("scan_completed")), len(ctx.users("report_completed"))
-    return Measurement(rate(reported, scanned), reported, scanned, scanned, steps)
+        users = ctx.users(name)
+        reached_now = users if reached is None else users & reached
+        steps.append({"stage": name, "label": label, "users": len(reached_now),
+                      "step_rate": None if reached is None else rate(len(reached_now), len(reached))})
+        reached = reached_now
+    scanned, delivered = steps[1]["users"], steps[-1]["users"]
+    return Measurement(rate(delivered, scanned), delivered, scanned, scanned, steps)
 
 
 @metric("repeat_use_rate", "Repeat use", PE, "rate",

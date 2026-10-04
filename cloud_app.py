@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Header, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, constr, field_validator
@@ -1756,6 +1757,40 @@ def _bounded_days(days: int) -> int:
 def _build_scorecard(days: int, only: Optional[str] = None) -> Dict[str, Any]:
     rows = analytics.fetch_events(days=days * 2)
     return metrics_engine.scorecard(rows, days, only=only, truncated=len(rows) >= MAX_FETCHED_EVENTS)
+
+
+ADMIN_UI_DIR = Path(__file__).resolve().parent / "app" / "admin_ui"
+ADMIN_UI_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _admin_asset(filename: str, media_type: str) -> FileResponse:
+    return FileResponse(ADMIN_UI_DIR / filename, media_type=media_type, headers=ADMIN_UI_HEADERS)
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/", include_in_schema=False)
+async def admin_dashboard():
+    """The static dashboard shell. It holds no data: every figure comes from the token-guarded API."""
+    return _admin_asset("index.html", "text/html")
+
+
+@app.get("/admin/admin.js", include_in_schema=False)
+async def admin_dashboard_script():
+    return _admin_asset("admin.js", "application/javascript")
+
+
+@app.get("/admin/admin.css", include_in_schema=False)
+async def admin_dashboard_styles():
+    return _admin_asset("admin.css", "text/css")
 
 
 @app.get("/v1/admin/metrics")

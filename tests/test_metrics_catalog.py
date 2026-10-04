@@ -162,17 +162,18 @@ def test_activation_counts_deliverables_within_24_hours():
     assert result["numerator"] == 1 and result["denominator"] == 3
 
 
-def test_funnel_reports_each_step():
+def test_funnel_steps_are_nested_and_never_exceed_the_previous_step():
     rows = []
     for user in ("a", "b", "c", "d"):
         rows += [row("scan_started", user=user), row("scan_completed", user=user)]
-    rows += [row("excel_download_completed", user="a"), row("excel_download_completed", user="b"),
-             row("report_started", user="a"), row("report_completed", user="a")]
+    rows += [row("report_started", user="a"), row("report_started", user="b"), row("report_completed", user="a")]
+    rows += [row("report_started", user="stranger"), row("report_completed", user="stranger")]  # never scanned
     result = measure(rows, "funnel_scan_to_report")
-    assert result["value"] == 0.25
     steps = {s["stage"]: s for s in result["breakdown"]}
-    assert steps["scan_completed"]["users"] == 4 and steps["excel_download_completed"]["step_rate"] == 0.5
-    assert steps["report_completed"]["users"] == 1
+    assert [steps[k]["users"] for k in ("scan_started", "scan_completed", "report_started", "report_completed")] == [4, 4, 2, 1]
+    assert steps["report_started"]["step_rate"] == 0.5 and steps["report_completed"]["step_rate"] == 0.5
+    assert all(s["step_rate"] is None or s["step_rate"] <= 1 for s in result["breakdown"])
+    assert result["value"] == 0.25
 
 
 def test_repeat_use_needs_two_different_days():
