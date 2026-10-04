@@ -1898,12 +1898,35 @@ def record_payment_completed(user_id: str, result) -> None:
     })
 
 
+def _plan_summary(user_id: str, record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """What the user bought, for the "Your plan" panel. None when they hold no pack."""
+    if not record or record.get("bundle_queries_remaining") is None:
+        return None
+    try:
+        orders = entitlements.purchase_summary(user_id)
+    except (RuntimeError, SupabaseRequestError) as error:
+        logger.warning("Plan summary unavailable: %s", error)
+        return None
+    packs = [pack for pack in (get_pack(order["pack_id"]) for order in orders) if pack]
+    if not packs:
+        return None
+    remaining = int(record["bundle_queries_remaining"])
+    return {
+        "pack_id": packs[0].id,
+        "pack_name": packs[0].name,
+        "scans_purchased": max(sum(pack.scans for pack in packs), remaining),
+        "last_purchased_at": orders[0]["credited_at"],
+        "packs": [{"name": pack.name, "scans": pack.scans} for pack in packs],
+    }
+
+
 def _entitlement_view(user_id: str, user_email: Optional[str]) -> Dict[str, Any]:
     record = entitlements.get(user_id)
     return {
         "active": entitlements.is_active(user_id, user_email=user_email),
         "scans_remaining": record.get("bundle_queries_remaining") if record else None,
         "ends_at": record.get("ends_at") if record else None,
+        "plan": _plan_summary(user_id, record),
     }
 
 
@@ -2003,6 +2026,7 @@ async def get_entitlement(
         "entitlement": record,
         "scans_remaining": record.get("bundle_queries_remaining") if record else None,
         "ends_at": record.get("ends_at") if record else None,
+        "plan": _plan_summary(str(user["id"]), record),
     }
 
 

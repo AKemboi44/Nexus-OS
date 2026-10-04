@@ -20,6 +20,8 @@
     let session = null;
     let paid = false;
     let scansRemaining = null;
+    let plan = null;
+    let planEndsAt = null;
     let packInfo = null;
     let packs = [];
     let authMode = 'signin';
@@ -382,8 +384,71 @@
     function updateUpgradeButton() {
         const button = byId('upgradePlan');
         const exhausted = paid && scansRemaining === 0;
-        button.hidden = !session || (paid && !exhausted);
-        button.textContent = exhausted ? 'Buy more scans' : 'Upgrade';
+        button.hidden = !session;
+        button.textContent = exhausted ? 'Buy more scans' : paid ? 'Add scans' : 'Upgrade';
+    }
+
+    const LOW_SCANS = 3;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    function formatDate(value) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime())
+            ? '' : date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+    }
+
+    function setPlanNotice(message, type = '') {
+        const notice = byId('planNotice');
+        setMessage(notice, message, type);
+        notice.hidden = !message;
+        renderPlan();
+    }
+
+    // "Your plan": what the user bought, how many scans are left and when the pack expires. It stays
+    // on screen for pack buyers, and turns into a nudge to buy more as the balance runs down.
+    function renderPlan() {
+        const card = byId('planCard');
+        const notice = byId('planNotice');
+        const hasPlan = Boolean(plan) && scansRemaining !== null;
+        card.hidden = !hasPlan && notice.hidden;
+        byId('planMain').hidden = byId('planActions').hidden = !hasPlan;
+        byId('pricingTitle').textContent = hasPlan ? 'Add more scans' : 'Unlock your full dossier and report';
+        byId('pricingLead').textContent = hasPlan
+            ? 'New scans are added to your balance. Pick the pack that fits your next project.'
+            : 'Download the complete Excel audit and Word proposal for every scan you run. Pick the pack that fits your project.';
+        card.classList.remove('is-low', 'is-empty', 'is-expired');
+        if (!hasPlan) return;
+
+        const left = scansRemaining;
+        const total = Math.max(Number(plan.scans_purchased) || 0, left, 1);
+        const percent = Math.round((left / total) * 100);
+        const endsAt = planEndsAt ? new Date(planEndsAt) : null;
+        const msLeft = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt.getTime() - Date.now() : null;
+        const expired = msLeft !== null && msLeft <= 0;
+        const state = expired ? 'is-expired' : left === 0 ? 'is-empty' : left <= LOW_SCANS || percent <= 20 ? 'is-low' : '';
+        if (state) card.classList.add(state);
+
+        byId('planRing').style.setProperty('--plan-progress', `${expired ? 0 : percent}%`);
+        byId('planRing').setAttribute('aria-valuenow', String(expired ? 0 : percent));
+        byId('planRingValue').textContent = String(expired ? 0 : left);
+        byId('planName').textContent = plan.pack_name;
+        byId('planBalance').textContent = expired
+            ? `${left} unused ${left === 1 ? 'scan' : 'scans'} expired`
+            : `${left} of ${total} scans left`;
+        const packs = Array.isArray(plan.packs) ? plan.packs : [];
+        byId('planExpiry').textContent = [
+            msLeft === null ? '' : expired
+                ? `Expired ${formatDate(planEndsAt)}`
+                : `Valid until ${formatDate(planEndsAt)} · ${Math.max(1, Math.ceil(msLeft / DAY_MS))} days left`,
+            packs.length > 1 ? `Combined from ${packs.map(pack => pack.scans).join(' + ')} scans` : '',
+        ].filter(Boolean).join(' · ');
+
+        const nudge = byId('planNudge');
+        nudge.hidden = !state;
+        nudge.textContent = expired ? 'Your pack has expired. Add a new pack to keep scanning.'
+            : left === 0 ? 'You have used all your scans. Add more to keep going.'
+            : state ? `Running low: only ${left} ${left === 1 ? 'scan' : 'scans'} left. Add more so your work is not interrupted.` : '';
+        byId('planAddScans').className = state ? 'button button-cta' : 'button button-outline';
     }
 
     function renderUpsells(data) {
@@ -414,6 +479,9 @@
         paid = response.ok && Boolean(result.active);
         scansRemaining = result.scans_remaining === null || result.scans_remaining === undefined
             ? null : Number(result.scans_remaining);
+        plan = result.plan || null;
+        planEndsAt = result.ends_at || null;
+        renderPlan();
         document.querySelectorAll('[data-paid-only]').forEach(option => {
             option.disabled = !paid;
             if (!paid) option.textContent = option.textContent.replace(' · paid', ' · upgrade required');
@@ -1246,6 +1314,7 @@
             finishActivityProgress('scan', 'Evidence scan complete.');
             setMessage(scanStatus, 'Scan complete. Your research was saved to your account.', 'success');
             await loadHistory();
+            refreshEntitlement().catch(() => {});
         } catch (error) {
             const limit = error.payload?.detail;
             const limitReached = error.status === 403 && (limit?.requires_bundle || limit?.paywall);
@@ -1284,6 +1353,9 @@
         } finally {
             clearSession();
             paid = false;
+            plan = null;
+            scansRemaining = null;
+            setPlanNotice('');
             renderAuthState();
             byId('historyList').replaceChildren();
             byId('savedSourcesList').replaceChildren();
@@ -1364,22 +1436,27 @@
     // payment with PayPal and credits the pack; this page only reports the result.
 
     async function finishCheckout(orderId) {
-        const status = byId('billingStatus');
+        // The result is written to the plan panel, not the pricing card: it stays visible while the
+        // pricing options remain open below it.
         byId('plansCard').hidden = false;
-        setMessage(status, 'Confirming your payment with PayPal…');
+        setMessage(byId('billingStatus'), '');
+        setPlanNotice('Confirming your payment with PayPal…');
         try {
             const result = await apiJson(`/v1/checkout/orders/${encodeURIComponent(orderId)}/capture`, {method: 'POST'});
             await refreshEntitlement();
             if (result.status === 'pending') {
-                setMessage(status, 'PayPal is still processing this payment. Your pack unlocks automatically once it clears.', 'success');
+                setPlanNotice('PayPal is still processing this payment. Your pack unlocks automatically once it clears.', 'success');
             } else {
-                setMessage(status, 'Payment confirmed. Your Research Pack is active.', 'success');
+                const pack = result.pack;
+                setPlanNotice(pack
+                    ? `Payment confirmed. ${pack.scans} scans were added to your account with the ${pack.name}.`
+                    : 'Payment confirmed. Your Research Pack is active.', 'success');
             }
         } catch (error) {
-            setMessage(status, error.payload?.detail?.message || error.message, 'error');
+            setPlanNotice(error.payload?.detail?.message || error.message, 'error');
         }
         history.replaceState(null, '', location.pathname);
-        byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+        byId('workspace').scrollIntoView({behavior: 'smooth', block: 'start'});
     }
 
     function startWorkspace() {
@@ -1510,6 +1587,7 @@
         byId('upgradeBannerButton').addEventListener('click', () => openUpgrade('results_banner'));
         byId('deliverablesUpsellButton').addEventListener('click', () => openUpgrade('deliverables'));
         byId('closePlans').addEventListener('click', () => { byId('plansCard').hidden = true; });
+        byId('planAddScans').addEventListener('click', () => openUpgrade('header'));
         byId('pricingGrid').addEventListener('click', event => {
             const buy = event.target.closest('button[data-pack]');
             if (buy) {

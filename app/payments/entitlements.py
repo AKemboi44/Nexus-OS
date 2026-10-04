@@ -2,7 +2,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
 from app.payments.catalog import Pack, money
@@ -715,6 +715,24 @@ class EntitlementStore:
                     (provider_id, pack.id, new_end.isoformat(), pack.scans, now_iso, user_key),
                 )
         return {"credited": True, "ends_at": new_end.isoformat(), "scans_added": pack.scans}
+
+    def purchase_summary(self, user_key: str) -> List[Dict[str, Any]]:
+        """Packs this user has bought and kept (credited, not refunded), newest first."""
+        if self.supabase:
+            rows = self.supabase.request(
+                "GET", "payment_orders",
+                params={"user_id": f"eq.{user_key}", "status": "eq.credited",
+                        "select": "order_id,pack_id,credited_at", "order": "credited_at.desc"},
+            ) or []
+        else:
+            with self._connect() as connection:
+                rows = [dict(row) for row in connection.execute(
+                    "SELECT order_id, pack_id, credited_at FROM payment_orders "
+                    "WHERE user_key = ? AND status = 'credited' ORDER BY credited_at DESC",
+                    (user_key,),
+                ).fetchall()]
+        return [{"order_id": row["order_id"], "pack_id": row["pack_id"], "credited_at": row.get("credited_at")}
+                for row in rows]
 
     def refund_pack_order(self, order_id: str, pack: Pack) -> Dict[str, Any]:
         """Undo a credited pack after a refund or reversal. Idempotent."""

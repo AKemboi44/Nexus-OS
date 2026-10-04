@@ -344,3 +344,32 @@ body { font-size: 16px; }
   .sticky-upgrade .button-cta { padding: 11px 16px; font-size: 15px; }
 }
 @media (prefers-reduced-motion: reduce) { .button-cta, .button-cta:hover:not(:disabled) { transition: none; transform: none; } }
+
+/* "Your plan": pack, scan balance and expiry, with a nudge to add more as the balance runs down. */
+.plan-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px 28px; margin: 0 0 22px; padding: 20px 26px; border: 1px solid #cbd8f8; border-left: 6px solid #4338ca; border-radius: 16px; background: linear-gradient(135deg, #eef2ff 0%, #fff 62%); box-shadow: var(--shadow); }
+.plan-card[hidden] { display: none; }
+.plan-main { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.plan-main[hidden], .plan-actions[hidden] { display: none; }
+.plan-ring { --plan-progress: 0%; --plan-color: #4338ca; display: grid; width: 88px; height: 88px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: conic-gradient(var(--plan-color) var(--plan-progress), #dde3f7 0); }
+.plan-ring::before { grid-area: 1 / 1; width: 70px; height: 70px; border-radius: 50%; background: #fff; content: ""; }
+.plan-ring-value { z-index: 1; grid-area: 1 / 1; display: grid; justify-items: center; font: 800 26px/1 Manrope, sans-serif; color: var(--ink); }
+.plan-ring-value small { margin-top: 3px; color: var(--muted); font: 700 9px "DM Sans", sans-serif; letter-spacing: 1px; }
+.plan-eyebrow { color: #4338ca; font: 800 11px "DM Sans", sans-serif; letter-spacing: 1.3px; }
+.plan-copy h3 { margin: 3px 0 4px; font: 800 22px/1.2 Manrope, sans-serif; letter-spacing: -.5px; }
+.plan-balance { margin: 0; color: var(--ink); font-size: 17px; font-weight: 800; }
+.plan-expiry { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+.plan-actions { display: grid; justify-items: end; gap: 10px; max-width: 340px; }
+.plan-nudge { margin: 0; color: #7a4a05; font-size: 13px; font-weight: 700; line-height: 1.45; text-align: right; }
+#planNotice { grid-column: 1 / -1; max-width: none; margin: 0; }
+#planNotice[hidden] { display: none; }
+.plan-card.is-low { border-color: #f3d28a; border-left-color: #f59e0b; background: linear-gradient(135deg, #fff7e6 0%, #fff 62%); }
+.plan-card.is-low .plan-ring { --plan-color: #f59e0b; }
+.plan-card.is-empty, .plan-card.is-expired { border-color: #eaa2a6; border-left-color: #d26068; background: linear-gradient(135deg, #fff0f0 0%, #fff 62%); }
+.plan-card.is-empty .plan-ring, .plan-card.is-expired .plan-ring { --plan-color: #d26068; }
+.plan-card.is-empty .plan-nudge, .plan-card.is-expired .plan-nudge { color: #962e39; }
+@media (max-width: 720px) {
+  .plan-card { grid-template-columns: 1fr; padding: 18px; }
+  .plan-actions { justify-items: stretch; max-width: none; }
+  .plan-nudge { text-align: left; }
+  .plan-actions .button { width: 100%; }
+}

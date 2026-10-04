@@ -8,7 +8,7 @@
   <title>Nexus Research AI — Filtered evidence for defensible proposals</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="canonical" href="https://www.brisklightai.com/">
-  <link rel="stylesheet" href="/styles.css?v=be3e2434">
+  <link rel="stylesheet" href="/styles.css?v=214fdf7e">
 </head>
 <body>
   <header class="site-header">
@@ -108,6 +108,22 @@
         <div><div class="eyebrow">YOUR RESEARCH DESK</div><h2>Welcome, <span id="accountEmail"></span></h2><p>Your research stays linked to your signed-in account.</p></div>
         <div class="header-actions"><button class="button button-primary" id="upgradePlan" type="button" hidden>Upgrade</button><button class="button button-outline" id="refreshHistory" type="button">Refresh history ↻</button></div>
       </div>
+      <section class="plan-card" id="planCard" aria-label="Your plan" hidden>
+        <div class="plan-main" id="planMain">
+          <div class="plan-ring" id="planRing" role="progressbar" aria-label="Scans remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="plan-ring-value"><span id="planRingValue">0</span><small>LEFT</small></span></div>
+          <div class="plan-copy">
+            <span class="plan-eyebrow">YOUR PLAN</span>
+            <h3 id="planName"></h3>
+            <p class="plan-balance" id="planBalance"></p>
+            <p class="plan-expiry" id="planExpiry"></p>
+          </div>
+        </div>
+        <div class="plan-actions" id="planActions">
+          <p class="plan-nudge" id="planNudge" hidden></p>
+          <button class="button button-outline" id="planAddScans" type="button">Add more scans</button>
+        </div>
+        <p class="form-message status-callout" id="planNotice" role="status" aria-live="polite" hidden></p>
+      </section>
       <div class="workspace-grid">
         <section class="workspace-card scan-card">
           <div class="card-heading"><div><span class="card-kicker">NEW SCAN</span><h3>Start with a question</h3></div><span class="scan-card-label">TOPIC SEARCH</span></div>
@@ -196,8 +212,8 @@
         <div class="pricing-hero">
           <div>
             <span class="pricing-eyebrow">ONE PAYMENT · NO SUBSCRIPTION · SECURE PAYPAL CHECKOUT</span>
-            <h3>Unlock your full dossier and report</h3>
-            <p>Download the complete Excel audit and Word proposal for every scan you run. Pick the pack that fits your project.</p>
+            <h3 id="pricingTitle">Unlock your full dossier and report</h3>
+            <p id="pricingLead">Download the complete Excel audit and Word proposal for every scan you run. Pick the pack that fits your project.</p>
           </div>
           <button class="dialog-close pricing-close" id="closePlans" type="button" aria-label="Close pricing">×</button>
         </div>
@@ -247,6 +263,6 @@
     <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
     <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
   </footer>
-  <script src="/app.js?v=a9c8258f" defer></script>
+  <script src="/app.js?v=9d4fa099" defer></script>
 </body>
 </html>

@@ -39,11 +39,11 @@ def test_every_extension_placement_is_registered_and_each_entry_point_reports_on
             assert "backToUpgradeDetailsBtn" in line, f"an upgrade button that does not record a placement: {line.strip()}"
 
 
-def test_the_header_button_is_not_hidden_for_pack_buyers_who_ran_out_of_scans():
+def test_the_header_button_stays_for_pack_buyers_so_they_can_always_add_scans():
     body = WEBSITE_JS[WEBSITE_JS.index("function updateUpgradeButton()"):]
     body = body[:body.index("\n    }\n")]
-    assert "paid && scansRemaining === 0" in body and "Buy more scans" in body
-    assert "button.hidden = !session || (paid && !exhausted)" in body
+    assert "paid && scansRemaining === 0" in body and "Buy more scans" in body and "'Add scans'" in body
+    assert "button.hidden = !session;" in body
 
 
 def test_paid_users_never_see_sales_prompts_and_the_locked_report_stays_visible():
