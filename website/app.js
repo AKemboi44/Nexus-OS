@@ -323,9 +323,18 @@
     function renderPricing() {
         const grid = byId('pricingGrid');
         if (!packs.length) {
+            const retry = Object.assign(document.createElement('button'), {
+                type: 'button', className: 'button button-primary', textContent: 'Try again',
+            });
+            retry.addEventListener('click', () => {
+                grid.replaceChildren(Object.assign(document.createElement('p'), {
+                    className: 'pricing-loading', textContent: 'Loading prices…',
+                }));
+                loadPackInfo();
+            });
             grid.replaceChildren(Object.assign(document.createElement('p'), {
-                className: 'pricing-loading', textContent: 'Prices could not be loaded. Please refresh the page.',
-            }));
+                className: 'pricing-loading', textContent: 'Prices could not be loaded.',
+            }), retry);
             return;
         }
         grid.replaceChildren(...packs.map((pack, index) => pricingCard(pack, index === 0)), teamCard());
@@ -343,6 +352,7 @@
         track('upgrade_cta_clicked', {placement});
         byId('plansCard').hidden = false;
         byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+        if (!packs.length) loadPackInfo();
     }
 
     function showUpgradePrompt(container, {headline, description, placement}) {
@@ -1324,12 +1334,13 @@
     async function loadPackInfo() {
         try {
             const response = await fetch(`${API_URL}/v1/checkout/packs`);
-            if (!response.ok) return;
+            if (!response.ok) throw new Error(`pack list ${response.status}`);
             const catalog = await response.json();
             packs = Array.isArray(catalog.packs) ? catalog.packs : [];
             packInfo = packs.find(pack => pack.id === catalog.default) || packs[0] || null;
         } catch (error) {
             packs = [];
+            packInfo = null;
         }
         renderPricing();
         renderUpsells(activeResult);

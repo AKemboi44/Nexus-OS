@@ -183,3 +183,11 @@ def test_the_extension_lets_the_buyer_choose_a_pack():
     assert "/v1/checkout/packs" in EXTENSION_JS and "function renderPackOptions()" in EXTENSION_JS
     assert "selectedPackId = option.dataset.pack" in EXTENSION_JS and "pack_id: selectedPack()?.id" in EXTENSION_JS
     assert "Just $${pack.per_scan} per scan" in EXTENSION_JS
+
+
+def test_a_failed_price_load_never_leaves_the_pricing_card_on_loading():
+    body = WEBSITE_JS[WEBSITE_JS.index("async function loadPackInfo()"):]
+    body = body[:body.index("\n    }\n")]
+    assert "if (!response.ok) throw" in body and "if (!response.ok) return" not in body
+    assert body.index("catch (error)") < body.index("renderPricing();"), "the grid is re-rendered on failure too"
+    assert "'Try again'" in WEBSITE_JS and "if (!packs.length) loadPackInfo();" in WEBSITE_JS
