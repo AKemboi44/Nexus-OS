@@ -104,6 +104,17 @@ class EntitlementStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_feature_usage (
+                    user_key TEXT NOT NULL,
+                    feature TEXT NOT NULL,
+                    period_month TEXT NOT NULL,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_key, feature, period_month)
+                )
+                """
+            )
             # Add columns if migrating existing db
             try:
                 connection.execute("ALTER TABLE entitlements ADD COLUMN bundle_queries_remaining INTEGER DEFAULT NULL")
@@ -715,6 +726,49 @@ class EntitlementStore:
                     (provider_id, pack.id, new_end.isoformat(), pack.scans, now_iso, user_key),
                 )
         return {"credited": True, "ends_at": new_end.isoformat(), "scans_added": pack.scans}
+
+    # --- monthly allowances for free-tier features. Unlike the scan counter these never fall back to
+    # the ephemeral local file when Supabase fails: a failed claim means "not granted". ---
+
+    def claim_feature_use(self, user_key: str, feature: str, limit: int) -> bool:
+        """Take one use of `feature` this month if any are left. Atomic."""
+        if limit <= 0:
+            return False
+        period = self.current_period_month()
+        if self.supabase:
+            result = self.supabase.request(
+                "POST", "rpc/nexus_claim_feature_use",
+                json={"p_user_id": user_key, "p_feature": feature, "p_period": period, "p_limit": limit},
+            )
+            return int(result) > 0
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO user_feature_usage (user_key, feature, period_month, use_count) "
+                "VALUES (?, ?, ?, 0)",
+                (user_key, feature, period),
+            )
+            claimed = connection.execute(
+                "UPDATE user_feature_usage SET use_count = use_count + 1 "
+                "WHERE user_key = ? AND feature = ? AND period_month = ? AND use_count < ?",
+                (user_key, feature, period, limit),
+            ).rowcount
+        return claimed == 1
+
+    def release_feature_use(self, user_key: str, feature: str) -> None:
+        """Give back a use that was claimed but never delivered."""
+        period = self.current_period_month()
+        if self.supabase:
+            self.supabase.request(
+                "POST", "rpc/nexus_release_feature_use",
+                json={"p_user_id": user_key, "p_feature": feature, "p_period": period},
+            )
+            return
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE user_feature_usage SET use_count = MAX(0, use_count - 1) "
+                "WHERE user_key = ? AND feature = ? AND period_month = ?",
+                (user_key, feature, period),
+            )
 
     def purchase_summary(self, user_key: str) -> List[Dict[str, Any]]:
         """Packs this user has bought and kept (credited, not refunded), newest first."""

@@ -144,6 +144,8 @@ def _wire(monkeypatch, provider):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: Database())
     monkeypatch.setattr(cloud_app.analytics, "record", lambda **event: events.append(event))
+    # These tests trace the paid delivery path.
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id, user_email=None: True)
     monkeypatch.setattr("app.reports.proposal_service._default_provider", lambda: provider)
     return events
 

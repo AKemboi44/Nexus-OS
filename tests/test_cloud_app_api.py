@@ -16,8 +16,13 @@ def clean_entitlements_and_pricing(tmp_path, monkeypatch):
     monkeypatch.setattr(cloud_app, "entitlements", store)
     yield
 
+def _entitled(monkeypatch):
+    """These tests cover the paid delivery path, so the caller holds an active pack."""
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id, user_email=None: True)
+
 
 def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
+    _entitled(monkeypatch)
     class Pipeline:
         def run_research(self, **kwargs):
             self.kwargs = kwargs
@@ -52,7 +57,7 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
     monkeypatch.setattr(cloud_app, "require_supabase_database", lambda: database)
     monkeypatch.setattr(cloud_app, "pipeline", pipeline)
-    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+    _entitled(monkeypatch)
 
     result = asyncio.run(cloud_app.execute_cloud_scan(
         cloud_app.ScanRequest(
@@ -89,7 +94,7 @@ def test_cloud_scan_passes_options_and_persists_result(monkeypatch):
     assert "excel_dossier_base64" not in run_values["result"]
     assert result["discovery_report_directory"] is None
     assert "excel_dossier_storage_path" not in result
-    assert result["dossier_download"]["remaining"] == 3
+    assert result["dossier_download"]["unlimited"] is True and result["counts"] == {"included": 1, "excluded": 0, "reviewed": 1}
 
 
 def test_cloud_scan_preserves_the_complete_topic_at_pipeline_boundary(monkeypatch):
@@ -175,6 +180,7 @@ def test_scan_records_privacy_preserving_operational_events(monkeypatch):
 
 
 def test_analytics_recording_failure_does_not_break_cached_report(monkeypatch):
+    _entitled(monkeypatch)
     class Database:
         def download_storage_object(self, bucket, path):
             return b"cached docx"
@@ -252,6 +258,7 @@ def test_provider_quota_error_enqueues_pending_report(monkeypatch):
 
 
 def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch):
+    monkeypatch.setenv("NEXUS_FREE_DOSSIER_DOWNLOADS", "3")  # the counted free-download path
     run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
     filename = "research_audit_ai_20261001_120000.xlsx"
     path = f"user-id/{run_id}/{filename}"
@@ -330,6 +337,7 @@ def test_dossier_download_whitelist_bypasses_quota(monkeypatch):
 
 
 def test_dossier_download_rejects_exhausted_free_allowance(monkeypatch):
+    monkeypatch.setenv("NEXUS_FREE_DOSSIER_DOWNLOADS", "3")  # the counted free-download path
     run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
     filename = "research_audit_ai_20261001_120000.xlsx"
     path = f"user-id/{run_id}/{filename}"
@@ -478,6 +486,7 @@ def _proposal_endpoint_setup(monkeypatch, provider):
 
 
 def test_proposal_fallback_is_returned_inline_and_not_cached(monkeypatch):
+    _entitled(monkeypatch)
     import io
 
     from docx import Document
@@ -502,6 +511,7 @@ def test_proposal_fallback_is_returned_inline_and_not_cached(monkeypatch):
 
 
 def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch, fake_provider, synthesized_draft_json):
+    _entitled(monkeypatch)
     import io
     import zipfile
     from urllib.parse import urlparse, parse_qs
@@ -534,6 +544,7 @@ def test_proposal_generate_then_download_url_returns_a_real_docx(monkeypatch, fa
 
 
 def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
+    _entitled(monkeypatch)
     class Database:
         def download_storage_object(self, bucket, path):
             self.bucket = bucket
@@ -566,6 +577,7 @@ def test_word_report_returns_cached_document_without_regenerating(monkeypatch):
 
 
 def test_cached_word_report_download_is_user_scoped(monkeypatch):
+    _entitled(monkeypatch)
     cache_digest = "a" * 64
     cache_id = f"v{cloud_app.REPORT_CACHE_VERSION}-{cache_digest}"
 
@@ -593,6 +605,7 @@ def test_cached_word_report_download_is_user_scoped(monkeypatch):
 
 
 def test_cached_word_report_download_rejects_outdated_cache_versions(monkeypatch):
+    _entitled(monkeypatch)
     monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
 
@@ -607,6 +620,7 @@ def test_cached_word_report_download_rejects_outdated_cache_versions(monkeypatch
 
 
 def test_word_report_rejects_sources_without_citable_metadata(monkeypatch):
+    _entitled(monkeypatch)
     monkeypatch.setattr(cloud_app, "require_supabase_user", lambda authorization: {"id": "user-id"})
     monkeypatch.setattr(cloud_app, "require_api_access", lambda key: None)
 

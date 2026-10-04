@@ -34,6 +34,8 @@ from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_propertie
 from app.payments.paypal import PayPalClient, PayPalError
 from app.payments.catalog import all_packs, get_pack
 from app.payments.checkout import CheckoutError, capture_pack_order, create_pack_checkout, handle_paypal_event
+from app.payments import exposure
+from app.reports.snapshot import snapshot_from_docx
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
 from app.research.spelling import normalize_topic_spelling
@@ -156,6 +158,8 @@ class ReportRequest(BaseModel):
     report_type: str = "proposal"
     domain: str = "scholarly"
     max_sources: int = 5
+    research_run_id: Optional[UUID] = None
+    preview: bool = False
 
 
 def require_admin(x_admin_token: Optional[str]):
@@ -722,6 +726,13 @@ async def execute_cloud_scan(
         response_data["research_run_id"] = run_record["id"]
         response_data["saved_dossier_id"] = dossier_record["id"]
         response_data.pop("excel_dossier_storage_path", None)
+        entitled = exposure.is_entitled(entitlements, user_id, user_email)
+        if not entitled:
+            record_backend_analytics(
+                "snapshot_served", user_id,
+                {"surface": "results", "run_id": run_id_str, "hidden_count": max(0, len(result_data.get("included") or []) - exposure.PREVIEW_ROWS) + max(0, len(result_data.get("excluded") or []) - exposure.PREVIEW_ROWS)},
+            )
+        response_data = exposure.results_for(response_data, entitled)
         source_metrics = source_metadata_metrics(
             (result_data.get("included") or []) + (result_data.get("excluded") or [])
         )
@@ -786,6 +797,10 @@ async def download_research_dossier(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Research run not found.")
+
+    if not exposure.is_entitled(entitlements, user_id, user.get("email")) and exposure.free_dossier_downloads() == 0:
+        record_backend_analytics("download_blocked", user_id, {"surface": "excel", "run_id": str(run_id)})
+        raise upgrade_required("excel", "The full Excel dossier is included with a Research Pack.")
 
     result_data = rows[0].get("result") or {}
     storage_path = result_data.get("excel_dossier_storage_path")
@@ -885,9 +900,16 @@ async def generate_research_report(
         raise HTTPException(status_code=400, detail="Topic cannot be blank.")
     if payload.report_type not in {"proposal", "full_starter"}:
         raise HTTPException(status_code=400, detail="Unsupported report type.")
-    if payload.report_type == "full_starter" and not entitlements.is_active(str(user["id"])):
-        raise HTTPException(status_code=403, detail="The Complete Literature Review is available to paid users.")
     user_id = supabase_user_id(user)
+    entitled = exposure.is_entitled(entitlements, user_id, user.get("email"))
+    if payload.report_type == "full_starter" and not entitled:
+        raise HTTPException(status_code=403, detail="The Complete Literature Review is available to paid users.")
+    # Free users never receive a document. They may ask for a snapshot of a proposal built from one of
+    # their own scans; anything else is refused before a model is called.
+    snapshot_only = not entitled
+    if snapshot_only and not (payload.preview and payload.research_run_id):
+        record_backend_analytics("download_blocked", user_id, {"surface": "word"})
+        raise upgrade_required("word", "The full Word proposal is included with a Research Pack.")
     started_at = time.monotonic()
     record_backend_analytics(
         "report_started",
@@ -901,10 +923,18 @@ async def generate_research_report(
         },
     )
     scribe = None
+    credit_claimed = False
     try:
-        included_sources = list(payload.included_sources)
-        uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain)
-        included_sources.extend(source for source in uploaded_sources if source.get("include"))
+        if payload.research_run_id:
+            # The saved run is the source of truth: the browser's list may be a truncated preview.
+            included_sources = load_run_included_sources(user_id, payload.research_run_id)
+            uploaded_sources = []
+        else:
+            included_sources = list(payload.included_sources)
+            uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain)
+            included_sources.extend(source for source in uploaded_sources if source.get("include"))
+        if not included_sources and snapshot_only:
+            raise HTTPException(status_code=422, detail="This scan has no included sources to build a proposal from.")
         if not included_sources:
             research_result = pipeline.run_research(
                 query=topic,
@@ -968,6 +998,12 @@ async def generate_research_report(
                 )
             cached_document = None
         if cached_document:
+            if snapshot_only:
+                # Already generated (e.g. an earlier preview): costs nothing, so it uses no credit.
+                return snapshot_response(
+                    user_id, cached_document, payload.report_type, current_request_id() or str(uuid4()),
+                    cache_hit=True, generation_mode=AI_SYNTHESIZED,
+                )
             response = cached_report_response(
                 cached_document,
                 cache_key,
@@ -992,6 +1028,19 @@ async def generate_research_report(
         # Proposal generation: deterministic templates with extracted metadata
         if payload.report_type == "proposal":
             reference_id = current_request_id() or str(uuid4())
+            if snapshot_only:
+                try:
+                    credit_claimed = await run_in_threadpool(
+                        entitlements.claim_feature_use, user_id, WORD_PREVIEW_FEATURE, exposure.free_word_previews()
+                    )
+                except (RuntimeError, SupabaseRequestError) as error:
+                    logger.warning("Could not verify the free preview allowance: %s", error)
+                    raise HTTPException(status_code=503, detail="Could not verify your free preview. Please try again.") from error
+                if not credit_claimed:
+                    record_backend_analytics("download_blocked", user_id, {"surface": "word"})
+                    raise upgrade_required(
+                        "word", "You have used your free proposal preview this month. A Research Pack unlocks the full proposal."
+                    )
             try:
                 logger.info("Proposal: generating from %d sources (reference=%s)",
                            len(included_sources), reference_id)
@@ -1061,14 +1110,21 @@ async def generate_research_report(
                         "included_source_count": len(included_sources),
                         "word_count": word_count,
                         "outcome_category": doc.generation_mode,
+                        "tier": "free" if snapshot_only else "paid",
                     },
                 )
                 logger.info("Proposal: completed successfully (reference=%s)", reference_id)
+                if snapshot_only:
+                    return snapshot_response(
+                        user_id, document_bytes, payload.report_type, reference_id,
+                        cache_hit=False, generation_mode=doc.generation_mode,
+                    )
                 return response
 
             except ProposalValidationError as error:
                 # User-fixable: validation failure (missing themes, too brief, etc.)
                 logger.warning("Proposal: validation failed (reference=%s): %s", reference_id, error.errors)
+                release_preview_credit(user_id, credit_claimed)
                 raise HTTPException(status_code=422, detail={
                     "message": str(error),
                     "error_code": "proposal_validation_failed",
@@ -1078,11 +1134,13 @@ async def generate_research_report(
                 })
 
             except HTTPException:
+                release_preview_credit(user_id, credit_claimed)
                 raise
 
             except Exception as error:
                 # System error: rendering, I/O, etc.
                 logger.exception("Proposal: generation failed (reference=%s)", reference_id)
+                release_preview_credit(user_id, credit_claimed)
                 raise HTTPException(status_code=500, detail={
                     "message": f"Proposal generation failed: {str(error)}",
                     "error_code": "proposal_generation_failed",
@@ -1309,6 +1367,9 @@ async def download_cached_research_report(
     require_api_access(x_api_key)
     if report_type not in {"proposal", "full_starter"}:
         raise HTTPException(status_code=400, detail="Unsupported report type.")
+    if not exposure.is_entitled(entitlements, user_id, user.get("email")):
+        record_backend_analytics("download_blocked", user_id, {"surface": "cache"})
+        raise upgrade_required("word", "Saved reports can be downloaded with a Research Pack.")
     cache_digest = parse_report_cache_id(cache_id)
     if not cache_digest:
         raise HTTPException(
@@ -1477,6 +1538,9 @@ async def download_ready_queued_report(
     job = global_queue_manager.get_job(job_id)
     if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="Queued report job not found.")
+    if not exposure.is_entitled(entitlements, user_id, user.get("email")):
+        record_backend_analytics("download_blocked", user_id, {"surface": "queue"})
+        raise upgrade_required("word", "Queued reports can be downloaded with a Research Pack.")
     if job.status != "ready" or not job.document_base64:
         raise HTTPException(status_code=400, detail=f"Report is not ready for download (current status: {job.status}).")
     doc_bytes = base64.b64decode(job.document_base64)
@@ -1545,8 +1609,12 @@ async def get_research_run(
     record = dict(rows[0])
     result_data = record.get("result")
     if isinstance(result_data, dict):
-        record["result"] = dict(result_data)
-        record["result"].pop("excel_dossier_storage_path", None)
+        result_data = dict(result_data)
+        result_data.pop("excel_dossier_storage_path", None)
+        # The stored run is complete; free users read the same limited view they got from the scan.
+        record["result"] = exposure.results_for(
+            result_data, exposure.is_entitled(entitlements, supabase_user_id(user), user.get("email"))
+        )
     return record
 
 
@@ -1896,6 +1964,66 @@ def record_payment_completed(user_id: str, result) -> None:
         "bundle_id": result.pack.id, "price": float(result.order["amount"]),
         "variant": ExperimentService.get_variant_for_user(user_id),
     })
+
+
+WORD_PREVIEW_FEATURE = "word_preview"
+
+
+def release_preview_credit(user_id: str, claimed: bool) -> None:
+    """Give the free preview back when generation failed before anything was delivered."""
+    if not claimed:
+        return
+    try:
+        entitlements.release_feature_use(user_id, WORD_PREVIEW_FEATURE)
+    except Exception:
+        logger.exception("Could not release the free preview credit for user %s.", user_id)
+
+
+def snapshot_response(
+    user_id: str,
+    document_bytes: bytes,
+    report_type: str,
+    reference: str,
+    cache_hit: bool,
+    generation_mode: str,
+) -> Dict[str, Any]:
+    """What a free user gets instead of the document: its outline and opening paragraph."""
+    snapshot = snapshot_from_docx(document_bytes)
+    record_backend_analytics(
+        "snapshot_served", user_id,
+        {"surface": "word", "cache_hit": cache_hit, "locked_sections": snapshot["locked_sections"]},
+    )
+    return {
+        "status": "snapshot",
+        "action": "snapshot_ready",
+        "report_type": report_type,
+        "snapshot": snapshot,
+        "generation_mode": generation_mode,
+        "degraded": generation_mode != AI_SYNTHESIZED,
+        "cache_hit": cache_hit,
+        "reference": reference,
+    }
+
+
+def load_run_included_sources(user_id: str, run_id: UUID) -> List[Dict[str, Any]]:
+    """The full included-source list of one of the user's own saved scans."""
+    rows = require_supabase_database().request(
+        "GET",
+        "research_runs",
+        params={"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "select": "result", "limit": 1},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Research run not found.")
+    included = (rows[0].get("result") or {}).get("included")
+    return [dict(source) for source in included if isinstance(source, dict)] if isinstance(included, list) else []
+
+
+def upgrade_required(surface: str, message: str) -> HTTPException:
+    """The one answer a free user gets when a file or full result needs a pack."""
+    return HTTPException(
+        status_code=403,
+        detail={"message": message, "error_code": "upgrade_required", "surface": surface, "requires_bundle": True},
+    )
 
 
 def _plan_summary(user_id: str, record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

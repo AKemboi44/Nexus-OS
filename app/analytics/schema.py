@@ -191,6 +191,19 @@ register(
     {"duration_ms": integer(), "cache_hit": flag(), "error_category": text()},
 )
 register(
+    "snapshot_served", "monetization", _SERVER,
+    {
+        "surface": text("results", "word"), "run_id": text(), "hidden_count": integer(),
+        "cache_hit": flag(), "locked_sections": integer(),
+    },
+    description="A free user was shown a limited preview instead of the full result or document.",
+)
+register(
+    "download_blocked", "monetization", _SERVER,
+    {"surface": text("excel", "word", "cache", "queue"), "run_id": text()},
+    description="A free user asked for a file that needs a pack.",
+)
+register(
     "report_started", "activation", _SERVER,
     {
         "report_type": text("proposal", "full_starter"), "included_source_count": integer(),
@@ -205,7 +218,7 @@ register(
         "quality_passed": flag(), "outcome_category": text(), "provider_attempt_count": integer(),
         "provider_fallback_used": flag(), "validation_correction_used": flag(),
         "provider_selected": text(), "model_selected": text(), "degraded_mode": flag(),
-        "configured_output_token_limit": integer(),
+        "configured_output_token_limit": integer(), "tier": text("free", "paid"),
     },
 )
 register(
