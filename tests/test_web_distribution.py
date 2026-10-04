@@ -45,6 +45,12 @@ def test_chrome_extension_release_package_contains_manifest_assets():
         assert not any(name.endswith((".env", ".pyc")) for name in archive.namelist())
 
 
+def asset_version(path):
+    """Cloudflare caches assets for hours; the page must reference a URL that changes with the file."""
+    import hashlib
+    return hashlib.sha1(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:8]
+
+
 def test_website_is_static_and_uses_existing_authenticated_services():
     website = ROOT / "website"
     app_js = (website / "app.js").read_text(encoding="utf-8")
@@ -137,11 +143,11 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert ".included-stat strong" in css
     assert ".filtered-stat strong" in css
     assert ".result-stat { flex-wrap: nowrap;" in css
-    assert 'href="/styles.css?v=20261002-11"' in html
+    assert f'href="/styles.css?v={asset_version(website / "styles.css")}"' in html
     assert 'class="hero-filter-headline"' in html
     assert html.count("✓ Relevance, recency, and quality checks") == 1
     assert ".hero h1.hero-filter-headline { font-size: clamp(22px, 2.25vw, 28px);" in css
-    assert 'src="/app.js?v=20261002-13"' in html
+    assert f'src="/app.js?v={asset_version(website / "app.js")}"' in html
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
     assert ".history-list { min-width: 0; min-height: 235px; grid-template-columns: minmax(0, 1fr);" in css
 

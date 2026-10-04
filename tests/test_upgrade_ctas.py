@@ -106,3 +106,21 @@ def test_the_extension_has_a_scan_limit_button():
     assert 'id="upgradeFromScanBtn"' in html
     assert "data.status_code === 403 ? 'block' : 'none'" in EXTENSION_JS
     assert "upgradeFromScanBtn.style.display = 'none'" in EXTENSION_JS, "stale button must clear when a new scan starts"
+
+
+def test_hitting_a_limit_shows_only_the_upsell_not_a_failed_scan():
+    scan = WEBSITE_JS[WEBSITE_JS.index("async function runScan(event)"):]
+    scan = scan[:scan.index("\n    }\n")]
+    limit_branch, failure_branch = scan.split("} else {", 1)
+    assert "byId('scanProgress').hidden = true" in limit_branch and "setMessage(scanStatus, '')" in limit_branch
+    assert "failActivityProgress('scan'" in failure_branch and "setMessage(scanStatus, error.message, 'error')" in failure_branch
+    assert "placement: 'scan_limit'" in scan
+
+    excel = WEBSITE_JS[WEBSITE_JS.index("Excel dossier download stopped before completion.") - 400:]
+    excel = excel[:excel.index("placement: 'excel_quota'")]
+    assert "byId('excelProgress').hidden = true" in excel
+
+
+def test_prompts_use_the_high_contrast_button_style():
+    body = WEBSITE_JS[WEBSITE_JS.index("function showUpgradePrompt("):]
+    assert "button.className = 'button button-cta'" in body[:body.index("\n    }\n")]

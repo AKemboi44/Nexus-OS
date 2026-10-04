@@ -363,7 +363,7 @@
         text.textContent = description;
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'button button-primary';
+        button.className = 'button button-cta';
         button.textContent = packButtonLabel();
         button.addEventListener('click', () => openUpgrade(placement));
         container.replaceChildren(title, text, button);
@@ -848,8 +848,14 @@
             finishActivityProgress('excel', 'Excel dossier downloaded.');
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
-            failActivityProgress('excel', 'Excel dossier download stopped before completion.');
-            setMessage(reportStatus, error.message, 'error');
+            if (error.status === 403) {
+                stopActivityProgress('excel');
+                byId('excelProgress').hidden = true;
+                setMessage(reportStatus, '');
+            } else {
+                failActivityProgress('excel', 'Excel dossier download stopped before completion.');
+                setMessage(reportStatus, error.message, 'error');
+            }
             track('error_displayed', {surface: 'download', error_code: 'excel_download_failed', ...(error.status ? {status_code: error.status} : {})});
             if (error.status === 403) {
                 showUpgradePrompt(byId('reportUpgrade'), {
@@ -1241,15 +1247,23 @@
             setMessage(scanStatus, 'Scan complete. Your research was saved to your account.', 'success');
             await loadHistory();
         } catch (error) {
-            failActivityProgress('scan', 'Evidence scan stopped before completion.');
-            setMessage(scanStatus, error.message, 'error');
+            const limit = error.payload?.detail;
+            const limitReached = error.status === 403 && (limit?.requires_bundle || limit?.paywall);
+            if (limitReached) {
+                // Hitting the limit is not a failed scan: the upsell below carries the message.
+                stopActivityProgress('scan');
+                byId('scanProgress').hidden = true;
+                setMessage(scanStatus, '');
+            } else {
+                failActivityProgress('scan', 'Evidence scan stopped before completion.');
+                setMessage(scanStatus, error.message, 'error');
+            }
             track('error_displayed', {
                 surface: 'scan',
                 error_code: String(error.payload?.detail?.error_code || 'scan_failed').slice(0, 60),
                 ...(error.status ? {status_code: error.status} : {})
             });
-            const limit = error.payload?.detail;
-            if (error.status === 403 && (limit?.requires_bundle || limit?.paywall)) {
+            if (limitReached) {
                 showUpgradePrompt(byId('scanUpgrade'), {
                     headline: limit.paywall?.headline || 'Unlock more scans',
                     description: limit.message || 'You have reached your scan limit.',
