@@ -49,7 +49,6 @@ def test_website_is_static_and_uses_existing_authenticated_services():
     website = ROOT / "website"
     app_js = (website / "app.js").read_text(encoding="utf-8")
     headers = (website / "_headers").read_text(encoding="utf-8")
-    redirects = (website / "_redirects").read_text(encoding="utf-8")
 
     assert "https://nexus-os-production-2e14.up.railway.app" in app_js
     assert "https://mdjgrtkjjcwmhuhpsjsk.supabase.co" in app_js
@@ -57,8 +56,8 @@ def test_website_is_static_and_uses_existing_authenticated_services():
     assert "/v1/reports" in app_js
     assert "/v1/research" in app_js
     assert "frame-ancestors 'none'" in headers
-    assert "/privacy /privacy.html 200" in redirects
-    assert "/terms /terms.html 200" in redirects
+    # Pages serves /terms from terms.html itself; a rewrite back to .html loops forever (ERR_TOO_MANY_REDIRECTS).
+    assert not (website / "_redirects").exists()
     assert (website / "privacy.html").is_file()
     assert (website / "terms.html").is_file()
 
