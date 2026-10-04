@@ -269,3 +269,16 @@ body { font-size: 16px; }
   .contact-copy h2 { font-size: 25px; }
   .button.button-export strong { font-size: 12px; }
 }
+
+.status-callout .status-title, .status-callout .status-body, .status-callout .status-ref { display: block; }
+.status-callout .status-title { font-size: 15px; }
+.status-callout .status-body { margin-top: 4px; font-weight: 600; }
+.status-callout .status-ref { margin-top: 8px; font-size: 12px; font-weight: 600; opacity: .85; }
+.status-callout .status-ref code { padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, .08); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+
+.report-feedback { margin: 14px 0 0; padding: 14px 16px; border: 1px solid #d5def5; border-radius: 12px; background: #f7f9ff; color: #26385f; }
+.report-feedback[hidden], .report-feedback [hidden] { display: none; }
+.report-feedback-choices, .report-feedback-reasons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.feedback-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid #c3cfee; border-radius: 999px; background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.feedback-chip:has(input:checked) { border-color: #2f5ee0; background: #e8efff; color: #1f3f9e; }
+.feedback-chip input { accent-color: #2f5ee0; }

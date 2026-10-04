@@ -226,6 +226,19 @@
         return payload;
     }
 
+    const analyticsSessionId = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+
+    // Fire-and-forget product telemetry. Numbers, ids and enums only: never topics or text.
+    function track(event, context = {}) {
+        if (!session) return;
+        apiFetch('/v1/analytics', {
+            method: 'POST',
+            body: JSON.stringify({session_id: analyticsSessionId, source: 'web', event, context})
+        }).catch(() => {});
+    }
+
     async function refreshEntitlement() {
         const response = await apiFetch(`/v1/entitlements/${encodeURIComponent(session.user.id)}`);
         const result = await response.json().catch(() => ({}));
@@ -476,6 +489,12 @@
 
     function renderResult(data) {
         activeResult = data;
+        track('results_viewed', {
+            ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
+            included_count: Array.isArray(data.included) ? data.included.length : 0,
+            excluded_count: Array.isArray(data.excluded) ? data.excluded.length : 0,
+            ...(data.ab_variant ? {variant: data.ab_variant} : {})
+        });
         restoreCachedReportDownload();
         byId('scanResults').hidden = false;
         const topic = String(data.query || '').trim();
@@ -631,6 +650,7 @@
 
     async function downloadExcel() {
         if (!activeResult?.research_run_id) return;
+        track('deliverable_clicked', {kind: 'excel'});
         byId('downloadExcel').disabled = true;
         setMessage(reportStatus, 'Preparing your Excel dossier…');
         byId('reportStatus').classList.add('status-callout');
@@ -655,6 +675,7 @@
         } catch (error) {
             failActivityProgress('excel', 'Excel dossier download stopped before completion.');
             setMessage(reportStatus, error.message, 'error');
+            track('error_displayed', {surface: 'download', error_code: 'excel_download_failed', ...(error.status ? {status_code: error.status} : {})});
         } finally {
             byId('downloadExcel').disabled = false;
         }
@@ -818,6 +839,78 @@
         throw timeoutErr;
     }
 
+    // Built with DOM nodes and CSS classes: the site CSP (style-src 'self') blocks inline styles,
+    // and the reference can originate from a server response, so it is never parsed as HTML.
+    function showReportError(title, message, reference, tone) {
+        if (!reportStatus) return;
+        setMessage(reportStatus, '', tone);
+        reportStatus.hidden = false;
+        const heading = document.createElement('strong');
+        heading.className = 'status-title';
+        heading.textContent = title;
+        const body = document.createElement('span');
+        body.className = 'status-body';
+        body.textContent = message;
+        const ref = document.createElement('span');
+        ref.className = 'status-ref';
+        ref.append('Reference ID: ');
+        const code = document.createElement('code');
+        code.textContent = String(reference || '');
+        ref.append(code);
+        reportStatus.append(heading, body, ref);
+    }
+
+    const FEEDBACK_REASON_IDS = ['inaccurate', 'not_synthesized', 'citations', 'formatting', 'too_long', 'too_short'];
+    let feedbackTarget = null;
+
+    function hideFeedback() {
+        feedbackTarget = null;
+        const panel = byId('reportFeedback');
+        if (panel) panel.hidden = true;
+    }
+
+    function offerFeedback(reference, reportType) {
+        const panel = byId('reportFeedback');
+        if (!panel || !reference) return hideFeedback();
+        feedbackTarget = {reference, reportType};
+        byId('feedbackPrompt').textContent = 'Was this report useful?';
+        byId('feedbackChoices').hidden = false;
+        byId('feedbackReasons').hidden = true;
+        FEEDBACK_REASON_IDS.forEach(id => { byId(`reason_${id}`).checked = false; });
+        panel.hidden = false;
+    }
+
+    async function submitFeedback(rating) {
+        if (!feedbackTarget) return;
+        const reasons = rating === 'down'
+            ? FEEDBACK_REASON_IDS.filter(id => byId(`reason_${id}`).checked)
+            : [];
+        const target = feedbackTarget;
+        try {
+            await apiJson('/v1/feedback', {
+                method: 'POST',
+                body: JSON.stringify({reference: target.reference, rating, reasons, report_type: target.reportType})
+            });
+            byId('feedbackPrompt').textContent = 'Thank you. Your feedback helps us improve the reports.';
+        } catch (error) {
+            byId('feedbackPrompt').textContent = 'Feedback could not be sent. You can try again.';
+            return;
+        }
+        byId('feedbackChoices').hidden = true;
+        byId('feedbackReasons').hidden = true;
+        feedbackTarget = null;
+    }
+
+    function wireFeedback() {
+        byId('feedbackUp').addEventListener('click', () => submitFeedback('up'));
+        byId('feedbackDown').addEventListener('click', () => {
+            byId('feedbackChoices').hidden = true;
+            byId('feedbackPrompt').textContent = 'What could be better? (optional)';
+            byId('feedbackReasons').hidden = false;
+        });
+        byId('feedbackSend').addEventListener('click', () => submitFeedback('down'));
+    }
+
     async function generateReport(reportType) {
         if (!activeResult) return;
         if (reportType === 'full_starter' && !paid) {
@@ -826,6 +919,8 @@
             return;
         }
         const button = reportType === 'full_starter' ? byId('fullReport') : byId('proposalReport');
+        track('deliverable_clicked', {kind: reportType});
+        hideFeedback();
         button.disabled = true;
         setMessage(reportStatus, 'Preparing your Word report…');
         byId('reportStatus').classList.add('status-callout');
@@ -874,6 +969,7 @@
                     finishReportProgress('Report ready and downloaded.');
                     setMessage(reportStatus, 'Your Word report is ready and downloaded.', 'success');
                 }
+                offerFeedback(reportResponse.reference, reportType);
                 byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
                 return;
             }
@@ -920,21 +1016,13 @@
                 errorMessage = "A configuration issue occurred. Contact support if this persists.";
             }
 
-            const errorHtml = `
-                <div style="padding: 12px; border-radius: 4px; background: ${statusClass === 'error' ? '#fee' : '#fef3c7'}; border-left: 4px solid ${statusClass === 'error' ? '#dc2626' : '#f59e0b'};">
-                    <div style="font-weight: 600; color: ${statusClass === 'error' ? '#991b1b' : '#92400e'}; margin-bottom: 4px;">${errorTitle}</div>
-                    <div style="color: ${statusClass === 'error' ? '#7f1d1d' : '#78350f'}; font-size: 0.95em; margin-bottom: 8px;">${errorMessage}</div>
-                    <div style="font-size: 0.85em; color: ${statusClass === 'error' ? '#991b1b' : '#92400e'}; opacity: 0.8;">
-                        <span style="font-weight: 500;">Reference ID:</span> <code style="background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 2px; font-family: monospace;">${reference}</code>
-                    </div>
-                </div>
-            `;
-
-            if (reportStatus) {
-                reportStatus.className = 'form-message';
-                reportStatus.innerHTML = errorHtml;
-                reportStatus.hidden = false;
-            }
+            showReportError(errorTitle, errorMessage, reference, statusClass);
+            track('error_displayed', {
+                surface: 'report',
+                error_code: String(errorCode).slice(0, 60),
+                reference_id: String(reference).slice(0, 64),
+                ...(error.status ? {status_code: error.status} : {})
+            });
         } finally {
             button.disabled = false;
         }
@@ -972,6 +1060,11 @@
         } catch (error) {
             failActivityProgress('scan', 'Evidence scan stopped before completion.');
             setMessage(scanStatus, error.message, 'error');
+            track('error_displayed', {
+                surface: 'scan',
+                error_code: String(error.payload?.detail?.error_code || 'scan_failed').slice(0, 60),
+                ...(error.status ? {status_code: error.status} : {})
+            });
             if (error.status === 403 || error.payload?.detail?.requires_bundle) {
                 if (!paid) byId('upgradePlan').hidden = false;
             }
@@ -1068,6 +1161,7 @@
             await getSession();
             renderAuthState();
             if (session) {
+                track('workspace_opened');
                 try {
                     await refreshEntitlement();
                 } catch (error) {
@@ -1096,6 +1190,7 @@
         dialog.addEventListener('click', event => { if (event.target === dialog) dialog.hidden = true; });
         document.addEventListener('keydown', event => { if (event.key === 'Escape') dialog.hidden = true; });
         byId('signOut').addEventListener('click', signOut);
+        wireFeedback();
         byId('authSignInTab').addEventListener('click', () => setAuthMode('signin'));
         byId('authSignUpTab').addEventListener('click', () => setAuthMode('signup'));
         byId('authForm').addEventListener('submit', async event => {

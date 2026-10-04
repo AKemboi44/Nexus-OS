@@ -292,7 +292,7 @@ def privacy_safe_analytics_context(context: Dict[str, Any]) -> Dict[str, Any]:
         "error_category", "domain_category", "report_type", "provider_selected",
         "model_selected", "outcome_category", "tier", "variant", "copy_variant",
         "context", "reason", "headline", "bundle_id", "source_cap", "query_string",
-        "estimated_wait", "error_reason", "job_id", "surface",
+        "estimated_wait", "error_reason", "job_id", "surface", "kind",
     }
     sensitive_keys = {
         "prompt", "sources", "abstract", "text", "content", "detail", "description",

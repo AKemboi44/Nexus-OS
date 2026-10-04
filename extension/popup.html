@@ -710,6 +710,22 @@
         <div class="step-item" id="sStep4"><span class="step-icon">⚫</span> Compiling reference tables with hanging indents...</div>
       </div>
       <div id="draftStatus" style="display:none; margin-top:10px; font-size:0.78rem; font-weight:600; color:var(--primary); line-height:1.3;"></div>
+      <div id="reportFeedback" style="display:none; margin-top:10px; padding:10px; border:1px solid #d5def5; border-radius:8px; font-size:0.78rem; line-height:1.3;">
+        <strong id="feedbackPrompt">Was this report useful?</strong>
+        <div id="feedbackChoices" style="display:flex; gap:6px; margin-top:6px;">
+          <button class="btn" id="feedbackUp" type="button">Helpful</button>
+          <button class="btn" id="feedbackDown" type="button" style="background:#475569;">Not helpful</button>
+        </div>
+        <div id="feedbackReasons" style="display:none; margin-top:6px;">
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_inaccurate"> Inaccurate</label>
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_not_synthesized"> Reads like a summary of each paper</label>
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_citations"> Citations</label>
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_formatting"> Formatting</label>
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_too_long"> Too long</label>
+          <label style="display:block; margin:3px 0;"><input type="checkbox" id="reason_too_short"> Too short</label>
+          <button class="btn" id="feedbackSend" type="button" style="margin-top:6px;">Send feedback</button>
+        </div>
+      </div>
     </div>
 
     <div class="card" id="synthesisFallbackCard" style="text-align:center; padding:30px; color:var(--text-muted);">

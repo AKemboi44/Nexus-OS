@@ -172,6 +172,61 @@ document.addEventListener('DOMContentLoaded', () => {
 
     sendAnalytics('workspace_opened');
 
+    const FEEDBACK_REASON_IDS = ['inaccurate', 'not_synthesized', 'citations', 'formatting', 'too_long', 'too_short'];
+    let feedbackTarget = null;
+
+    function hideFeedback() {
+        feedbackTarget = null;
+        const panel = document.getElementById('reportFeedback');
+        if (panel) panel.style.display = 'none';
+    }
+
+    function offerFeedback(reference, reportType) {
+        const panel = document.getElementById('reportFeedback');
+        if (!panel || !reference) return hideFeedback();
+        feedbackTarget = {reference, reportType};
+        document.getElementById('feedbackPrompt').textContent = 'Was this report useful?';
+        document.getElementById('feedbackChoices').style.display = 'flex';
+        document.getElementById('feedbackReasons').style.display = 'none';
+        FEEDBACK_REASON_IDS.forEach(id => { document.getElementById(`reason_${id}`).checked = false; });
+        panel.style.display = 'block';
+    }
+
+    async function submitFeedback(rating) {
+        if (!feedbackTarget) return;
+        const target = feedbackTarget;
+        const reasons = rating === 'down'
+            ? FEEDBACK_REASON_IDS.filter(id => document.getElementById(`reason_${id}`).checked)
+            : [];
+        const prompt = document.getElementById('feedbackPrompt');
+        try {
+            const response = await fetch(`${await getApiBaseUrl()}/v1/feedback`, {
+                method: 'POST',
+                headers: await getApiHeaders(),
+                body: JSON.stringify({
+                    reference: target.reference, rating, reasons,
+                    report_type: target.reportType === 'full_starter' ? 'full_starter' : 'proposal'
+                })
+            });
+            if (!response.ok) throw new Error(`Feedback rejected (${response.status}).`);
+        } catch (error) {
+            prompt.textContent = 'Feedback could not be sent. You can try again.';
+            return;
+        }
+        prompt.textContent = 'Thank you. Your feedback helps us improve the reports.';
+        document.getElementById('feedbackChoices').style.display = 'none';
+        document.getElementById('feedbackReasons').style.display = 'none';
+        feedbackTarget = null;
+    }
+
+    document.getElementById('feedbackUp')?.addEventListener('click', () => submitFeedback('up'));
+    document.getElementById('feedbackDown')?.addEventListener('click', () => {
+        document.getElementById('feedbackChoices').style.display = 'none';
+        document.getElementById('feedbackPrompt').textContent = 'What could be better? (optional)';
+        document.getElementById('feedbackReasons').style.display = 'block';
+    });
+    document.getElementById('feedbackSend')?.addEventListener('click', () => submitFeedback('down'));
+
     let activeSessionIncludedPapers = [];
     let activeSessionExcludedPapers = [];
     let lastRequestContext = null;
@@ -1148,6 +1203,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (upgradeFromReportBtn) upgradeFromReportBtn.style.display = 'none';
                 if (retryReportBtn) retryReportBtn.style.display = 'none';
+                offerFeedback(data.reference, activeReportType);
             }, 600);
             return;
         }
@@ -1453,6 +1509,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 domain: domainSelect?.value || "scholarly",
                 max_sources: Number(maxSourcesSelect?.value || 5)
             };
+            hideFeedback();
             button.disabled = true;
             if (reportType === 'full_starter') {
                 if (fullPaperSpinner) fullPaperSpinner.style.display = 'block';

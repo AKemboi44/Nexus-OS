@@ -161,6 +161,22 @@
           <div class="deliverables-intro"><span class="deliverables-icon" aria-hidden="true">✦</span><div><strong>Your research deliverables</strong><span>Download and use the evidence from this scan.</span></div></div>
           <div class="result-actions"><button class="button button-export button-excel" id="downloadExcel" type="button"><span aria-hidden="true">▦</span><span><strong>Download Excel dossier</strong><small>Full source audit · .xlsx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-proposal" id="proposalReport" type="button"><span aria-hidden="true">▤</span><span><strong>Download proposal report</strong><small>Structured research report · .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-full" id="fullReport" type="button"><span aria-hidden="true">▤</span><span><strong>Complete literature review</strong><small>Full cited review · paid</small></span><span class="export-arrow" aria-hidden="true">↗</span></button><button class="button button-export button-outline" id="reDownloadReport" type="button" hidden><span aria-hidden="true">↻</span><span><strong>Re-download last report</strong><small>Reuse the generated .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button></div>
           <p class="form-message status-callout" id="reportStatus" role="status" aria-live="polite"></p>
+          <div class="report-feedback" id="reportFeedback" hidden>
+            <strong id="feedbackPrompt">Was this report useful?</strong>
+            <div class="report-feedback-choices" id="feedbackChoices">
+              <button class="button button-outline" id="feedbackUp" type="button">Helpful</button>
+              <button class="button button-outline" id="feedbackDown" type="button">Not helpful</button>
+            </div>
+            <div class="report-feedback-reasons" id="feedbackReasons" hidden>
+              <label class="feedback-chip"><input type="checkbox" id="reason_inaccurate"><span>Inaccurate</span></label>
+              <label class="feedback-chip"><input type="checkbox" id="reason_not_synthesized"><span>Reads like a summary of each paper</span></label>
+              <label class="feedback-chip"><input type="checkbox" id="reason_citations"><span>Citations</span></label>
+              <label class="feedback-chip"><input type="checkbox" id="reason_formatting"><span>Formatting</span></label>
+              <label class="feedback-chip"><input type="checkbox" id="reason_too_long"><span>Too long</span></label>
+              <label class="feedback-chip"><input type="checkbox" id="reason_too_short"><span>Too short</span></label>
+              <button class="button button-outline" id="feedbackSend" type="button">Send feedback</button>
+            </div>
+          </div>
           <div class="report-progress" id="excelProgress" hidden>
             <div class="report-progress-ring" id="excelProgressRing" role="progressbar" aria-label="Estimated Excel dossier download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="excelProgressPercent">0%</span></div>
             <div><strong id="excelProgressLabel">Preparing Excel dossier</strong><span>Estimated progress while the dossier is retrieved.</span></div>

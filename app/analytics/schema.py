@@ -275,6 +275,11 @@ register(
     {"bundle_id": text(), "price": number(), "variant": text()},
 )
 register(
+    "deliverable_clicked", "activation", _BOTH_CLIENTS,
+    {"kind": text("excel", "proposal", "full_starter", required=True)},
+    "User asked for a deliverable (Excel dossier or Word report).",
+)
+register(
     "error_displayed", "quality", _BOTH_CLIENTS,
     {"surface": text("scan", "report", "download", "payment"), "error_code": text(required=True),
      "status_code": integer(), "reference_id": text()},
