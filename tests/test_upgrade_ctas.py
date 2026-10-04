@@ -49,7 +49,7 @@ def test_the_header_button_stays_for_pack_buyers_so_they_can_always_add_scans():
 def test_paid_users_never_see_sales_prompts_and_the_locked_report_stays_visible():
     body = WEBSITE_JS[WEBSITE_JS.index("function renderUpsells("):]
     body = body[:body.index("\n    }\n")]
-    assert "banner.hidden = upsell.hidden = paid" in body
+    assert "banner.hidden = paid;" in body and "upsell.hidden = paid || isPreviewMode(data)" in body
     assert "byId('fullReport').hidden = !paid" not in WEBSITE_JS, "free users must see the premium report as a locked upsell"
     assert "openUpgrade('report_locked')" in WEBSITE_JS
 

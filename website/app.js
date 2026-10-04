@@ -455,10 +455,214 @@
         byId('planAddScans').className = state ? 'button button-cta' : 'button button-outline';
     }
 
+    // --- free-tier preview cards: what the files contain, with the rest locked --------------------
+    // The sheets the workbook really has (kept in step with research_pipeline.py by a test).
+    const EXCEL_SHEETS = [
+        'Core Themes', 'Executive Summary', 'Included Evidence', 'Excluded Candidates',
+        'Research Areas', 'Research Opportunities', 'Run Audit Configuration',
+    ];
+    let wordPreview = {runId: null, status: 'idle', snapshot: null, message: ''};
+
+    function isPreviewMode(data) {
+        return !paid && Boolean(data && data.preview);
+    }
+
+    // Locked content is drawn as empty placeholder bars: nothing hidden is ever in the page.
+    function ghostLines(count) {
+        const wrap = document.createElement('div');
+        wrap.className = 'ghost-lines';
+        wrap.setAttribute('aria-hidden', 'true');
+        for (let i = 0; i < count; i++) {
+            const bar = document.createElement('span');
+            bar.className = `ghost ghost-${['l', 'm', 'l', 's'][i % 4]}`;
+            wrap.append(bar);
+        }
+        return wrap;
+    }
+
+    function unlockButton(label, placement) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button button-cta snapshot-unlock';
+        button.textContent = label;
+        button.addEventListener('click', () => openUpgrade(placement));
+        return button;
+    }
+
+    function authorsText(source) {
+        const authors = Array.isArray(source.authors) ? source.authors.slice(0, 2).join(', ') : String(source.authors || '');
+        return authors.slice(0, 60);
+    }
+
+    function excelCard(data) {
+        const card = document.createElement('article');
+        card.className = 'snapshot-card snapshot-excel';
+        appendText(card, 'h4', 'Excel audit dossier');
+        const counts = data.counts || {};
+        appendText(card, 'p', `${counts.reviewed ?? 0} sources reviewed · ${counts.included ?? 0} included · ${counts.excluded ?? 0} filtered`, 'snapshot-totals');
+
+        const sheet = document.createElement('div');
+        sheet.className = 'snapshot-sheet';
+        sheet.setAttribute('role', 'table');
+        sheet.setAttribute('aria-label', 'Preview of the Excel dossier');
+        const addRow = (cells, className) => {
+            const row = document.createElement('div');
+            row.className = `sheet-row ${className}`;
+            row.setAttribute('role', 'row');
+            cells.forEach(text => appendText(row, 'span', text, 'sheet-cell'));
+            sheet.append(row);
+            return row;
+        };
+        addRow(['Title', 'Authors', 'Year', 'Reason'], 'sheet-head');
+        (data.included || []).slice(0, 3).forEach(source => addRow(
+            [source.title || 'Untitled source', authorsText(source), String(source.year || ''), source.inclusion_reason || 'Included'],
+            'sheet-real'
+        ));
+        const hidden = Number(data.locked?.included_hidden || 0);
+        for (let i = 0; i < Math.min(4, hidden); i++) {
+            const row = document.createElement('div');
+            row.className = 'sheet-row sheet-ghost';
+            row.setAttribute('aria-hidden', 'true');
+            ['l', 'm', 's', 'm'].forEach(size => {
+                const cell = document.createElement('span');
+                cell.className = `sheet-cell ghost ghost-${size}`;
+                row.append(cell);
+            });
+            sheet.append(row);
+        }
+        card.append(sheet);
+        appendText(card, 'p', hidden > 0 ? `🔒 +${hidden} more included sources, plus all filtered candidates and their reasons, are in the full file.` : '🔒 The full file adds the filtered candidates and the reason for each decision.', 'snapshot-lock');
+        appendText(card, 'p', `Full workbook, ${EXCEL_SHEETS.length} sheets: ${EXCEL_SHEETS.join(', ')}.`, 'snapshot-sheets');
+        card.append(unlockButton(`Unlock the full dossier${startingPrice() ? ` from ${startingPrice()}` : ''}`, 'snapshot_excel'));
+        return card;
+    }
+
+    function wordCard(data) {
+        const card = document.createElement('article');
+        card.className = 'snapshot-card snapshot-word';
+        appendText(card, 'h4', 'Word proposal');
+        appendText(card, 'p', 'A structured proposal written from your included sources, with citations and references.', 'snapshot-totals');
+        const body = document.createElement('div');
+        body.id = 'snapshotWordBody';
+        body.className = 'snapshot-word-body';
+        card.append(body);
+        renderWordBody(body, data);
+        return card;
+    }
+
+    function renderWordBody(body, data) {
+        const state = wordPreview;
+        const parts = [];
+        if (state.status === 'ready' && state.snapshot) {
+            const snap = state.snapshot;
+            const page = document.createElement('div');
+            page.className = 'snapshot-page';
+            appendText(page, 'strong', snap.title || data.query || 'Research proposal', 'snapshot-page-title');
+            if (snap.opening_paragraph) appendText(page, 'p', snap.opening_paragraph, 'snapshot-opening');
+            parts.push(page);
+            const outline = document.createElement('ol');
+            outline.className = 'snapshot-outline';
+            (snap.sections || []).forEach((section, index) => {
+                const item = document.createElement('li');
+                item.className = index === 0 ? 'outline-open' : 'outline-locked';
+                item.dataset.level = String(section.level || 1);
+                appendText(item, 'span', `${index === 0 ? '' : '🔒 '}${section.title}`, 'outline-title');
+                appendText(item, 'span', `${section.words} words`, 'outline-words');
+                outline.append(item);
+            });
+            parts.push(outline);
+            parts.push(Object.assign(document.createElement('p'), {
+                className: 'snapshot-counts',
+                textContent: `${snap.citation_count} in-text citations · ${snap.reference_count} references · ${snap.total_words} words`,
+            }));
+            parts.push(ghostLines(4));
+            parts.push(Object.assign(document.createElement('p'), {
+                className: 'snapshot-lock',
+                textContent: `🔒 ${snap.locked_sections} sections are locked: they are included in a Research Pack.`,
+            }));
+            parts.push(unlockButton('Unlock the full proposal', 'snapshot_word'));
+        } else if (state.status === 'used') {
+            parts.push(ghostLines(5));
+            parts.push(Object.assign(document.createElement('p'), {className: 'snapshot-lock', textContent: `🔒 ${state.message}`}));
+            parts.push(unlockButton('Unlock the full proposal', 'snapshot_word'));
+        } else {
+            parts.push(ghostLines(5));
+            if (state.status === 'error') {
+                parts.push(Object.assign(document.createElement('p'), {className: 'snapshot-error', textContent: state.message}));
+            }
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'button button-primary snapshot-preview';
+            button.id = 'previewProposal';
+            button.disabled = state.status === 'loading';
+            button.textContent = state.status === 'loading' ? 'Writing your preview…'
+                : state.status === 'error' ? 'Try again' : 'Preview my proposal (free)';
+            button.addEventListener('click', previewProposal);
+            parts.push(button);
+            parts.push(Object.assign(document.createElement('p'), {
+                className: 'snapshot-note',
+                textContent: 'You get one free preview each month: the opening paragraph and the outline.',
+            }));
+        }
+        body.replaceChildren(...parts);
+    }
+
+    async function previewProposal() {
+        const runId = activeResult && activeResult.research_run_id;
+        if (!runId || wordPreview.status === 'loading') return;
+        track('deliverable_clicked', {kind: 'proposal_preview'});
+        wordPreview = {runId, status: 'loading', snapshot: null, message: ''};
+        refreshWordCard();
+        try {
+            const response = await apiJson('/v1/reports', {
+                method: 'POST',
+                body: JSON.stringify({
+                    topic: activeResult.query || byId('topic').value.trim(),
+                    research_run_id: runId,
+                    preview: true,
+                    report_type: 'proposal',
+                    domain: byId('domain').value,
+                    max_sources: Number(byId('maxSources').value),
+                }),
+            });
+            if (response.status !== 'snapshot' || !response.snapshot) throw new Error('The preview could not be created.');
+            wordPreview = {runId, status: 'ready', snapshot: response.snapshot, message: ''};
+        } catch (error) {
+            const detail = error.payload && error.payload.detail;
+            wordPreview = detail && detail.error_code === 'upgrade_required'
+                ? {runId, status: 'used', snapshot: null, message: detail.message || 'You have used your free preview this month.'}
+                : {runId, status: 'error', snapshot: null, message: error.message || 'The preview could not be created. Please try again.'};
+        }
+        if (activeResult && activeResult.research_run_id === runId) refreshWordCard();
+    }
+
+    function refreshWordCard() {
+        const body = byId('snapshotWordBody');
+        if (body && activeResult) renderWordBody(body, activeResult);
+    }
+
+    // Free users see two preview cards instead of the download buttons; everyone with a pack keeps the buttons.
+    function renderDeliverables(data) {
+        const preview = isPreviewMode(data);
+        byId('downloadExcel').hidden = preview;
+        byId('proposalReport').hidden = preview;
+        const container = byId('snapshotCards');
+        container.hidden = !preview;
+        if (!preview) {
+            container.replaceChildren();
+            return;
+        }
+        if (wordPreview.runId !== data.research_run_id) {
+            wordPreview = {runId: data.research_run_id, status: 'idle', snapshot: null, message: ''};
+        }
+        container.replaceChildren(excelCard(data), wordCard(data));
+    }
+
     function renderUpsells(data) {
         const banner = byId('upgradeBanner');
         const upsell = byId('deliverablesUpsell');
-        banner.hidden = upsell.hidden = paid;
+        banner.hidden = paid;
+        upsell.hidden = paid || isPreviewMode(data);
         updateStickyUpgrade();
         if (paid) return;
         const remaining = data && data.queries_remaining !== null && data.queries_remaining !== undefined
@@ -496,6 +700,7 @@
         byId('fullReport').hidden = false;
         updateUpgradeButton();
         renderUpsells(activeResult);
+        if (activeResult) renderDeliverables(activeResult);
         byId('criteriaLimit').textContent = `(up to ${paid ? 5 : 3}, optional)`;
         byId('criteriaHint').textContent = paid
             ? 'Choose up to 5 criteria to focus your evidence review.'
@@ -747,9 +952,10 @@
         byId(nextId).disabled = currentPage >= totalPages - 1;
     }
 
-    function renderResult(data) {
+    function renderResult(data, {scroll = true} = {}) {
         activeResult = data;
         renderUpsells(data);
+        renderDeliverables(data);
         track('results_viewed', {
             ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
             included_count: Number(data.counts?.included ?? (Array.isArray(data.included) ? data.included.length : 0)),
@@ -792,13 +998,13 @@
         renderEvidencePage(false);
         byId('fullReport').hidden = false;
         setMessage(reportStatus, '');
-        byId('scanResults').scrollIntoView({behavior: 'smooth', block: 'start'});
+        if (scroll) byId('scanResults').scrollIntoView({behavior: 'smooth', block: 'start'});
     }
 
-    async function loadRun(runId) {
+    async function loadRun(runId, options = {}) {
         try {
             const run = await apiJson(`/v1/research/${encodeURIComponent(runId)}`);
-            renderResult({...run.result, research_run_id: run.id});
+            renderResult({...run.result, research_run_id: run.id}, options);
         } catch (error) {
             setMessage(scanStatus, error.message, 'error');
         }
@@ -1510,6 +1716,10 @@
         try {
             const result = await apiJson(`/v1/checkout/orders/${encodeURIComponent(orderId)}/capture`, {method: 'POST'});
             await refreshEntitlement();
+            // The scan on screen was a preview; now that a pack is active, show the same scan in full.
+            if (paid && activeResult && activeResult.preview && activeResult.research_run_id) {
+                await loadRun(activeResult.research_run_id, {scroll: false});
+            }
             if (result.status === 'pending') {
                 setPlanNotice('PayPal is still processing this payment. Your pack unlocks automatically once it clears.', 'success');
             } else {

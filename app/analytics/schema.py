@@ -294,7 +294,7 @@ register(
 )
 register(
     "upgrade_cta_clicked", "monetization", _BOTH_CLIENTS,
-    {"placement": text(*('scan_limit', 'results_banner', 'deliverables', 'report_locked', 'excel_quota', 'header', 'extension_tile', 'extension_banner', 'extension_report', 'extension_dossier', 'extension_scan_limit', 'pricing_contact', 'sticky_mobile'), required=True)},
+    {"placement": text(*('scan_limit', 'results_banner', 'deliverables', 'report_locked', 'excel_quota', 'header', 'extension_tile', 'extension_banner', 'extension_report', 'extension_dossier', 'extension_scan_limit', 'pricing_contact', 'sticky_mobile', 'snapshot_excel', 'snapshot_word', 'extension_snapshot'), required=True)},
     "User clicked an upgrade button; placement says which one, so conversion can be compared.",
 )
 register(
@@ -304,7 +304,7 @@ register(
 )
 register(
     "deliverable_clicked", "activation", _BOTH_CLIENTS,
-    {"kind": text("excel", "proposal", "full_starter", required=True)},
+    {"kind": text("excel", "proposal", "full_starter", "proposal_preview", required=True)},
     "User asked for a deliverable (Excel dossier or Word report).",
 )
 register(

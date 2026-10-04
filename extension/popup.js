@@ -623,6 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 topic: request.topic,
                 included_sources: request.included_sources || [],
                 ...(request.research_run_id ? {research_run_id: request.research_run_id} : {}),
+                ...(request.preview ? {preview: true} : {}),
                 uploaded_sources: request.uploaded_sources || [],
                 report_type: request.report_type || 'proposal',
                 domain: request.domain || 'scholarly',
@@ -986,6 +987,44 @@ document.addEventListener('DOMContentLoaded', () => {
         trackInterest('large_source_pack_clicks', 'We recorded your interest in larger source packs.')
     );
 // extension/popup.js - Fragment 2 of 2 (Session Isolation & Event Triggers)
+    // Free users get one proposal snapshot a month: the outline and opening paragraph, never the document.
+    // Everything from the server is shown as text; the locked sections are only names and word counts.
+    function renderProposalSnapshot(snapshot) {
+        if (!draftStatus) return;
+        const box = document.createElement('div');
+        box.className = 'snapshot-box';
+        const title = document.createElement('strong');
+        title.textContent = 'Proposal preview (free)';
+        box.append(title);
+        if (snapshot.opening_paragraph) {
+            const opening = document.createElement('p');
+            opening.className = 'snapshot-opening';
+            opening.textContent = snapshot.opening_paragraph;
+            box.append(opening);
+        }
+        const outline = document.createElement('ul');
+        outline.className = 'snapshot-outline';
+        (snapshot.sections || []).forEach((section, index) => {
+            const item = document.createElement('li');
+            item.textContent = `${index === 0 ? '' : '🔒 '}${section.title} · ${section.words} words`;
+            outline.append(item);
+        });
+        box.append(outline);
+        const counts = document.createElement('p');
+        counts.className = 'snapshot-counts';
+        counts.textContent = `${snapshot.citation_count} citations · ${snapshot.reference_count} references · ${snapshot.locked_sections} sections locked`;
+        box.append(counts);
+        const unlock = document.createElement('button');
+        unlock.type = 'button';
+        unlock.className = 'btn';
+        unlock.textContent = 'Unlock the full proposal';
+        unlock.addEventListener('click', () => openUpgradeFlow('extension_snapshot'));
+        box.append(unlock);
+        draftStatus.className = '';
+        draftStatus.replaceChildren(box);
+        draftStatus.style.display = 'block';
+    }
+
     async function handleBackgroundResponse(response) {
         if (!response || !response.success || !response.data) {
             reportProcessingActive = false;
@@ -1094,6 +1133,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 reference_id: referenceId
             });
             currentRoutingSessionToken = "idle";
+            return;
+        }
+
+        if (data.status === 'snapshot' && data.snapshot) {
+            reportProcessingActive = false;
+            resetScribeButtonState();
+            if (activeReportButton) activeReportButton.disabled = false;
+            if (sProgContainer) sProgContainer.style.display = 'none';
+            if (cancelReportBtn) cancelReportBtn.style.display = 'none';
+            if (retryReportBtn) retryReportBtn.style.display = 'none';
+            renderProposalSnapshot(data.snapshot);
+            currentRoutingSessionToken = 'idle';
             return;
         }
 
@@ -1582,6 +1633,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 topic: document.getElementById('topic').value.trim() || "ai token optimization techniques",
                 included_sources: activeSessionIncludedPapers,
                 research_run_id: activeResearchRunId,
+                preview: !isPaidUser && !isLocalTestingInstall && reportType === 'proposal',
                 uploaded_sources: await readUploads(),
                 report_type: reportType,
                 domain: domainSelect?.value || "scholarly",
