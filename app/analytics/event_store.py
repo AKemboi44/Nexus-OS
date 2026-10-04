@@ -1,13 +1,20 @@
 import hashlib
 import json
+import logging
 import os
+import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.supabase_store import SupabaseRestClient
 
+logger = logging.getLogger(__name__)
+
+EVENT_PAGE_SIZE = 1000
+MAX_FETCHED_EVENTS = 20000
+_EVENT_NAME = re.compile(r"^[a-z0-9_.]{1,120}$")
 
 OPERATIONAL_EVENT_NAMES = (
     "scan_completed",
@@ -210,6 +217,91 @@ class AnalyticsEventStore:
                 )
             return result
 
+    def fetch_events(
+        self,
+        days: int = 30,
+        names: Optional[Sequence[str]] = None,
+        limit: int = MAX_FETCHED_EVENTS,
+    ) -> List[Dict[str, Any]]:
+        """Events in the window, oldest first, from the store that actually holds them.
+
+        Never falls back to the local SQLite file when Supabase fails: that file is ephemeral on
+        Railway, so a silent fallback would report empty or partial data as if it were real.
+        When more than `limit` events match, the newest `limit` are kept.
+        """
+        days = min(max(int(days), 1), 365)
+        names = list(names) if names else None
+        if names and not all(_EVENT_NAME.match(name) for name in names):
+            raise ValueError("Invalid event name filter.")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        if self.supabase:
+            events = self._fetch_supabase_events(cutoff, names, limit)
+        else:
+            events = self._fetch_sqlite_events(cutoff, names, limit)
+        if len(events) >= limit:
+            logger.warning("Analytics fetch hit the %d-event cap; older events were left out.", limit)
+        events.sort(key=lambda event: event["occurred_at"])
+        return events
+
+    def _fetch_supabase_events(self, cutoff: str, names: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        offset = 0
+        while len(events) < limit:
+            page_size = min(EVENT_PAGE_SIZE, limit - len(events))
+            params = {
+                "occurred_at": f"gte.{cutoff}",
+                "select": "event_name,user_id,session_id,occurred_at,properties",
+                "order": "occurred_at.desc",
+                "limit": str(page_size),
+                "offset": str(offset),
+            }
+            if names:
+                params["event_name"] = f"in.({','.join(names)})"
+            rows = self.supabase.request("GET", "analytics_events", params=params)
+            if not isinstance(rows, list):
+                raise RuntimeError("Supabase returned an invalid analytics response.")
+            for row in rows:
+                properties = row.get("properties")
+                events.append({
+                    "event_name": row.get("event_name"),
+                    "user_key": self._user_key(str(row.get("user_id") or "anonymous")),
+                    "session_id": row.get("session_id") or "unknown",
+                    "occurred_at": row.get("occurred_at") or "",
+                    "properties": properties if isinstance(properties, dict) else {},
+                })
+            if len(rows) < page_size:
+                break
+            offset += page_size
+        return events
+
+    def _fetch_sqlite_events(self, cutoff: str, names: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
+        query = (
+            "SELECT event_name, user_key, session_id, occurred_at, properties_json "
+            "FROM analytics_events WHERE occurred_at >= ?"
+        )
+        values: List[Any] = [cutoff]
+        if names:
+            query += f" AND event_name IN ({','.join('?' for _ in names)})"
+            values.extend(names)
+        query += " ORDER BY occurred_at DESC LIMIT ?"
+        values.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        events = []
+        for row in rows:
+            try:
+                properties = json.loads(row["properties_json"]) if row["properties_json"] else {}
+            except ValueError:
+                properties = {}
+            events.append({
+                "event_name": row["event_name"],
+                "user_key": row["user_key"],
+                "session_id": row["session_id"],
+                "occurred_at": row["occurred_at"],
+                "properties": properties,
+            })
+        return events
+
     def ab_conversion_metrics(self, days: int = 30) -> Dict[str, Any]:
         """
         Computes key pricing & A/B testing conversion metrics broken down by variant:
@@ -220,58 +312,7 @@ class AnalyticsEventStore:
         - Free query abandonment rate (submitted but never viewed)
         - Side by side Variant A vs Variant B metrics
         """
-        days = min(max(int(days), 1), 365)
-        events = []
-        if self.supabase:
-            try:
-                # Query analytics_events from Supabase
-                raw_rows = self.supabase.request(
-                    "GET",
-                    "analytics_events",
-                    params={
-                        "occurred_at": f"gte.now()-make_interval(days=>least(greatest({days},1),365))",
-                        "select": "event_name,user_id,session_id,occurred_at,properties",
-                        "order": "occurred_at.asc",
-                    },
-                )
-                if isinstance(raw_rows, list):
-                    for r in raw_rows:
-                        user_id_val = str(r.get("user_id") or "anonymous")
-                        events.append({
-                            "event_name": r.get("event_name"),
-                            "user_key": self._user_key(user_id_val),
-                            "session_id": r.get("session_id") or "unknown",
-                            "occurred_at": r.get("occurred_at") or "",
-                            "properties": r.get("properties") if isinstance(r.get("properties"), dict) else {},
-                        })
-            except Exception:
-                # Fall back to SQLite if Supabase fetch fails
-                pass
-
-        if not events:
-            with self._connect() as connection:
-                rows = connection.execute(
-                    """
-                    SELECT event_name, user_key, session_id, occurred_at, properties_json
-                    FROM analytics_events
-                    WHERE occurred_at >= datetime('now', ?)
-                    ORDER BY occurred_at ASC
-                    """,
-                    (f"-{days} days",),
-                ).fetchall()
-
-            for r in rows:
-                try:
-                    props = json.loads(r["properties_json"]) if r["properties_json"] else {}
-                except Exception:
-                    props = {}
-                events.append({
-                    "event_name": r["event_name"],
-                    "user_key": r["user_key"],
-                    "session_id": r["session_id"],
-                    "occurred_at": r["occurred_at"],
-                    "properties": props,
-                })
+        events = self.fetch_events(days)
 
         # Group data by variant: overall, variant_a, variant_b
         def compute_group_metrics(group_events: List[Dict[str, Any]]) -> Dict[str, Any]:

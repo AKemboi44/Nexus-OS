@@ -160,6 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     user_id: storage.nexus_auth_user?.email || 'anonymous',
                     session_id: analyticsSessionId,
+                    source: 'extension',
                     event,
                     context
                 })
@@ -856,8 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             sendAnalytics('payment_failed', {
                 provider: 'paypal',
-                error_code: 'CLIENT_CHECKOUT_ERROR',
-                message: error.message
+                error_code: 'CLIENT_CHECKOUT_ERROR'
             });
             if (destination) {
                 destination.className = 'error';
@@ -889,10 +889,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (retryBtn && lastRequestContext?.action === 'trigger_nexus_scan') retryBtn.style.display = 'block';
             if (retryReportBtn && lastRequestContext?.action === 'trigger_docx_generation') retryReportBtn.style.display = 'block';
-            sendAnalytics(
-                lastRequestContext?.action === 'trigger_docx_generation' ? 'report_failed' : 'scan_failed',
-                {message: response?.error || 'empty_host_response'}
-            );
+            sendAnalytics('error_displayed', {
+                surface: lastRequestContext?.action === 'trigger_docx_generation' ? 'report' : 'scan',
+                error_code: 'host_error'
+            });
             return;
         }
 
@@ -964,10 +964,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (cancelReportBtn) cancelReportBtn.style.display = 'none';
             if (sProgContainer) sProgContainer.style.display = 'none';
-            sendAnalytics(
-                isReportRequest ? 'report_failed' : 'scan_failed',
-                {message, status_code: data.status_code || null, reference_id: referenceId}
-            );
+            sendAnalytics('error_displayed', {
+                surface: isReportRequest ? 'report' : 'scan',
+                error_code: 'api_error',
+                status_code: data.status_code || null,
+                reference_id: referenceId
+            });
             currentRoutingSessionToken = "idle";
             return;
         }
@@ -1037,7 +1039,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         draftStatus.textContent = `Project writeup compiled successfully. Downloaded: ${filename}`;
                         draftStatus.style.display = 'block';
                     }
-                    sendAnalytics('report_completed', { report_type: activeReportType });
                     return;
                 } catch (pollErr) {
                     reportProcessingActive = false;
@@ -1147,10 +1148,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (upgradeFromReportBtn) upgradeFromReportBtn.style.display = 'none';
                 if (retryReportBtn) retryReportBtn.style.display = 'none';
-                sendAnalytics('report_completed', {
-                    report_type: activeReportType,
-                    document_saved_at: data.document_saved_at || ''
-                });
             }, 600);
             return;
         }
@@ -1164,7 +1161,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     async function handleResearchSuccess(data, fromCache = false) {
-        sendAnalytics('scan_completed', {
+        sendAnalytics('results_viewed', {
+            ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
             included_count: (data.included || []).length,
             excluded_count: (data.excluded || []).length,
             from_cache: fromCache
@@ -1319,10 +1317,6 @@ document.addEventListener('DOMContentLoaded', () => {
             uploaded_sources: await readUploads(),
             selected_inclusion_reasons: readInclusionReasons()
         };
-        sendAnalytics('scan_started', {
-            domain: requestContext.domain,
-            max_sources: requestContext.max_sources
-        });
         lastRequestContext = requestContext;
         const cacheKey = JSON.stringify({
             topic: requestContext.topic,
@@ -1363,7 +1357,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusDiv.innerText = `Upload failed: ${error.message}`;
                 statusDiv.style.display = 'block';
             }
-            sendAnalytics('scan_failed', {message: error.message});
+            sendAnalytics('error_displayed', {surface: 'scan', error_code: 'client_error'});
         }
     };
 
@@ -1459,8 +1453,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 domain: domainSelect?.value || "scholarly",
                 max_sources: Number(maxSourcesSelect?.value || 5)
             };
-            sendAnalytics('report_started', {report_type: reportType});
-
             button.disabled = true;
             if (reportType === 'full_starter') {
                 if (fullPaperSpinner) fullPaperSpinner.style.display = 'block';

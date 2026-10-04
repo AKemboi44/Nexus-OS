@@ -21,6 +21,8 @@ from typing import Optional, List, Dict, Any
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
 from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
+from app.analytics.context import accept_request_id, configure_logging, reset_request_id, set_request_id
+from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_properties
 from app.payments.paypal import PayPalClient
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
@@ -49,8 +51,24 @@ async def lifespan(app: FastAPI):
     await stop_queue_worker()
 
 
+configure_logging()
 app = FastAPI(title="Nexus Research AI Gateway", version="1.0.0", lifespan=lifespan)
 logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def assign_request_id(request: Request, call_next):
+    """Give every request one id that appears in logs, analytics events and the response."""
+    request_id = accept_request_id(request.headers.get("x-request-id"))
+    token = set_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 allowed_origins = os.getenv("NEXUS_ALLOWED_ORIGINS", os.getenv("CORS_origins", "*"))
 app.add_middleware(
     CORSMiddleware,
@@ -58,7 +76,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
-    expose_headers=["X-Dossier-Downloads-Remaining"],
+    expose_headers=["X-Dossier-Downloads-Remaining", "X-Request-ID"],
 )
 pipeline = ResearchPipeline()
 analytics = AnalyticsEventStore()
@@ -78,6 +96,7 @@ class AnalyticsEvent(BaseModel):
     session_id: Optional[str] = "unknown"
     event: str
     timestamp: Optional[str] = None
+    source: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -201,7 +220,7 @@ def record_backend_analytics(
             event_name=event_name,
             user_id=user_id,
             session_id="backend",
-            properties=properties,
+            properties=build_properties(event_name, properties, SERVER),
         )
     except Exception:
         logger.exception("Could not persist backend analytics event %s.", event_name)
@@ -228,7 +247,7 @@ def privacy_safe_analytics_context(context: Dict[str, Any]) -> Dict[str, Any]:
         "error_category", "domain_category", "report_type", "provider_selected",
         "model_selected", "outcome_category", "tier", "variant", "copy_variant",
         "context", "reason", "headline", "bundle_id", "source_cap", "query_string",
-        "estimated_wait", "error_reason", "job_id",
+        "estimated_wait", "error_reason", "job_id", "surface",
     }
     sensitive_keys = {
         "prompt", "sources", "abstract", "text", "content", "detail", "description",
@@ -1612,11 +1631,14 @@ async def log_telemetry_event(
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     try:
+        client_source = event.source if event.source in (WEB, EXTENSION) else CLIENT
         analytics.record(
             event_name=event.event,
             user_id=supabase_user_id(user),
             session_id=event.session_id or "unknown",
-            properties=privacy_safe_analytics_context(event.context),
+            properties=build_properties(
+                event.event, privacy_safe_analytics_context(event.context), client_source
+            ),
             occurred_at=event.timestamp,
         )
     except ValueError as error:
@@ -1637,6 +1659,7 @@ async def get_admin_analytics(days: int = 30, x_admin_token: Optional[str] = Hea
 @app.get("/api/analytics/ab-conversion")
 async def get_ab_conversion_analytics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
     """Returns side-by-side A/B conversion metrics and aha moment timings."""
+    require_admin(x_admin_token)
     return analytics.ab_conversion_metrics(days=days)
 
 
