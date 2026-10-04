@@ -95,7 +95,7 @@ def test_staging_run_end_to_end_funnel_and_dashboard(tmp_path, monkeypatch):
     except HTTPException as paywall_exc:
         assert paywall_exc.status_code == 403
         assert paywall_exc.detail["requires_bundle"] is True
-        assert "Literature Review Bundle" in str(paywall_exc.detail["paywall"])
+        assert "Research Pack" in str(paywall_exc.detail["paywall"])
 
     # 3. Bundle crediting is admin-only: a request without the admin token is refused
     bundle_request = cloud_app.PayPalCaptureRequest(

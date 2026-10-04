@@ -19,6 +19,8 @@
     const reportStatus = byId('reportStatus');
     let session = null;
     let paid = false;
+    let scansRemaining = null;
+    let packInfo = null;
     let authMode = 'signin';
     let activeResult = null;
     let researchRuns = [];
@@ -239,11 +241,72 @@
         }).catch(() => {});
     }
 
+    // --- upgrade prompts: one reusable component, every click tracked by placement -------------------
+
+    function packButtonLabel() {
+        return packInfo ? `Get a Research Pack ($${packInfo.price})` : 'Get a Research Pack';
+    }
+
+    function openUpgrade(placement) {
+        track('upgrade_cta_clicked', {placement});
+        byId('plansCard').hidden = false;
+        byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+
+    function showUpgradePrompt(container, {headline, description, placement}) {
+        if (!container) return;
+        const title = document.createElement('strong');
+        title.textContent = headline;
+        const text = document.createElement('p');
+        text.textContent = description;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button button-primary';
+        button.textContent = packButtonLabel();
+        button.addEventListener('click', () => openUpgrade(placement));
+        container.replaceChildren(title, text, button);
+        container.hidden = false;
+    }
+
+    function hideUpgradePrompts() {
+        ['scanUpgrade', 'reportUpgrade'].forEach(id => {
+            const node = byId(id);
+            if (node) { node.hidden = true; node.replaceChildren(); }
+        });
+    }
+
+    // The header button is visible to anyone who cannot already do everything: free users, and pack
+    // buyers who have used all their scans. It is not tied to `paid`, which stays true for the latter.
+    function updateUpgradeButton() {
+        const button = byId('upgradePlan');
+        const exhausted = paid && scansRemaining === 0;
+        button.hidden = !session || (paid && !exhausted);
+        button.textContent = exhausted ? 'Buy more scans' : 'Upgrade';
+    }
+
+    function renderUpsells(data) {
+        const banner = byId('upgradeBanner');
+        const upsell = byId('deliverablesUpsell');
+        banner.hidden = upsell.hidden = paid;
+        if (paid) return;
+        const remaining = data && data.queries_remaining !== null && data.queries_remaining !== undefined
+            ? Number(data.queries_remaining) : null;
+        byId('upgradeBannerText').textContent = remaining === 0
+            ? 'You have used your free scan. A Research Pack adds scans, larger source limits and full downloads.'
+            : 'You are on the free plan. A Research Pack adds more scans, larger source limits and full Excel and Word downloads.';
+        byId('deliverablesUpsellText').textContent = packInfo
+            ? `Research Pack: ${packInfo.scans} scans and full downloads for ${packInfo.validity_days} days.`
+            : 'Get a Research Pack for more scans and full downloads.';
+        byId('deliverablesUpsellButton').textContent = packButtonLabel();
+    }
+
     async function refreshEntitlement() {
         const response = await apiFetch(`/v1/entitlements/${encodeURIComponent(session.user.id)}`);
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(extractErrorMessage(result, response.status) || 'Could not refresh subscription status.');
         paid = response.ok && Boolean(result.active);
+        scansRemaining = result.scans_remaining === null || result.scans_remaining === undefined
+            ? null : Number(result.scans_remaining);
         document.querySelectorAll('[data-paid-only]').forEach(option => {
             option.disabled = !paid;
             if (!paid) option.textContent = option.textContent.replace(' · paid', ' · upgrade required');
@@ -251,8 +314,9 @@
         });
         if (!paid && Number(byId('maxSources').value) > FREE_MAX_SOURCES) byId('maxSources').value = '20';
         if (!paid && byId('domain').value === 'legal') byId('domain').value = 'scholarly';
-        byId('fullReport').hidden = !paid;
-        byId('upgradePlan').hidden = paid;
+        byId('fullReport').hidden = false;
+        updateUpgradeButton();
+        renderUpsells(activeResult);
         byId('criteriaLimit').textContent = `(up to ${paid ? 5 : 3}, optional)`;
         byId('criteriaHint').textContent = paid
             ? 'Choose up to 5 criteria to focus your evidence review.'
@@ -489,6 +553,7 @@
 
     function renderResult(data) {
         activeResult = data;
+        renderUpsells(data);
         track('results_viewed', {
             ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
             included_count: Array.isArray(data.included) ? data.included.length : 0,
@@ -520,7 +585,7 @@
         });
         renderEvidencePage(true);
         renderEvidencePage(false);
-        byId('fullReport').hidden = !paid;
+        byId('fullReport').hidden = false;
         setMessage(reportStatus, '');
         byId('scanResults').scrollIntoView({behavior: 'smooth', block: 'start'});
     }
@@ -662,8 +727,11 @@
         try {
             const response = await apiFetch(`/v1/research/${encodeURIComponent(activeResult.research_run_id)}/dossier`);
             if (!response.ok) {
-                const error = await response.json().catch(() => ({}));
-                throw new Error(extractErrorMessage(error, response.status) || `Download failed (${response.status}).`);
+                const body = await response.json().catch(() => ({}));
+                const failure = new Error(extractErrorMessage(body, response.status) || `Download failed (${response.status}).`);
+                failure.status = response.status;
+                failure.payload = body;
+                throw failure;
             }
             safeDownload(await response.blob(), activeResult.discovery_report_name || 'research-dossier.xlsx');
             const remaining = response.headers.get('X-Dossier-Downloads-Remaining');
@@ -676,6 +744,13 @@
             failActivityProgress('excel', 'Excel dossier download stopped before completion.');
             setMessage(reportStatus, error.message, 'error');
             track('error_displayed', {surface: 'download', error_code: 'excel_download_failed', ...(error.status ? {status_code: error.status} : {})});
+            if (error.status === 403) {
+                showUpgradePrompt(byId('reportUpgrade'), {
+                    headline: 'Download limit reached',
+                    description: 'A Research Pack removes the limit on Excel audit and Word report downloads.',
+                    placement: 'excel_quota',
+                });
+            }
         } finally {
             byId('downloadExcel').disabled = false;
         }
@@ -914,13 +989,13 @@
     async function generateReport(reportType) {
         if (!activeResult) return;
         if (reportType === 'full_starter' && !paid) {
-            byId('plansCard').hidden = false;
-            byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+            openUpgrade('report_locked');
             return;
         }
         const button = reportType === 'full_starter' ? byId('fullReport') : byId('proposalReport');
         track('deliverable_clicked', {kind: reportType});
         hideFeedback();
+        hideUpgradePrompts();
         button.disabled = true;
         setMessage(reportStatus, 'Preparing your Word report…');
         byId('reportStatus').classList.add('status-callout');
@@ -1030,6 +1105,7 @@
 
     async function runScan(event) {
         event.preventDefault();
+        hideUpgradePrompts();
         const topic = byId('topic').value.trim();
         if (!topic) return;
         const button = byId('scanSubmit');
@@ -1065,9 +1141,16 @@
                 error_code: String(error.payload?.detail?.error_code || 'scan_failed').slice(0, 60),
                 ...(error.status ? {status_code: error.status} : {})
             });
-            if (error.status === 403 || error.payload?.detail?.requires_bundle) {
-                if (!paid) byId('upgradePlan').hidden = false;
+            const limit = error.payload?.detail;
+            if (error.status === 403 && (limit?.requires_bundle || limit?.paywall)) {
+                showUpgradePrompt(byId('scanUpgrade'), {
+                    headline: limit.paywall?.headline || 'Unlock more scans',
+                    description: limit.message || 'You have reached your scan limit.',
+                    placement: 'scan_limit',
+                });
+                byId('scanUpgrade').scrollIntoView({behavior: 'smooth', block: 'nearest'});
             }
+            updateUpgradeButton();
         } finally {
             button.disabled = false;
         }
@@ -1096,7 +1179,7 @@
             ? 'You can select up to 5 evidence criteria.'
             : 'Free accounts can select up to 3 criteria. Upgrade to select up to 5.', 'error');
         byId('scanStatus').classList.add('status-callout', 'limit-callout');
-        if (!paid) byId('upgradePlan').hidden = false;
+        updateUpgradeButton();
         byId('scanStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
     }
 
@@ -1147,9 +1230,11 @@
             const response = await fetch(`${API_URL}/v1/checkout/pack`);
             if (!response.ok) return;
             const pack = await response.json();
+            packInfo = pack;
             byId('packPrice').replaceChildren(`$${pack.price} `, Object.assign(document.createElement('small'), {textContent: 'one-time'}));
             byId('packSummary').textContent =
                 `${pack.scans} scans, plus full Excel audit and Word report downloads for ${pack.validity_days} days.`;
+            renderUpsells(activeResult);
         } catch (error) {
             // The static copy in the page stays in place if the price cannot be loaded.
         }
@@ -1298,10 +1383,9 @@
                 setMessage(scanStatus, error.message, 'error');
             }
         });
-        byId('upgradePlan').addEventListener('click', () => {
-            byId('plansCard').hidden = false;
-            byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
-        });
+        byId('upgradePlan').addEventListener('click', () => openUpgrade('header'));
+        byId('upgradeBannerButton').addEventListener('click', () => openUpgrade('results_banner'));
+        byId('deliverablesUpsellButton').addEventListener('click', () => openUpgrade('deliverables'));
         byId('closePlans').addEventListener('click', () => { byId('plansCard').hidden = true; });
         byId('buyPack').addEventListener('click', startPackCheckout);
         window.NexusUI = {

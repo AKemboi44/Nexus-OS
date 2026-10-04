@@ -296,7 +296,7 @@ def privacy_safe_analytics_context(context: Dict[str, Any]) -> Dict[str, Any]:
         "error_category", "domain_category", "report_type", "provider_selected",
         "model_selected", "outcome_category", "tier", "variant", "copy_variant",
         "context", "reason", "headline", "bundle_id", "source_cap", "query_string",
-        "estimated_wait", "error_reason", "job_id", "surface", "kind",
+        "estimated_wait", "error_reason", "job_id", "surface", "kind", "placement",
     }
     sensitive_keys = {
         "prompt", "sources", "abstract", "text", "content", "detail", "description",
@@ -541,7 +541,7 @@ async def execute_cloud_scan(
             detail={
                 "message": (
                     permission.get("paywall_copy", {}).get("description")
-                    or "Free query allowance reached. Review Bundle required to run more queries."
+                    or "Free query allowance reached. A Research Pack is required to run more scans."
                 ),
                 "paywall": permission.get("paywall_copy", {}),
                 "requires_bundle": True,

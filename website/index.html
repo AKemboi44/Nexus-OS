@@ -106,7 +106,7 @@
     <section class="workspace-section" id="workspace" hidden>
       <div class="workspace-heading">
         <div><div class="eyebrow">YOUR RESEARCH DESK</div><h2>Welcome, <span id="accountEmail"></span></h2><p>Your research stays linked to your signed-in account.</p></div>
-        <div class="header-actions"><button class="button button-outline" id="upgradePlan" type="button" hidden>View plans ↗</button><button class="button button-outline" id="refreshHistory" type="button">Refresh history ↻</button></div>
+        <div class="header-actions"><button class="button button-primary" id="upgradePlan" type="button" hidden>Upgrade</button><button class="button button-outline" id="refreshHistory" type="button">Refresh history ↻</button></div>
       </div>
       <div class="workspace-grid">
         <section class="workspace-card scan-card">
@@ -127,6 +127,7 @@
             </fieldset>
             <button class="button button-primary scan-submit" id="scanSubmit" type="submit">Run evidence scan <span aria-hidden="true">→</span></button>
             <p class="form-message" id="scanStatus" role="status" aria-live="polite"></p>
+            <div class="upgrade-prompt" id="scanUpgrade" hidden></div>
             <div class="report-progress" id="scanProgress" hidden>
               <div class="report-progress-ring" id="scanProgressRing" role="progressbar" aria-label="Estimated evidence scan progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="scanProgressPercent">0%</span></div>
               <div><strong id="scanProgressLabel">Preparing evidence scan</strong><span>Estimated progress while sources are discovered and reviewed.</span></div>
@@ -152,6 +153,7 @@
       </div>
       <section class="workspace-card results-card" id="scanResults" hidden>
         <div class="results-heading"><div><span class="card-kicker">SCAN COMPLETE</span><h3 id="resultTitle">Evidence review</h3></div></div>
+        <div class="upgrade-banner" id="upgradeBanner" hidden><p id="upgradeBannerText"></p><button class="button button-primary" id="upgradeBannerButton" type="button">See the Research Pack</button></div>
         <div class="result-stats" aria-label="Scan source totals">
           <div class="result-stat reviewed-stat"><strong id="reviewedCount">0</strong><span>Sources Reviewed</span></div>
           <div class="result-stat included-stat"><strong id="includedCount">0</strong><span>Sources Included</span></div>
@@ -160,7 +162,9 @@
         <div class="deliverables-panel">
           <div class="deliverables-intro"><span class="deliverables-icon" aria-hidden="true">✦</span><div><strong>Your research deliverables</strong><span>Download and use the evidence from this scan.</span></div></div>
           <div class="result-actions"><button class="button button-export button-excel" id="downloadExcel" type="button"><span aria-hidden="true">▦</span><span><strong>Download Excel dossier</strong><small>Full source audit · .xlsx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-proposal" id="proposalReport" type="button"><span aria-hidden="true">▤</span><span><strong>Download proposal report</strong><small>Structured research report · .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button><button class="button button-export button-full" id="fullReport" type="button"><span aria-hidden="true">▤</span><span><strong>Complete literature review</strong><small>Full cited review · paid</small></span><span class="export-arrow" aria-hidden="true">↗</span></button><button class="button button-export button-outline" id="reDownloadReport" type="button" hidden><span aria-hidden="true">↻</span><span><strong>Re-download last report</strong><small>Reuse the generated .docx</small></span><span class="export-arrow" aria-hidden="true">↓</span></button></div>
+          <div class="upgrade-inline" id="deliverablesUpsell" hidden><span id="deliverablesUpsellText"></span><button class="button button-primary" id="deliverablesUpsellButton" type="button">Get a Research Pack</button></div>
           <p class="form-message status-callout" id="reportStatus" role="status" aria-live="polite"></p>
+          <div class="upgrade-prompt" id="reportUpgrade" hidden></div>
           <div class="report-feedback" id="reportFeedback" hidden>
             <strong id="feedbackPrompt">Was this report useful?</strong>
             <div class="report-feedback-choices" id="feedbackChoices">

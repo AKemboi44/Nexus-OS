@@ -420,7 +420,7 @@ class EntitlementStore:
                     "requires_paywall": True,
                     "paywall_copy": {
                         "headline": cfg.paywall_headline,
-                        "description": "You have completed the queries in your Review Bundle. Purchase an additional bundle to continue.",
+                        "description": "You have used all the scans in your Research Pack. Buy another pack to keep scanning.",
                         "bundle_id": cfg.bundle_id,
                         "price": cfg.bundle_price_usd,
                         "variant": cfg.paywall_copy_variant,

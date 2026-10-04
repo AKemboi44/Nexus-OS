@@ -16,26 +16,25 @@ class PricingConfig:
     free_query_allowance: int = 1
     free_candidate_cap: int = 20
 
-    # Paid Review Bundle configuration
+    # Research Pack configuration
     bundle_id: str = "review_bundle_standard"
-    bundle_name: str = "Literature Review Bundle"
+    bundle_name: str = "Research Pack"
     bundle_query_allowance: int = 10
     bundle_price_usd: float = 29.00
     bundle_price_formatted: str = "29.00"
     pack_validity_days: int = 90
     pack_currency: str = "USD"
     bundle_description: str = (
-        "Complete literature review bundle including comprehensive queries, "
-        "synthesized Word report, Excel audit trail, query history, and priority synthesis."
+        "Research Pack: more scans, larger source limits, the full Excel audit trail and "
+        "Word reports, and priority synthesis."
     )
 
     # Paywall copy options
-    paywall_headline: str = "Unlock Your Complete Literature Review Bundle"
+    paywall_headline: str = "Unlock full downloads and more scans"
     paywall_copy_variant: str = "review_bundle_v1"
     paywall_description: str = (
-        "You've used your free discovery query for this month. "
-        "Get the full Literature Review Bundle with 10 deep queries, full synthesis reports, "
-        "complete audit trails, and priority queue processing."
+        "You have used your free scan for this month. A Research Pack gives you more scans, "
+        "larger source limits and full Excel and Word downloads. One payment, no subscription."
     )
 
     @classmethod

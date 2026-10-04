@@ -58,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToCheckoutBtn = document.getElementById('backToCheckoutBtn');
     const acceptTermsBtn = document.getElementById('acceptTermsBtn');
     const retryBtn = document.getElementById('retryBtn');
+    const upgradeFromScanBtn = document.getElementById('upgradeFromScanBtn');
     const cancelScanBtn = document.getElementById('cancelScanBtn');
     const auditFilters = document.getElementById('auditFilters');
     const auditFilter = document.getElementById('auditFilter');
@@ -378,6 +379,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (termsScreen) termsScreen.style.display = screen === 'terms' ? 'block' : 'none';
     }
 
+    function openUpgradeFlow(placement) {
+        sendAnalytics('upgrade_cta_clicked', {placement});
+        showUpgradeFlow('details');
+    }
+
     function closeUpgradeFlow() {
         if (upgradeFlow) upgradeFlow.style.display = 'none';
         mainSurface.forEach(element => {
@@ -412,13 +418,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return packInfo;
     }
 
-    upgradeTile?.addEventListener('click', () => showUpgradeFlow('details'));
+    upgradeTile?.addEventListener('click', () => openUpgradeFlow('extension_tile'));
     upgradeTile?.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') showUpgradeFlow('details');
+        if (event.key === 'Enter' || event.key === ' ') openUpgradeFlow('extension_tile');
     });
-    banner?.addEventListener('click', () => showUpgradeFlow('details'));
+    banner?.addEventListener('click', () => openUpgradeFlow('extension_banner'));
     banner?.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') showUpgradeFlow('details');
+        if (event.key === 'Enter' || event.key === ' ') openUpgradeFlow('extension_banner');
     });
     continueToCheckoutBtn?.addEventListener('click', () => showUpgradeFlow('checkout'));
     closeUpgradeBtn?.addEventListener('click', closeUpgradeFlow);
@@ -803,7 +809,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    upgradeFromReportBtn?.addEventListener('click', () => showUpgradeFlow('details'));
+    upgradeFromReportBtn?.addEventListener('click', () => openUpgradeFlow('extension_report'));
+    upgradeFromScanBtn?.addEventListener('click', () => openUpgradeFlow('extension_scan_limit'));
 
     function markStep(stepElement, state) {
         if (!stepElement) return; const iconSpan = stepElement.querySelector('.step-icon');
@@ -1011,6 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusDiv.className = 'error';
                 statusDiv.innerText = message;
                 statusDiv.style.display = 'block';
+                if (upgradeFromScanBtn) upgradeFromScanBtn.style.display = data.status_code === 403 ? 'block' : 'none';
             }
             resetScribeButtonState();
             if (activeReportButton) activeReportButton.disabled = false;
@@ -1333,7 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (downloadButton.isConnected && !exhausted) downloadButton.disabled = false;
                 }
             });
-            upgradeButton?.addEventListener('click', () => showUpgradeFlow('details'));
+            upgradeButton?.addEventListener('click', () => openUpgradeFlow('extension_dossier'));
             reportMetadata.style.display = 'block';
         }
 
@@ -1376,6 +1384,7 @@ document.addEventListener('DOMContentLoaded', () => {
             selected_inclusion_reasons: readInclusionReasons()
         };
         lastRequestContext = requestContext;
+        if (upgradeFromScanBtn) upgradeFromScanBtn.style.display = 'none';
         const cacheKey = JSON.stringify({
             topic: requestContext.topic,
             max_sources: requestContext.max_sources,

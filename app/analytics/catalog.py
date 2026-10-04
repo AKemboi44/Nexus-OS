@@ -378,6 +378,29 @@ def paywall_exposure_rate(ctx):
     return Measurement(rate(len(shown), len(active)), len(shown), len(active), len(active))
 
 
+@metric("upgrade_cta_click_rate", "Users who clicked an upgrade button", MONEY, "rate",
+        "Users who ran a scan and then clicked any upgrade button; the breakdown shows clicks per placement.")
+def upgrade_cta_click_rate(ctx):
+    scanners = ctx.users("scan_started")
+    clicks = [e for source in ("web", "extension", "client") for e in ctx.of("upgrade_cta_clicked", source)]
+    clickers = {e.user for e in clicks}
+    return Measurement(rate(len(clickers & scanners) if scanners else 0, len(scanners)),
+                       len(clickers & scanners), len(scanners), len(scanners),
+                       {"clicks_by_placement": _counts(e.props.get("placement") for e in clicks),
+                        "unique_users_by_placement": {
+                            placement: len({e.user for e in clicks if e.props.get("placement") == placement})
+                            for placement in {e.props.get("placement") for e in clicks} - {None}}})
+
+
+@metric("cta_to_checkout", "Upgrade click to checkout", MONEY, "rate",
+        "Users who clicked an upgrade button and then started a PayPal checkout.", sparkline=False)
+def cta_to_checkout(ctx):
+    clickers = {e.user for source in ("web", "extension", "client") for e in ctx.of("upgrade_cta_clicked", source)}
+    started = ctx.users("checkout_started")
+    return Measurement(rate(len(clickers & started), len(clickers)), len(clickers & started), len(clickers),
+                       len(clickers))
+
+
 @metric("paywall_to_checkout", "Paywall to checkout", MONEY, "rate",
         "Users shown the paywall who started checkout.", sparkline=False)
 def paywall_to_checkout(ctx):
