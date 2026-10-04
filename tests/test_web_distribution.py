@@ -178,3 +178,17 @@ def test_generated_report_without_referenceable_sources_fails_closed():
             )
 
     assert not list(Path(output_directory).glob("*.docx"))
+
+
+def test_legal_pages_describe_one_time_packs_and_a_real_support_contact():
+    from app.payments.catalog import all_packs
+
+    terms = (ROOT / "website" / "terms.html").read_text(encoding="utf-8")
+    privacy = (ROOT / "website" / "privacy.html").read_text(encoding="utf-8")
+    for page in (terms, privacy):
+        assert "subscription" not in page.lower().replace("not a subscription", ""), "the product sells one-time packs"
+        assert "before public launch" not in page and "before the service is publicly launched" not in page
+        assert "mailto:brisklightke@gmail.com" in page
+    days = {pack.validity_days for pack in all_packs()}
+    assert days == {90} and "90 days from the date of purchase" in terms
+    assert "within 24 hours" in terms and "not run any scan since that payment" in terms
