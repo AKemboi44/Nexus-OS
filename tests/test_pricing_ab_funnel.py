@@ -20,7 +20,7 @@ def test_pricing_config_and_feature_flag(monkeypatch):
     assert cfg.free_query_allowance == 1
     assert cfg.bundle_query_allowance == 10
     assert cfg.bundle_price_usd == 29.00
-    assert cfg.bundle_id == "review_bundle_standard"
+    assert cfg.bundle_id == "starter_20"
     assert "akiptoo20@gmail.com" in cfg.whitelisted_emails
     assert "admin@nexus.test" in cfg.whitelisted_emails
 
@@ -64,7 +64,7 @@ def test_entitlements_free_query_allowance_and_paywall(tmp_path):
     assert perm2["requires_paywall"] is True
     assert perm2["reason"] == "free_query_allowance_exceeded"
     assert perm2["paywall_copy"]["variant"] == "review_bundle_v1"
-    assert perm2["paywall_copy"]["price"] == 29.00
+    assert perm2["paywall_copy"]["price"] == default_pricing_config.bundle_price_usd
 
 
 def test_review_bundle_crediting_and_quota(tmp_path):

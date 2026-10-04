@@ -57,7 +57,7 @@ def test_paid_users_never_see_sales_prompts_and_the_locked_report_stays_visible(
 def test_prompts_are_built_safely_with_the_real_price():
     assert "container.replaceChildren(title, text, button)" in WEBSITE_JS
     assert "title.textContent = headline" in WEBSITE_JS and "text.textContent = description" in WEBSITE_JS
-    assert "`Get a Research Pack ($${packInfo.price})`" in WEBSITE_JS
+    assert "`Unlock from ${from}`" in WEBSITE_JS, "buttons show the real starting price from the catalog"
     for element in ("scanUpgrade", "reportUpgrade", "upgradeBanner", "deliverablesUpsell"):
         assert f'id="{element}"' in WEBSITE_HTML
 

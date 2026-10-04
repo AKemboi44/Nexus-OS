@@ -21,6 +21,7 @@
     let paid = false;
     let scansRemaining = null;
     let packInfo = null;
+    let packs = [];
     let authMode = 'signin';
     let activeResult = null;
     let researchRuns = [];
@@ -243,8 +244,99 @@
 
     // --- upgrade prompts: one reusable component, every click tracked by placement -------------------
 
+    function formatPrice(price) {
+        const amount = Number(price);
+        return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
+    }
+
+    function startingPrice() {
+        return packs.length ? formatPrice(Math.min(...packs.map(pack => Number(pack.price)))) : null;
+    }
+
     function packButtonLabel() {
-        return packInfo ? `Get a Research Pack ($${packInfo.price})` : 'Get a Research Pack';
+        const from = startingPrice();
+        return from ? `Unlock from ${from}` : 'Get a Research Pack';
+    }
+
+    function pricingFeature(text) {
+        return Object.assign(document.createElement('li'), {textContent: text});
+    }
+
+    function pricingCard(pack, featured) {
+        const card = document.createElement('article');
+        card.className = `pricing-card${featured ? ' featured' : ''}`;
+        const parts = [];
+        if (pack.badge) parts.push(Object.assign(document.createElement('span'), {className: 'pricing-badge', textContent: pack.badge}));
+        parts.push(Object.assign(document.createElement('h4'), {textContent: pack.name}));
+        const price = document.createElement('div');
+        price.className = 'pricing-price';
+        price.append(
+            Object.assign(document.createElement('span'), {className: 'amount', textContent: formatPrice(pack.price)}),
+            Object.assign(document.createElement('span'), {className: 'unit', textContent: 'one-time'}),
+        );
+        parts.push(price);
+        parts.push(Object.assign(document.createElement('p'), {className: 'pricing-per-scan', textContent: `Just $${pack.per_scan} per scan`}));
+        const features = document.createElement('ul');
+        features.className = 'pricing-features';
+        features.append(
+            pricingFeature(`${pack.scans} scans`),
+            pricingFeature('Full Excel audit dossier'),
+            pricingFeature('Full Word proposal reports'),
+            pricingFeature(`Valid for ${pack.validity_days} days`),
+        );
+        parts.push(features);
+        const buy = Object.assign(document.createElement('button'), {
+            type: 'button', className: 'button button-cta', textContent: `Get ${pack.name} · ${formatPrice(pack.price)}`,
+        });
+        buy.dataset.pack = pack.id;
+        parts.push(buy);
+        card.append(...parts);
+        return card;
+    }
+
+    function teamCard() {
+        const card = document.createElement('article');
+        card.className = 'pricing-card team';
+        const contact = Object.assign(document.createElement('button'), {
+            type: 'button', className: 'button button-outline pricing-contact', textContent: 'Contact us',
+        });
+        contact.dataset.contact = 'true';
+        card.append(
+            Object.assign(document.createElement('span'), {className: 'pricing-badge', textContent: 'For labs and teams'}),
+            Object.assign(document.createElement('h4'), {textContent: 'Lab / Team'}),
+            Object.assign(document.createElement('div'), {className: 'pricing-price'}),
+            Object.assign(document.createElement('p'), {
+                className: 'pricing-per-scan', textContent: 'Shared scans for research groups',
+            }),
+            Object.assign(document.createElement('p'), {
+                className: 'pricing-note',
+                textContent: 'We are shaping team plans with early labs. Tell us your group size and what you need.',
+            }),
+            contact,
+        );
+        card.querySelector('.pricing-price').append(
+            Object.assign(document.createElement('span'), {className: 'amount', textContent: 'Custom'}),
+        );
+        return card;
+    }
+
+    function renderPricing() {
+        const grid = byId('pricingGrid');
+        if (!packs.length) {
+            grid.replaceChildren(Object.assign(document.createElement('p'), {
+                className: 'pricing-loading', textContent: 'Prices could not be loaded. Please refresh the page.',
+            }));
+            return;
+        }
+        grid.replaceChildren(...packs.map((pack, index) => pricingCard(pack, index === 0)), teamCard());
+    }
+
+    function updateStickyUpgrade() {
+        const bar = byId('stickyUpgrade');
+        bar.hidden = paid || !session || !activeResult;
+        if (bar.hidden) return;
+        const from = startingPrice();
+        byId('stickyUpgradeText').textContent = from ? `Full downloads from ${from}` : 'Unlock full downloads';
     }
 
     function openUpgrade(placement) {
@@ -288,14 +380,19 @@
         const banner = byId('upgradeBanner');
         const upsell = byId('deliverablesUpsell');
         banner.hidden = upsell.hidden = paid;
+        updateStickyUpgrade();
         if (paid) return;
         const remaining = data && data.queries_remaining !== null && data.queries_remaining !== undefined
             ? Number(data.queries_remaining) : null;
+        const from = startingPrice();
+        const priceText = from ? ` from ${from}` : '';
         byId('upgradeBannerText').textContent = remaining === 0
-            ? 'You have used your free scan. A Research Pack adds scans, larger source limits and full downloads.'
-            : 'You are on the free plan. A Research Pack adds more scans, larger source limits and full Excel and Word downloads.';
-        byId('deliverablesUpsellText').textContent = packInfo
-            ? `Research Pack: ${packInfo.scans} scans and full downloads for ${packInfo.validity_days} days.`
+            ? `You have used your free scan. Unlock the full Excel dossier and Word report${priceText}. One payment, no subscription.`
+            : `You are on the free plan. Unlock the full Excel dossier and Word report${priceText}. One payment, no subscription.`;
+        byId('upgradeBannerButton').textContent = packButtonLabel();
+        const starter = packs[0];
+        byId('deliverablesUpsellText').textContent = starter
+            ? `Packs start at ${formatPrice(starter.price)} for ${starter.scans} scans, with full Excel and Word downloads.`
             : 'Get a Research Pack for more scans and full downloads.';
         byId('deliverablesUpsellButton').textContent = packButtonLabel();
     }
@@ -1195,17 +1292,18 @@
         window.location.href = `mailto:support@brisklightai.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
 
-    async function startPackCheckout() {
+    async function startPackCheckout(packId) {
         const status = byId('billingStatus');
         if (!byId('billingConsent').checked) {
-            setMessage(status, 'Please agree to the Terms of Use before continuing.', 'error');
+            setMessage(status, 'Please tick the box above to agree to the Terms of Use, then choose your pack.', 'error');
+            byId('billingConsent').focus();
             return;
         }
-        const button = byId('buyPack');
-        button.disabled = true;
+        const buttons = [...document.querySelectorAll('#pricingGrid button[data-pack]')];
+        buttons.forEach(button => { button.disabled = true; });
         setMessage(status, 'Opening secure PayPal checkout…');
         try {
-            const checkout = await apiJson('/v1/checkout/orders', {method: 'POST', body: JSON.stringify({})});
+            const checkout = await apiJson('/v1/checkout/orders', {method: 'POST', body: JSON.stringify({pack_id: packId})});
             let approval;
             try {
                 approval = new URL(checkout.approve_url);
@@ -1219,26 +1317,26 @@
             window.location.assign(approval.toString());
         } catch (error) {
             setMessage(status, error.payload?.detail?.message || error.message, 'error');
-            button.disabled = false;
+            buttons.forEach(button => { button.disabled = false; });
         }
+    }
+
+    async function loadPackInfo() {
+        try {
+            const response = await fetch(`${API_URL}/v1/checkout/packs`);
+            if (!response.ok) return;
+            const catalog = await response.json();
+            packs = Array.isArray(catalog.packs) ? catalog.packs : [];
+            packInfo = packs.find(pack => pack.id === catalog.default) || packs[0] || null;
+        } catch (error) {
+            packs = [];
+        }
+        renderPricing();
+        renderUpsells(activeResult);
     }
 
     // PayPal sends the buyer back with ?checkout=complete&token=<order id>. The server verifies the
     // payment with PayPal and credits the pack; this page only reports the result.
-    async function loadPackInfo() {
-        try {
-            const response = await fetch(`${API_URL}/v1/checkout/pack`);
-            if (!response.ok) return;
-            const pack = await response.json();
-            packInfo = pack;
-            byId('packPrice').replaceChildren(`$${pack.price} `, Object.assign(document.createElement('small'), {textContent: 'one-time'}));
-            byId('packSummary').textContent =
-                `${pack.scans} scans, plus full Excel audit and Word report downloads for ${pack.validity_days} days.`;
-            renderUpsells(activeResult);
-        } catch (error) {
-            // The static copy in the page stays in place if the price cannot be loaded.
-        }
-    }
 
     async function finishCheckout(orderId) {
         const status = byId('billingStatus');
@@ -1387,7 +1485,18 @@
         byId('upgradeBannerButton').addEventListener('click', () => openUpgrade('results_banner'));
         byId('deliverablesUpsellButton').addEventListener('click', () => openUpgrade('deliverables'));
         byId('closePlans').addEventListener('click', () => { byId('plansCard').hidden = true; });
-        byId('buyPack').addEventListener('click', startPackCheckout);
+        byId('pricingGrid').addEventListener('click', event => {
+            const buy = event.target.closest('button[data-pack]');
+            if (buy) {
+                startPackCheckout(buy.dataset.pack);
+                return;
+            }
+            if (event.target.closest('button[data-contact]')) {
+                track('upgrade_cta_clicked', {placement: 'pricing_contact'});
+                byId('contact').scrollIntoView({behavior: 'smooth', block: 'start'});
+            }
+        });
+        byId('stickyUpgradeButton').addEventListener('click', () => openUpgrade('sticky_mobile'));
         window.NexusUI = {
             retryReport: (type) => generateReport(type || 'proposal')
         };

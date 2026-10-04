@@ -115,7 +115,7 @@ def test_staging_run_end_to_end_funnel_and_dashboard(tmp_path, monkeypatch):
         x_admin_token="staging-admin-token",
     ))
     assert buy_res["status"] == "success"
-    assert buy_res["queries_remaining"] == 10
+    assert buy_res["queries_remaining"] == default_pricing_config.bundle_query_allowance
 
     # 4. User A now runs query with Review Bundle entitlement
     res2 = asyncio.run(cloud_app.execute_cloud_scan(

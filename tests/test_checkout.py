@@ -97,8 +97,8 @@ def refund_event(order_id, amount=None, event_id="EVT-REFUND"):
 # --- catalog and order creation ------------------------------------------------------------
 
 def test_the_price_comes_from_the_catalog_and_is_normalised():
-    assert PACK.price == Decimal("29.00") and PACK.scans == 10 and PACK.validity_days == 90
-    assert money(29) == money("29.0") == money(29.00) == Decimal("29.00")
+    assert PACK.price == Decimal("10.00") and PACK.scans == 20 and PACK.validity_days == 90
+    assert money(10) == money("10.0") == money(10.00) == Decimal("10.00")
     assert get_pack("no-such-pack") is None and get_pack(None) == PACK and get_pack(PACK.id) == PACK
 
 
@@ -108,7 +108,7 @@ def test_creating_a_checkout_records_a_pending_order_at_the_catalog_price(pp, st
     order = store.get_order(started["order_id"])
     assert (order["status"], order["user_id"], order["amount"], order["currency"]) == ("pending", BUYER, PACK.price, "USD")
     assert started["approve_url"].startswith("https://www.sandbox.paypal.com/")
-    assert started["pack"]["price"] == "29.00" and started["pack"]["scans"] == 10
+    assert started["pack"]["price"] == "10.00" and started["pack"]["scans"] == 20
     assert pp.orders[started["order_id"]]["pack"] == PACK
 
 
@@ -135,7 +135,7 @@ def test_a_verified_capture_credits_the_pack_once(pp, store):
 
     assert result.status == "credited" and result.credited_now
     record = store.get(BUYER)
-    assert record["status"] == "ACTIVE" and record["bundle_queries_remaining"] == 10 and record["plan"] == PACK.id
+    assert record["status"] == "ACTIVE" and record["bundle_queries_remaining"] == PACK.scans and record["plan"] == PACK.id
     assert abs(parse_time(record["ends_at"]) - (datetime.now(timezone.utc) + timedelta(days=90))) < timedelta(minutes=1)
     assert store.is_active(BUYER) is True
     assert store.get_order(order_id)["status"] == "credited"
@@ -148,7 +148,7 @@ def test_repeating_the_capture_never_credits_twice(pp, store):
     again = capture_pack_order(pp, store, BUYER, order_id)
 
     assert again.status == "already_credited" and not again.credited_now
-    assert store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
     assert pp.capture_calls == 1, "a credited order is answered without calling PayPal again"
 
 
@@ -187,7 +187,7 @@ def test_a_pending_capture_waits_for_the_webhook(pp, store):
     assert store.get_order(order_id)["status"] == "captured"
 
     settled = handle_paypal_event(pp, store, capture_event(order_id))
-    assert settled.status == "credited" and store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert settled.status == "credited" and store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
 
 
 # --- webhooks -------------------------------------------------------------------------------
@@ -196,17 +196,17 @@ def test_the_approved_webhook_credits_a_buyer_who_closed_the_tab(pp, store):
     order_id = buy(pp, store)
 
     result = handle_paypal_event(pp, store, approved_event(order_id))
-    assert result.status == "credited" and store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert result.status == "credited" and store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
 
     later = capture_pack_order(pp, store, BUYER, order_id)  # the buyer finally returns
-    assert later.status == "already_credited" and store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert later.status == "already_credited" and store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
 
 
 def test_the_capture_completed_webhook_is_idempotent_after_a_credit(pp, store):
     order_id = buy(pp, store)
     capture_pack_order(pp, store, BUYER, order_id)
     assert handle_paypal_event(pp, store, capture_event(order_id)).status == "already_credited"
-    assert store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
 
 
 def test_a_webhook_amount_mismatch_is_rejected(pp, store):
@@ -253,7 +253,7 @@ def test_a_partial_refund_does_not_revoke_access(pp, store):
 def test_a_reversal_revokes_the_pack(pp, store):
     order_id = buy(pp, store)
     capture_pack_order(pp, store, BUYER, order_id)
-    event = {"id": "EVT-REV", "event_type": "PAYMENT.CAPTURE.REVERSED", "resource": {"id": f"CAP-{order_id}", "amount": {"value": "29.00"}}}
+    event = {"id": "EVT-REV", "event_type": "PAYMENT.CAPTURE.REVERSED", "resource": {"id": f"CAP-{order_id}", "amount": {"value": PACK.price_text}}}
     assert handle_paypal_event(pp, store, event).status == "refunded"
     assert store.is_active(BUYER) is False
 
@@ -275,7 +275,7 @@ def test_buying_again_stacks_scans_and_extends_validity(pp, store):
     capture_pack_order(pp, store, BUYER, buy(pp, store))
 
     record = store.get(BUYER)
-    assert record["bundle_queries_remaining"] == 20
+    assert record["bundle_queries_remaining"] == 2 * PACK.scans
     assert abs(parse_time(record["ends_at"]) - (datetime.now(timezone.utc) + timedelta(days=180))) < timedelta(minutes=1)
 
 
@@ -297,7 +297,7 @@ def test_an_expired_pack_is_no_longer_active(store):
 
 def test_an_exhausted_pack_keeps_download_access_until_it_expires(pp, store):
     capture_pack_order(pp, store, BUYER, buy(pp, store))
-    for _ in range(10):
+    for _ in range(PACK.scans):
         store.increment_query_usage(BUYER)
 
     permission = store.check_query_permission(BUYER)
@@ -340,7 +340,7 @@ def test_the_credit_goes_to_the_atomic_database_function(tmp_path, monkeypatch):
     assert (method, resource) == ("POST", "rpc/nexus_credit_pack")
     assert client.request.call_args.kwargs["json"] == {
         "p_order_id": "ORDER000001", "p_user_id": BUYER, "p_pack_id": PACK.id,
-        "p_scans": 10, "p_validity_days": 90, "p_capture_id": "CAP-1"}
+        "p_scans": PACK.scans, "p_validity_days": 90, "p_capture_id": "CAP-1"}
 
 
 def test_the_migration_defines_the_functions_the_code_calls():
@@ -395,7 +395,7 @@ def test_the_order_request_carries_the_server_price_and_the_buyer(http):
     method, url, body = calls[0]
     unit = body["purchase_units"][0]
     assert (method, url) == ("POST", "https://api-m.sandbox.paypal.com/v2/checkout/orders")
-    assert unit["amount"] == {"currency_code": "USD", "value": "29.00"}
+    assert unit["amount"] == {"currency_code": "USD", "value": PACK.price_text}
     assert unit["custom_id"] == BUYER and unit["invoice_id"] == "NX-INVOICE" and body["intent"] == "CAPTURE"
 
 
@@ -447,7 +447,7 @@ def named(client, name):
 
 def test_the_pack_on_sale_is_public_and_matches_the_catalog(api):
     body = api.get("/v1/checkout/pack").json()
-    assert body["price"] == "29.00" and body["scans"] == 10 and body["id"] == PACK.id
+    assert body["price"] == PACK.price_text and body["scans"] == PACK.scans and body["id"] == PACK.id
 
 
 def test_creating_and_capturing_over_http_credits_once_and_reports_revenue_once(api, pp):
@@ -460,9 +460,9 @@ def test_creating_and_capturing_over_http_credits_once_and_reports_revenue_once(
     second = api.post(f"/v1/checkout/orders/{created['order_id']}/capture", headers=AUTH).json()
 
     assert first["status"] == "credited" and second["status"] == "already_credited"
-    assert first["entitlement"] == {**first["entitlement"], "active": True, "scans_remaining": 10}
+    assert first["entitlement"] == {**first["entitlement"], "active": True, "scans_remaining": PACK.scans}
     assert len(named(api, "payment_completed")) == 1 and len(named(api, "bundle_purchased")) == 1
-    assert named(api, "bundle_purchased")[0]["properties"]["price"] == 29.0
+    assert named(api, "bundle_purchased")[0]["properties"]["price"] == float(PACK.price)
     assert all("_schema_problems" not in e["properties"] and "_unregistered" not in e["properties"] for e in api.events)
 
 
@@ -470,7 +470,7 @@ def test_the_client_cannot_choose_the_price(api, pp):
     response = api.post("/v1/checkout/orders", json={"pack_id": PACK.id, "price": "0.01", "amount": "0.01"}, headers=AUTH)
     assert response.status_code == 200
     order = pp.orders[response.json()["order_id"]]
-    assert order["pack"].price_text == "29.00"
+    assert order["pack"].price_text == PACK.price_text
     assert api.post("/v1/checkout/orders", json={"pack_id": "nope"}, headers=AUTH).status_code == 400
 
 
@@ -507,7 +507,7 @@ def test_webhook_credits_then_ignores_a_replay(api, pp, store):
 
     assert first.json() == {"status": "processed", "outcome": "credited"}
     assert replay.json() == {"status": "already_processed"}
-    assert store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
     assert len(named(api, "payment_completed")) == 1
 
 
@@ -521,7 +521,7 @@ def test_a_failed_webhook_is_retried_by_paypal_and_then_succeeds(api, pp, store,
     monkeypatch.setattr(pp, "capture_order", real_capture)
     retried = post_webhook(api, approved_event(order_id))
     assert retried.status_code == 200 and retried.json()["outcome"] == "credited"
-    assert store.get(BUYER)["bundle_queries_remaining"] == 10
+    assert store.get(BUYER)["bundle_queries_remaining"] == PACK.scans
 
 
 def test_a_rejected_payment_is_acknowledged_so_paypal_stops_retrying(api, pp, store):
@@ -541,11 +541,12 @@ def _read(*parts):
 
 def test_website_checks_out_through_the_new_endpoints_and_says_one_time():
     js, html = _read("website", "app.js"), _read("website", "index.html")
-    assert "/v1/checkout/orders" in js and "/capture" in js and "/v1/checkout/pack" in js
+    assert "/v1/checkout/orders" in js and "/capture" in js and "/v1/checkout/packs" in js
     assert "/v1/paypal/subscriptions" not in js and "/v1/paypal/capture" not in js
-    assert 'id="buyPack"' in html and "data-plan" not in html
+    assert 'id="pricingGrid"' in html and "data-plan" not in html and 'id="buyPack"' not in html
     assert "/ month" not in html and "monthly billing" not in html and "Research Ultimate" not in html
-    assert "one-time" in html
+    assert "one-time" in html.lower() and "NO SUBSCRIPTION" in html
+    assert "JSON.stringify({pack_id: packId})" in js, "the buyer names a pack; the server decides the price"
 
 
 def test_website_return_url_triggers_a_server_side_capture_not_just_a_message():
@@ -557,8 +558,9 @@ def test_website_return_url_triggers_a_server_side_capture_not_just_a_message():
 
 def test_extension_uses_the_pack_checkout_and_no_subscription_wording():
     js, html = _read("extension", "popup.js"), _read("extension", "popup.html")
-    assert "/v1/checkout/orders" in js and "/v1/checkout/pack" in js and "order.approve_url" in js
+    assert "/v1/checkout/orders" in js and "/v1/checkout/packs" in js and "order.approve_url" in js
     assert "/v1/paypal/subscriptions" not in js and "selectedPlan" not in js
+    assert "pack_id: selectedPack()?.id" in js
     for stale in ("$19", "$49", "/ month", "per month", "renews monthly", "Research Ultimate", "subscription plans"):
         assert stale not in html, stale
-    assert 'id="packOption"' in html and "does not renew" in html
+    assert 'id="packOptions"' in html and "does not renew" in html

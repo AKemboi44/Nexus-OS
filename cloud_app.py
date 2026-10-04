@@ -32,7 +32,7 @@ from app.analytics.context import (
 )
 from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_properties
 from app.payments.paypal import PayPalClient, PayPalError
-from app.payments.catalog import get_pack
+from app.payments.catalog import all_packs, get_pack
 from app.payments.checkout import CheckoutError, capture_pack_order, create_pack_checkout, handle_paypal_event
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
@@ -1926,8 +1926,14 @@ def _checkout_failure(error: Exception, user_id: str, stage: str) -> HTTPExcepti
 
 @app.get("/v1/checkout/pack")
 async def get_checkout_pack():
-    """The pack on sale. Public: it is the same price the buyer sees, and clients render it from here."""
+    """The default pack. Kept for older clients; newer ones read the full list from /packs."""
     return get_pack(None).public()
+
+
+@app.get("/v1/checkout/packs")
+async def get_checkout_packs():
+    """Every pack on sale, in display order. Public: it is the same price list the buyer sees."""
+    return {"packs": [pack.public() for pack in all_packs()], "default": get_pack(None).id}
 
 
 @app.post("/v1/checkout/orders")

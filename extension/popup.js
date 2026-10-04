@@ -391,31 +391,67 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    let packInfo = null;
+    let packs = [];
+    let selectedPackId = null;
+
+    function formatPackPrice(price) {
+        const amount = Number(price);
+        return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
+    }
+
+    function selectedPack() {
+        return packs.find(pack => pack.id === selectedPackId) || packs[0] || null;
+    }
+
+    function renderCheckoutSummary() {
+        const pack = selectedPack();
+        if (!pack) return;
+        if (checkoutPlanName) checkoutPlanName.textContent = pack.name;
+        if (checkoutPlanPrice) checkoutPlanPrice.textContent = `${formatPackPrice(pack.price)} ${pack.currency} one-time`;
+        if (checkoutSourceCapacity) checkoutSourceCapacity.textContent = `${pack.scans} scans`;
+        if (checkoutDomainCapacity) checkoutDomainCapacity.textContent = `${pack.validity_days} days`;
+        const terms = document.getElementById('termsPackPrice');
+        if (terms) terms.textContent = `${pack.name} is a one-time purchase of ${formatPackPrice(pack.price)} ${pack.currency}. It does not renew.`;
+    }
+
+    function renderPackOptions() {
+        const container = document.getElementById('packOptions');
+        if (!container || !packs.length) return;
+        container.replaceChildren(...packs.map((pack, index) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = `plan-option${index === 0 ? ' selected' : ''}`;
+            option.dataset.pack = pack.id;
+            const name = Object.assign(document.createElement('strong'), {textContent: pack.name});
+            const detail = Object.assign(document.createElement('span'), {
+                textContent: `${pack.scans} scans, full Excel and Word downloads, ${pack.validity_days} days.`,
+            });
+            const price = Object.assign(document.createElement('span'), {
+                className: 'plan-price',
+                textContent: `${formatPackPrice(pack.price)} one-time`,
+            });
+            const perScan = Object.assign(document.createElement('span'), {
+                className: 'plan-action', textContent: `Just $${pack.per_scan} per scan${pack.badge ? ` · ${pack.badge}` : ''}`,
+            });
+            option.append(name, detail, price, perScan);
+            return option;
+        }));
+    }
 
     async function loadPackInfo() {
-        if (packInfo) return packInfo;
+        if (packs.length) return packs;
         try {
-            const response = await fetch(`${await getApiBaseUrl()}/v1/checkout/pack`);
+            const response = await fetch(`${await getApiBaseUrl()}/v1/checkout/packs`);
             if (!response.ok) return null;
-            packInfo = await response.json();
+            const catalog = await response.json();
+            packs = Array.isArray(catalog.packs) ? catalog.packs : [];
+            selectedPackId = catalog.default || packs[0]?.id || null;
         } catch (error) {
             return null;
         }
-        const price = `$${packInfo.price} ${packInfo.currency} one-time`;
-        const scans = `${packInfo.scans} scans`;
-        const validity = `${packInfo.validity_days} days`;
-        if (checkoutPlanName) checkoutPlanName.textContent = packInfo.name;
-        if (checkoutPlanPrice) checkoutPlanPrice.textContent = price;
-        if (checkoutSourceCapacity) checkoutSourceCapacity.textContent = scans;
-        if (checkoutDomainCapacity) checkoutDomainCapacity.textContent = validity;
-        const priceLabel = document.getElementById('packPriceLabel');
-        if (priceLabel) priceLabel.textContent = price;
-        const summary = document.getElementById('packSummary');
-        if (summary) summary.textContent = `${scans}, plus full Excel audit and Word report downloads for ${validity}.`;
-        const terms = document.getElementById('termsPackPrice');
-        if (terms) terms.textContent = `A Research Pack is a one-time purchase of $${packInfo.price} ${packInfo.currency}. It does not renew.`;
-        return packInfo;
+        renderPackOptions();
+        renderCheckoutSummary();
+        return packs;
     }
 
     upgradeTile?.addEventListener('click', () => openUpgradeFlow('extension_tile'));
@@ -430,8 +466,11 @@ document.addEventListener('DOMContentLoaded', () => {
     closeUpgradeBtn?.addEventListener('click', closeUpgradeFlow);
     backToUpgradeDetailsBtn?.addEventListener('click', () => showUpgradeFlow('details'));
     returnToResearchBtn?.addEventListener('click', closeUpgradeFlow);
-    document.getElementById('packOption')?.addEventListener('click', () => {
-        loadPackInfo();
+    document.getElementById('packOptions')?.addEventListener('click', event => {
+        const option = event.target.closest('button[data-pack]');
+        if (!option) return;
+        selectedPackId = option.dataset.pack;
+        renderCheckoutSummary();
         showUpgradeFlow('checkout');
     });
     termsLinkBtn?.addEventListener('click', () => showUpgradeFlow('terms'));
@@ -907,7 +946,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`${await getApiBaseUrl()}/v1/checkout/orders`, {
                 method: 'POST',
                 headers: await getApiHeaders(),
-                body: JSON.stringify({})
+                body: JSON.stringify({pack_id: selectedPack()?.id || null})
             });
             if (!response.ok) {
                 const failure = await response.json().catch(() => ({}));

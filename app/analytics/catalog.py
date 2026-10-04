@@ -416,11 +416,17 @@ def checkout_to_purchase(ctx):
                        len(started))
 
 
-@metric("revenue_total", "Bundle revenue", MONEY, "usd", "Sum of bundle purchases in the window.")
+@metric("revenue_total", "Pack revenue", MONEY, "usd",
+        "Sum of pack purchases in the window; the breakdown shows purchases and revenue per pack.")
 def revenue_total(ctx):
     purchases = ctx.of("bundle_purchased")
+    by_pack = {}
+    for event in purchases:
+        pack = by_pack.setdefault(str(event.props.get("bundle_id") or "unknown"), {"purchases": 0, "revenue": 0.0})
+        pack["purchases"] += 1
+        pack["revenue"] += event.number("price") or 0.0
     return Measurement(sum(_numbers(purchases, "price")) if purchases else None, n=len(purchases),
-                       breakdown={"purchases": len(purchases)})
+                       breakdown={"purchases": len(purchases), "by_pack": by_pack})
 
 
 # --- Data quality -------------------------------------------------------------------------

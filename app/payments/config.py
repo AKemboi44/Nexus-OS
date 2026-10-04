@@ -17,23 +17,24 @@ class PricingConfig:
     free_candidate_cap: int = 20
 
     # Research Pack configuration
-    bundle_id: str = "review_bundle_standard"
-    bundle_name: str = "Research Pack"
-    bundle_query_allowance: int = 10
-    bundle_price_usd: float = 29.00
-    bundle_price_formatted: str = "29.00"
+    # The default (starter) pack. Further packs live in app/payments/catalog.py.
+    bundle_id: str = "starter_20"
+    bundle_name: str = "Starter Pack"
+    bundle_query_allowance: int = 20
+    bundle_price_usd: float = 10.00
+    bundle_price_formatted: str = "10.00"
     pack_validity_days: int = 90
     pack_currency: str = "USD"
     bundle_description: str = (
-        "Research Pack: more scans, larger source limits, the full Excel audit trail and "
-        "Word reports, and priority synthesis."
+        "Starter Pack: 20 scans with the full Excel audit trail and Word reports, "
+        "valid for 90 days."
     )
 
     # Paywall copy options
     paywall_headline: str = "Unlock full downloads and more scans"
     paywall_copy_variant: str = "review_bundle_v1"
     paywall_description: str = (
-        "You have used your free scan for this month. A Research Pack gives you more scans, "
+        "You have used your free scan for this month. A Research Pack from $10 gives you more scans, "
         "larger source limits and full Excel and Word downloads. One payment, no subscription."
     )
 
@@ -42,9 +43,9 @@ class PricingConfig:
         enabled_val = os.getenv("NEXUS_PRICING_MODEL_ENABLED", "true").lower() in ("true", "1", "yes")
         free_queries = int(os.getenv("NEXUS_FREE_QUERY_ALLOWANCE", "1"))
         free_cap = int(os.getenv("NEXUS_FREE_CANDIDATE_CAP", "20"))
-        bundle_queries = int(os.getenv("NEXUS_BUNDLE_QUERY_ALLOWANCE", "10"))
-        bundle_price = float(os.getenv("NEXUS_BUNDLE_PRICE_USD", "29.00"))
-        bundle_id = os.getenv("NEXUS_BUNDLE_ID", "review_bundle_standard")
+        bundle_queries = int(os.getenv("NEXUS_BUNDLE_QUERY_ALLOWANCE", "20"))
+        bundle_price = float(os.getenv("NEXUS_BUNDLE_PRICE_USD", "10.00"))
+        bundle_id = os.getenv("NEXUS_BUNDLE_ID", "starter_20")
         pack_validity_days = int(os.getenv("NEXUS_PACK_VALIDITY_DAYS", "90"))
         whitelist_env = os.getenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com")
         whitelisted = {email.strip().lower() for email in whitelist_env.split(",") if email.strip()}

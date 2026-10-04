@@ -192,17 +192,25 @@
         </div>
         <div class="results-columns"><section class="evidence-panel included-panel"><h4><span class="panel-indicator">✓</span> Included evidence<small>Passed your review criteria</small></h4><div id="includedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="includedPagination" hidden><span id="includedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="includedPrev" type="button" aria-label="Previous included sources page">←</button><button class="button button-outline library-page-button" id="includedNext" type="button" aria-label="Next included sources page">→</button></div></div></section><section class="evidence-panel filtered-panel"><h4><span class="panel-indicator">–</span> Filtered candidates<small>Excluded or below the selected criteria</small></h4><div id="excludedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="excludedPagination" hidden><span id="excludedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="excludedPrev" type="button" aria-label="Previous filtered sources page">←</button><button class="button button-outline library-page-button" id="excludedNext" type="button" aria-label="Next filtered sources page">→</button></div></div></section></div>
       </section>
-      <section class="workspace-card plans-card" id="plansCard" hidden>
-        <div class="card-heading"><div><span class="card-kicker">RESEARCH PACK</span><h3>Unlock full downloads and more scans</h3></div><button class="dialog-close" id="closePlans" type="button" aria-label="Close plans">×</button></div>
-        <p class="plans-description">One payment, no subscription. Checkout is handled securely by PayPal.</p>
-        <div class="plan-options">
-          <article><span class="card-kicker">RESEARCH PACK</span><strong id="packPrice">$29 <small>one-time</small></strong><p id="packSummary">10 scans, plus full Excel audit and Word report downloads for 90 days.</p><button class="button button-primary" id="buyPack" type="button">Buy Research Pack</button></article>
+      <section class="workspace-card plans-card pricing" id="plansCard" hidden>
+        <div class="pricing-hero">
+          <div>
+            <span class="pricing-eyebrow">ONE PAYMENT · NO SUBSCRIPTION · SECURE PAYPAL CHECKOUT</span>
+            <h3>Unlock your full dossier and report</h3>
+            <p>Download the complete Excel audit and Word proposal for every scan you run. Pick the pack that fits your project.</p>
+          </div>
+          <button class="dialog-close pricing-close" id="closePlans" type="button" aria-label="Close pricing">×</button>
         </div>
-        <label class="billing-consent"><input id="billingConsent" type="checkbox"><span>I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a>. This is a one-time payment, not a subscription.</span></label>
+        <div class="pricing-grid" id="pricingGrid" aria-live="polite"><p class="pricing-loading">Loading prices…</p></div>
+        <label class="billing-consent"><input id="billingConsent" type="checkbox"><span>I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a>. Each pack is a one-time payment, not a subscription.</span></label>
         <p class="form-message" id="billingStatus" role="status" aria-live="polite"></p>
       </section>
     </section>
   </main>
+  <div class="sticky-upgrade" id="stickyUpgrade" hidden>
+    <span id="stickyUpgradeText">Unlock full downloads</span>
+    <button class="button button-cta" id="stickyUpgradeButton" type="button">See packs</button>
+  </div>
 
   <div class="auth-backdrop" id="authDialog" hidden>
     <section class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
