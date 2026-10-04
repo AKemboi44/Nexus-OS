@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let activeSessionIncludedPapers = [];
     let activeSessionExcludedPapers = [];
+    let activeResearchRunId = null;
     let lastRequestContext = null;
     let activeReportButton = null;
     let activeReportType = null;
@@ -612,6 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ? {
                 topic: request.topic,
                 included_sources: request.included_sources || [],
+                ...(request.research_run_id ? {research_run_id: request.research_run_id} : {}),
                 uploaded_sources: request.uploaded_sources || [],
                 report_type: request.report_type || 'proposal',
                 domain: request.domain || 'scholarly',
@@ -1032,6 +1034,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     borderColor = '#f59e0b';
                     textColor = '#92400e';
                     accentColor = '#78350f';
+                } else if (errorCode === 'upgrade_required') {
+                    errorTitle = "Unlock the full Word proposal";
+                    errorMsg = "The full Word proposal is included with a Research Pack. Your results and the Excel audit summary stay available here.";
+                    bgColor = '#dbeafe';
+                    borderColor = '#3b82f6';
+                    textColor = '#1e3a8a';
+                    accentColor = '#1e40af';
                 } else if (errorCode === 'paywall') {
                     errorTitle = "Premium feature";
                     errorMsg = "Complete Literature Review is available to paid users. Upgrade to access.";
@@ -1268,8 +1277,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleResearchSuccess(data, fromCache = false) {
         sendAnalytics('results_viewed', {
             ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
-            included_count: (data.included || []).length,
-            excluded_count: (data.excluded || []).length,
+            included_count: Number(data.counts?.included ?? (data.included || []).length),
+            excluded_count: Number(data.counts?.excluded ?? (data.excluded || []).length),
             from_cache: fromCache
         });
         if (progressBar) progressBar.style.width = '100%';
@@ -1294,11 +1303,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (progressContainer) progressContainer.style.display = 'none';
         if (cancelScanBtn) cancelScanBtn.style.display = 'none';
         statusDiv.className = 'success';
-        statusDiv.innerText = `${fromCache ? '♻️ Cached result loaded.' : '🎉 Scan complete.'} Your Excel research dossier is ready to download.`;
+        const lockedSources = Number(data.locked?.included_hidden || 0) + Number(data.locked?.excluded_hidden || 0);
+        statusDiv.innerText = data.preview
+            ? `${fromCache ? '♻️ Cached result loaded.' : '🎉 Scan complete.'} You are viewing a preview${lockedSources ? `: ${lockedSources} more sources are locked` : ''}. A Research Pack unlocks every source, the Excel dossier and the Word proposal.`
+            : `${fromCache ? '♻️ Cached result loaded.' : '🎉 Scan complete.'} Your Excel research dossier is ready to download.`;
         statusDiv.style.display = 'block';
         if (reportMetadata) {
             const download = data.dossier_download || {};
             const remaining = download.unlimited ? null : Number(download.remaining);
+            const dossierLocked = !download.unlimited && Number(download.limit) === 0;
             const quotaKnown = download.unlimited || Number.isFinite(remaining);
             reportMetadata.innerHTML = `
                 <strong>Research reports</strong><br>
@@ -1319,6 +1332,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (downloadStatus) {
                 downloadStatus.textContent = download.unlimited
                     ? 'Unlimited dossier downloads available.'
+                    : dossierLocked
+                        ? 'The full Excel dossier is included with a Research Pack.'
                     : quotaKnown
                         ? `${remaining} of 3 free downloads remaining.`
                         : 'Your free download allowance will be checked before downloading.';
@@ -1326,7 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (downloadButton) downloadButton.hidden = !data.research_run_id;
             if (Number.isFinite(remaining) && remaining <= 0) {
                 if (downloadButton) downloadButton.disabled = true;
-                if (downloadStatus) downloadStatus.textContent = 'You have used all 3 free dossier downloads.';
+                if (downloadStatus && !dossierLocked) downloadStatus.textContent = 'You have used all 3 free dossier downloads.';
                 if (upgradeButton) upgradeButton.style.display = 'inline-flex';
             }
             downloadButton?.addEventListener('click', async () => {
@@ -1343,7 +1358,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const responseText = await response.text();
                         try {
                             const error = JSON.parse(responseText);
-                            message = error.detail || message;
+                            message = typeof error.detail === 'string' ? error.detail : (error.detail?.message || message);
                         } catch (parseError) {
                             if (responseText) message = responseText;
                         }
@@ -1386,9 +1401,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 activeSessionIncludedPapers = data.included || [];
                 activeSessionExcludedPapers = data.excluded || [];
+                activeResearchRunId = data.research_run_id || null;
 
-                if (countInc) countInc.innerText = activeSessionIncludedPapers.length;
-                if (countExc) countExc.innerText = activeSessionExcludedPapers.length;
+                if (countInc) countInc.innerText = data.counts?.included ?? activeSessionIncludedPapers.length;
+                if (countExc) countExc.innerText = data.counts?.excluded ?? activeSessionExcludedPapers.length;
 
                 if (postMvpReviewSection) postMvpReviewSection.style.display = "block";
                 if (synthesisFallbackCard) synthesisFallbackCard.style.display = "none";
@@ -1432,7 +1448,8 @@ document.addEventListener('DOMContentLoaded', () => {
             uploads: requestContext.uploaded_sources.map(upload => `${upload.name}:${upload.data.length}`)
         });
         const cached = await chrome.storage.local.get(["research_cache_key", "research_cache_result"]);
-        if (cached.research_cache_key === cacheKey && cached.research_cache_result) {
+        // A cached preview is never replayed: after buying a pack the same query must fetch the full result.
+        if (cached.research_cache_key === cacheKey && cached.research_cache_result && !cached.research_cache_result.preview) {
             currentRoutingSessionToken = "research_scan_active";
             await handleResearchSuccess(cached.research_cache_result, true);
             return;
@@ -1554,6 +1571,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 action: "trigger_docx_generation",
                 topic: document.getElementById('topic').value.trim() || "ai token optimization techniques",
                 included_sources: activeSessionIncludedPapers,
+                research_run_id: activeResearchRunId,
                 uploaded_sources: await readUploads(),
                 report_type: reportType,
                 domain: domainSelect?.value || "scholarly",

@@ -373,3 +373,10 @@ body { font-size: 16px; }
   .plan-nudge { text-align: left; }
   .plan-actions .button { width: 100%; }
 }
+
+/* Free results: a few real rows, then a counted, locked remainder with a way to unlock it. */
+.locked-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 12px 14px; border: 1px dashed #b7c3e6; border-radius: 12px; color: #4a5878; background: repeating-linear-gradient(135deg, #f4f6fd, #f4f6fd 8px, #eef1fb 8px, #eef1fb 16px); font-size: 14px; font-weight: 700; }
+.locked-row::before { content: "🔒"; flex: 0 0 auto; }
+.locked-row span { flex: 1 1 auto; min-width: 0; }
+.locked-row .button-cta { flex: 0 0 auto; padding: 9px 14px; font-size: 14px; }
+@media (max-width: 720px) { .locked-row { flex-wrap: wrap; } .locked-row .button-cta { width: 100%; } }

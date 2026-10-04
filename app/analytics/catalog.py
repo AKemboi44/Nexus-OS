@@ -339,21 +339,27 @@ def tokens_per_proposal(ctx):
                                   "mean_output": mean([o for _, o in totals])})
 
 
+def _request_cost(calls, prices) -> Optional[float]:
+    """Model cost of one request, or None when any of its calls used an unpriced model."""
+    total = 0.0
+    for call in calls:
+        price = prices.get(str(call.props.get("model")))
+        if price is None:
+            return None
+        total += ((call.number("input_tokens") or 0) * price["input"]
+                  + (call.number("output_tokens") or 0) * price["output"]) / 1_000_000
+    return total
+
+
 @metric("cost_per_proposal", "Estimated cost per proposal", RELIABILITY, "usd",
         "Mean model cost per proposal from configured prices (LLM_PRICES_JSON). Unpriced models are skipped.")
 def cost_per_proposal(ctx):
     prices, costs, unpriced = price_table(), [], 0
     for calls in _calls_by_request(ctx).values():
-        total = 0.0
-        for call in calls:
-            price = prices.get(str(call.props.get("model")))
-            if price is None:
-                unpriced += 1
-                total = None
-                break
-            total += ((call.number("input_tokens") or 0) * price["input"]
-                      + (call.number("output_tokens") or 0) * price["output"]) / 1_000_000
-        if total is not None:
+        total = _request_cost(calls, prices)
+        if total is None:
+            unpriced += 1
+        else:
             costs.append(total)
     return Measurement(mean(costs), n=len(costs), breakdown={"requests_unpriced": unpriced,
                                                               "total_usd": sum(costs)})
@@ -427,6 +433,40 @@ def revenue_total(ctx):
         pack["revenue"] += event.number("price") or 0.0
     return Measurement(sum(_numbers(purchases, "price")) if purchases else None, n=len(purchases),
                        breakdown={"purchases": len(purchases), "by_pack": by_pack})
+
+
+@metric("snapshot_to_purchase", "Free preview to purchase", MONEY, "rate",
+        "Users shown a free preview (results or Word snapshot) who later bought a pack; the breakdown "
+        "shows how many users saw each kind of preview.", sparkline=False)
+def snapshot_to_purchase(ctx):
+    served = ctx.of("snapshot_served")
+    seen, bought = {e.user for e in served}, ctx.users("bundle_purchased", "payment_completed")
+    converted = seen & bought
+    return Measurement(rate(len(converted), len(seen)), len(converted), len(seen), len(seen),
+                       {"users_by_surface": {surface: len({e.user for e in served if e.props.get("surface") == surface})
+                                             for surface in {e.props.get("surface") for e in served} - {None}}})
+
+
+@metric("preview_cost_per_purchase", "Free-preview model cost per purchase", MONEY, "usd",
+        "Model cost of free Word snapshots (cache hits are free) divided by packs bought in the window, "
+        "so the spend on free previews is judged against what they earn.", sparkline=False)
+def preview_cost_per_purchase(ctx):
+    free_requests = {e.request_id for e in ctx.of("report_completed")
+                     if e.props.get("tier") == "free" and e.props.get("cache_hit") is not True and e.request_id}
+    prices, spend, unpriced = price_table(), 0.0, 0
+    for request_id, calls in _calls_by_request(ctx).items():
+        if request_id not in free_requests:
+            continue
+        cost = _request_cost(calls, prices)
+        if cost is None:
+            unpriced += 1
+        else:
+            spend += cost
+    purchases = ctx.of("bundle_purchased")
+    return Measurement(spend / len(purchases) if purchases and free_requests else None, n=len(purchases),
+                       breakdown={"preview_spend_usd": spend, "free_previews": len(free_requests),
+                                  "purchases": len(purchases), "requests_unpriced": unpriced,
+                                  "revenue": sum(_numbers(purchases, "price"))})
 
 
 # --- Data quality -------------------------------------------------------------------------

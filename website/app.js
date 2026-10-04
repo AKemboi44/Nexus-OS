@@ -33,6 +33,8 @@
     let sourcesPage = 0;
     let resultIncludedSources = [];
     let resultExcludedSources = [];
+    let resultTotals = {included: 0, excluded: 0};
+    let resultLocked = {included: 0, excluded: 0};
     let includedSourcesPage = 0;
     let excludedSourcesPage = 0;
 
@@ -698,6 +700,21 @@
         return card;
     }
 
+    // Free users see a few real rows; the rest is counted and locked, never sent to the browser.
+    function lockedRow(hidden, included) {
+        const row = document.createElement('div');
+        row.className = 'locked-row';
+        const text = document.createElement('span');
+        text.textContent = `+${hidden} more ${included ? 'included' : 'filtered'} ${hidden === 1 ? 'source' : 'sources'} locked`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button button-cta';
+        button.textContent = packButtonLabel();
+        button.addEventListener('click', () => openUpgrade('deliverables'));
+        row.append(text, button);
+        return row;
+    }
+
     function renderEvidencePage(included) {
         const sources = included ? resultIncludedSources : resultExcludedSources;
         const listId = included ? 'includedSources' : 'excludedSources';
@@ -714,8 +731,10 @@
         else excludedSourcesPage = currentPage;
 
         const start = currentPage * RESULT_PAGE_SIZE;
+        const hidden = included ? resultLocked.included : resultLocked.excluded;
         byId(listId).replaceChildren(
-            ...sources.slice(start, start + RESULT_PAGE_SIZE).map(source => makeSourceCard(source, included))
+            ...sources.slice(start, start + RESULT_PAGE_SIZE).map(source => makeSourceCard(source, included)),
+            ...(hidden > 0 ? [lockedRow(hidden, included)] : [])
         );
 
         const pagination = byId(paginationId);
@@ -731,8 +750,8 @@
         renderUpsells(data);
         track('results_viewed', {
             ...(data.research_run_id ? {run_id: data.research_run_id} : {}),
-            included_count: Array.isArray(data.included) ? data.included.length : 0,
-            excluded_count: Array.isArray(data.excluded) ? data.excluded.length : 0,
+            included_count: Number(data.counts?.included ?? (Array.isArray(data.included) ? data.included.length : 0)),
+            excluded_count: Number(data.counts?.excluded ?? (Array.isArray(data.excluded) ? data.excluded.length : 0)),
             ...(data.ab_variant ? {variant: data.ab_variant} : {})
         });
         restoreCachedReportDownload();
@@ -745,15 +764,24 @@
         resultExcludedSources = Array.isArray(data.excluded) ? data.excluded : [];
         includedSourcesPage = 0;
         excludedSourcesPage = 0;
-        const reviewedCount = resultIncludedSources.length + resultExcludedSources.length;
+        // Totals come from the server: a free user's lists are only a preview of them.
+        resultTotals = {
+            included: Number(data.counts?.included ?? resultIncludedSources.length),
+            excluded: Number(data.counts?.excluded ?? resultExcludedSources.length),
+        };
+        resultLocked = {
+            included: Number(data.locked?.included_hidden || 0),
+            excluded: Number(data.locked?.excluded_hidden || 0),
+        };
+        const reviewedCount = resultTotals.included + resultTotals.excluded;
         const resultSummary = byId('resultSummary');
         if (resultSummary) {
-            resultSummary.textContent = `${resultIncludedSources.length} sources included · ${resultExcludedSources.length} candidates filtered`;
+            resultSummary.textContent = `${resultTotals.included} sources included · ${resultTotals.excluded} candidates filtered`;
         }
         [
             ['reviewedCount', reviewedCount],
-            ['includedCount', resultIncludedSources.length],
-            ['excludedCount', resultExcludedSources.length]
+            ['includedCount', resultTotals.included],
+            ['excludedCount', resultTotals.excluded]
         ].forEach(([id, count]) => {
             const counter = byId(id);
             if (counter) counter.textContent = String(count);
@@ -910,9 +938,9 @@
             }
             safeDownload(await response.blob(), activeResult.discovery_report_name || 'research-dossier.xlsx');
             const remaining = response.headers.get('X-Dossier-Downloads-Remaining');
-            setMessage(reportStatus, remaining === 'unlimited'
+            setMessage(reportStatus, remaining === 'unlimited' || remaining === null
                 ? 'Dossier downloaded. Unlimited downloads available.'
-                : `Dossier downloaded. ${remaining} of 3 free downloads remaining.`, 'success');
+                : `Dossier downloaded. ${remaining} free ${remaining === '1' ? 'download' : 'downloads'} remaining.`, 'success');
             finishActivityProgress('excel', 'Excel dossier downloaded.');
             byId('reportStatus').scrollIntoView({behavior: 'smooth', block: 'center'});
         } catch (error) {
@@ -926,9 +954,12 @@
             }
             track('error_displayed', {surface: 'download', error_code: 'excel_download_failed', ...(error.status ? {status_code: error.status} : {})});
             if (error.status === 403) {
+                const locked = error.payload?.detail?.error_code === 'upgrade_required';
                 showUpgradePrompt(byId('reportUpgrade'), {
-                    headline: 'Download limit reached',
-                    description: 'A Research Pack removes the limit on Excel audit and Word report downloads.',
+                    headline: locked ? 'Unlock the full Excel dossier' : 'Download limit reached',
+                    description: locked
+                        ? error.message
+                        : 'A Research Pack removes the limit on Excel audit and Word report downloads.',
                     placement: 'excel_quota',
                 });
             }
@@ -1190,6 +1221,7 @@
                 body: JSON.stringify({
                     topic: activeResult.query || byId('topic').value.trim(),
                     included_sources: activeResult.included || [],
+                    ...(activeResult.research_run_id ? {research_run_id: activeResult.research_run_id} : {}),
                     report_type: reportType,
                     domain: byId('domain').value,
                     max_sources: Number(byId('maxSources').value)
@@ -1249,8 +1281,20 @@
             throw new Error(reportResponse.message || 'Report could not be generated.');
 
         } catch (error) {
-            failReportProgress();
             const errorDetail = (error.payload && error.payload.detail) || error.payload || {};
+            if (error.status === 403 && errorDetail.error_code === 'upgrade_required') {
+                // Not a failure: the full document needs a pack. Show the offer instead of an error card.
+                stopReportProgress();
+                byId('reportProgress').hidden = true;
+                setMessage(reportStatus, '');
+                showUpgradePrompt(byId('reportUpgrade'), {
+                    headline: 'Unlock the full Word proposal',
+                    description: errorDetail.message || 'The full Word proposal is included with a Research Pack.',
+                    placement: 'report_locked',
+                });
+                return;
+            }
+            failReportProgress();
             const reference = errorDetail.reference || error.jobId || runRef;
             const errorCode = errorDetail.error_code || 'unknown';
 

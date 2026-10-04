@@ -135,7 +135,7 @@ def test_scan_results_show_prominent_source_totals_and_capitalize_topic():
     assert "Sources Reviewed" in html
     assert "Sources Included" in html
     assert "Sources Filtered Out" in html
-    assert "resultIncludedSources.length + resultExcludedSources.length" in js
+    assert "resultTotals.included + resultTotals.excluded" in js and "data.counts?.included" in js
     assert "if (counter) counter.textContent = String(count)" in js
     assert "if (resultSummary)" in js
     assert "topic.replace(/^./u, character => character.toLocaleUpperCase())" in js

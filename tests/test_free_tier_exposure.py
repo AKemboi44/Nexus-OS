@@ -464,3 +464,69 @@ def test_the_new_events_are_registered_and_valid():
     assert schema.validate("snapshot_served", {"surface": "word", "locked_sections": 8}, schema.SERVER) == []
     assert schema.validate("download_blocked", {"surface": "excel"}, schema.SERVER) == []
     assert "bad_type:surface" in schema.validate("download_blocked", {"surface": "elsewhere"}, schema.SERVER)
+
+
+# --- metrics ---------------------------------------------------------------------------------------------------------
+
+def test_snapshot_to_purchase_counts_users_who_saw_a_preview_and_then_bought():
+    from tests.test_metrics_catalog import measure, row
+    rows = [row("snapshot_served", user="a", surface="word"), row("snapshot_served", user="b", surface="results"),
+            row("snapshot_served", user="c", surface="results"), row("bundle_purchased", user="a", price=10.0),
+            row("bundle_purchased", user="z", price=10.0)]
+    result = measure(rows, "snapshot_to_purchase")
+    assert (result["value"], result["numerator"], result["denominator"]) == (pytest.approx(1 / 3), 1, 3)
+    assert result["breakdown"]["users_by_surface"] == {"word": 1, "results": 2}
+
+
+def test_preview_cost_per_purchase_prices_only_uncached_free_previews(monkeypatch):
+    from tests.test_metrics_catalog import measure, row
+    monkeypatch.setenv("LLM_PRICES_JSON", json.dumps({"priced": {"input": 1.0, "output": 5.0}}))
+    rows = [row("report_completed", tier="free", cache_hit=False, request_id="rep-free0001"),
+            row("llm_call", model="priced", input_tokens=1_000_000, output_tokens=200_000, request_id="rep-free0001"),
+            row("report_completed", tier="free", cache_hit=True, request_id="rep-free0002"),
+            row("report_completed", tier="paid", cache_hit=False, request_id="rep-paid0001"),
+            row("llm_call", model="priced", input_tokens=5_000_000, output_tokens=0, request_id="rep-paid0001"),
+            row("bundle_purchased", user="a", price=10.0), row("bundle_purchased", user="b", price=19.0)]
+    result = measure(rows, "preview_cost_per_purchase")
+
+    assert result["value"] == pytest.approx(1.0), "$2.00 of free-preview spend over two purchases"
+    assert result["breakdown"]["preview_spend_usd"] == pytest.approx(2.0) and result["breakdown"]["revenue"] == 29.0
+    assert result["breakdown"]["free_previews"] == 1
+
+
+def test_preview_cost_reports_no_data_when_nothing_was_bought_or_previewed():
+    from tests.test_metrics_catalog import measure, row
+    assert measure([], "preview_cost_per_purchase")["value"] is None
+    assert measure([row("bundle_purchased", price=10.0)], "preview_cost_per_purchase")["value"] is None
+
+
+# --- the clients ---------------------------------------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+WEBSITE_JS = (ROOT / "website" / "app.js").read_text(encoding="utf-8")
+EXTENSION_JS = (ROOT / "extension" / "popup.js").read_text(encoding="utf-8")
+
+
+def test_the_website_takes_totals_from_the_server_and_shows_a_locked_row():
+    assert "Number(data.counts?.included ?? resultIncludedSources.length)" in WEBSITE_JS
+    body = WEBSITE_JS[WEBSITE_JS.index("function lockedRow("):]
+    body = body[:body.index("\n    }\n")]
+    assert "textContent" in body and "innerHTML" not in body and "button-cta" in body
+    assert "hidden > 0 ? [lockedRow(hidden, included)] : []" in WEBSITE_JS
+
+
+def test_the_website_asks_the_server_to_build_reports_from_the_saved_run():
+    assert "research_run_id: activeResult.research_run_id" in WEBSITE_JS
+
+
+def test_upgrade_required_is_an_offer_not_an_error_on_the_website():
+    assert "errorDetail.error_code === 'upgrade_required'" in WEBSITE_JS
+    assert "error.payload?.detail?.error_code === 'upgrade_required'" in WEBSITE_JS
+    assert "of 3 free downloads" not in WEBSITE_JS
+
+
+def test_the_extension_uses_server_totals_and_never_replays_a_cached_preview():
+    assert "data.counts?.included" in EXTENSION_JS and "research_run_id: activeResearchRunId" in EXTENSION_JS
+    assert "!cached.research_cache_result.preview" in EXTENSION_JS
+    assert "errorCode === 'upgrade_required'" in EXTENSION_JS
+    assert "typeof error.detail === 'string' ? error.detail : (error.detail?.message || message)" in EXTENSION_JS
