@@ -31,7 +31,9 @@ from app.analytics.context import (
     accept_request_id, configure_logging, current_request_id, reset_request_id, set_request_id,
 )
 from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_properties
-from app.payments.paypal import PayPalClient
+from app.payments.paypal import PayPalClient, PayPalError
+from app.payments.catalog import get_pack
+from app.payments.checkout import CheckoutError, capture_pack_order, create_pack_checkout, handle_paypal_event
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
 from app.research.spelling import normalize_topic_spelling
@@ -128,10 +130,8 @@ class FeedbackRequest(BaseModel):
         return reasons
 
 
-class PayPalOrderRequest(BaseModel):
-    plan: str = "review_bundle"
-    user_id: str = "anonymous"
-    bundle_id: Optional[str] = None
+class CheckoutOrderRequest(BaseModel):
+    pack_id: Optional[constr(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None
 
 
 class PayPalCaptureRequest(BaseModel):
@@ -1884,130 +1884,93 @@ async def purchase_review_bundle(
     }
 
 
-@app.post("/v1/paypal/orders")
-async def create_paypal_order(
-    payload: PayPalOrderRequest,
+def record_payment_completed(user_id: str, result) -> None:
+    """Revenue events for a pack that was credited just now (never for a replay)."""
+    if not result.credited_now or result.pack is None:
+        return
+    record_backend_analytics("payment_completed", user_id, {
+        "provider": "paypal", "plan": result.pack.id, "payment_type": "pack",
+        "order_id": result.order["order_id"], "price": float(result.order["amount"]),
+    })
+    record_backend_analytics("bundle_purchased", user_id, {
+        "bundle_id": result.pack.id, "price": float(result.order["amount"]),
+        "variant": ExperimentService.get_variant_for_user(user_id),
+    })
+
+
+def _entitlement_view(user_id: str, user_email: Optional[str]) -> Dict[str, Any]:
+    record = entitlements.get(user_id)
+    return {
+        "active": entitlements.is_active(user_id, user_email=user_email),
+        "scans_remaining": record.get("bundle_queries_remaining") if record else None,
+        "ends_at": record.get("ends_at") if record else None,
+    }
+
+
+def _checkout_failure(error: Exception, user_id: str, stage: str) -> HTTPException:
+    """Map a checkout failure to an honest HTTP error and a payment_failed event."""
+    if isinstance(error, CheckoutError):
+        code, status = error.code, error.status_code
+        detail = {"error_code": error.code, "message": error.message}
+    elif isinstance(error, PayPalError):
+        code, status = "PAYPAL_API_ERROR", 502
+        detail = {"error_code": "paypal_error", "message": "PayPal could not complete this request. Please try again."}
+        logger.error("PayPal %s failed: %s", stage, error)
+    else:
+        code, status = "PAYMENTS_UNAVAILABLE", 503
+        detail = {"error_code": "payments_unavailable", "message": "Payments are temporarily unavailable. Please try again shortly."}
+        logger.error("Payments %s unavailable: %s", stage, error)
+    record_backend_analytics("payment_failed", user_id, {"provider": "paypal", "error_code": code})
+    return HTTPException(status_code=status, detail=detail)
+
+
+@app.get("/v1/checkout/pack")
+async def get_checkout_pack():
+    """The pack on sale. Public: it is the same price the buyer sees, and clients render it from here."""
+    return get_pack(None).public()
+
+
+@app.post("/v1/checkout/orders")
+async def create_checkout_order(
+    payload: CheckoutOrderRequest,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
+    """Start a pack purchase. The price comes from the server's catalog; the client names only a pack."""
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     user_id = supabase_user_id(user)
     try:
-        order = paypal.create_order(payload.plan, user_id)
-        record_backend_analytics(
-            "checkout_started", user_id,
-            {"provider": "paypal", "plan": payload.plan, "order_id": order.get("id")},
-        )
-        return order
-    except (RuntimeError, ValueError) as error:
-        record_backend_analytics(
-            "payment_failed", user_id,
-            {"provider": "paypal", "error_code": "CONFIGURATION"},
-        )
-        raise HTTPException(status_code=503, detail=str(error))
-    except Exception as error:
-        record_backend_analytics(
-            "payment_failed", user_id,
-            {"provider": "paypal", "error_code": "PAYPAL_API_ERROR"},
-        )
-        raise HTTPException(status_code=502, detail="PayPal order creation failed.")
+        checkout = await run_in_threadpool(create_pack_checkout, paypal, entitlements, user_id, payload.pack_id)
+    except (CheckoutError, RuntimeError, ValueError, SupabaseRequestError) as error:
+        raise _checkout_failure(error, user_id, "order creation") from error
+    record_backend_analytics("checkout_started", user_id, {
+        "provider": "paypal", "plan": checkout["pack"]["id"], "payment_type": "pack",
+        "order_id": checkout["order_id"],
+    })
+    return checkout
 
 
-@app.post("/v1/paypal/subscriptions")
-async def create_paypal_subscription(
-    payload: PayPalOrderRequest,
+@app.post("/v1/checkout/orders/{order_id}/capture")
+async def capture_checkout_order(
+    order_id: str,
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
 ):
+    """Finish a purchase after the buyer approved it on PayPal. Safe to call again: it credits once."""
     user = require_supabase_user(authorization)
     require_api_access(x_api_key)
     user_id = supabase_user_id(user)
     try:
-        subscription = paypal.create_subscription(payload.plan, user_id)
-        record_backend_analytics(
-            "checkout_started", user_id,
-            {
-                "provider": "paypal",
-                "payment_type": "subscription",
-                "plan": payload.plan,
-                "subscription_id": subscription.get("id"),
-            },
-        )
-        if subscription.get("id"):
-            entitlements.upsert(
-                user_id,
-                "paypal",
-                subscription["id"],
-                "PENDING",
-                plan=payload.plan,
-            )
-        return subscription
-    except (RuntimeError, ValueError) as error:
-        record_backend_analytics(
-            "payment_failed", user_id,
-            {"provider": "paypal", "error_code": "CONFIGURATION"},
-        )
-        raise HTTPException(status_code=503, detail=str(error))
-    except Exception:
-        record_backend_analytics(
-            "payment_failed", user_id,
-            {"provider": "paypal", "error_code": "PAYPAL_API_ERROR"},
-        )
-        raise HTTPException(status_code=502, detail="PayPal subscription creation failed.")
-
-
-@app.post("/v1/paypal/capture")
-async def capture_paypal_order(
-    payload: PayPalCaptureRequest,
-    authorization: Optional[str] = Header(None),
-    x_api_key: Optional[str] = Header(None),
-):
-    user = require_supabase_user(authorization)
-    require_api_access(x_api_key)
-    user_id = supabase_user_id(user)
-    try:
-        result = paypal.capture_order(payload.order_id)
-        status = result.get("status")
-        event_name = "payment_completed" if status == "COMPLETED" else "payment_pending"
-        if status == "COMPLETED":
-            purchase_units = result.get("purchase_units") or []
-            custom_id = (purchase_units[0] if purchase_units else {}).get("custom_id")
-            if custom_id:
-                entitlements.upsert(
-                    custom_id,
-                    "paypal",
-                    payload.order_id,
-                    "COMPLETED",
-                    plan=(purchase_units[0].get("reference_id") if purchase_units else None),
-                )
-                # If purchasing review bundle, credit bundle queries
-                entitlements.credit_bundle(custom_id, default_pricing_config.bundle_id, default_pricing_config.bundle_query_allowance)
-                ab_variant = payload.variant or ExperimentService.get_variant_for_user(custom_id)
-                record_backend_analytics(
-                    "bundle_purchased",
-                    custom_id,
-                    {
-                        "bundle_id": default_pricing_config.bundle_id,
-                        "price": default_pricing_config.bundle_price_usd,
-                        "variant": ab_variant,
-                    },
-                )
-        record_backend_analytics(
-            event_name, user_id,
-            {"provider": "paypal", "order_id": payload.order_id, "status": status},
-        )
-        return result
-    except Exception:
-        record_backend_analytics(
-            "payment_failed", user_id,
-            {
-                "provider": "paypal",
-                "error_code": "CAPTURE_FAILED",
-                "order_id": payload.order_id,
-            },
-        )
-        raise HTTPException(status_code=502, detail="PayPal payment capture failed.")
+        result = await run_in_threadpool(capture_pack_order, paypal, entitlements, user_id, order_id)
+    except (CheckoutError, RuntimeError, ValueError, SupabaseRequestError) as error:
+        raise _checkout_failure(error, user_id, "capture") from error
+    record_payment_completed(user_id, result)
+    return {
+        "status": result.status,
+        "pack": result.pack.public() if result.pack else None,
+        "entitlement": _entitlement_view(user_id, user.get("email")),
+    }
 
 
 @app.get("/v1/entitlements/{user_id}")
@@ -2032,6 +1995,8 @@ async def get_entitlement(
         "user_id": user_id,
         "active": is_user_active,
         "entitlement": record,
+        "scans_remaining": record.get("bundle_queries_remaining") if record else None,
+        "ends_at": record.get("ends_at") if record else None,
     }
 
 
@@ -2040,42 +2005,40 @@ async def paypal_webhook(request: Request):
     event = await request.json()
     headers = {key.upper(): value for key, value in request.headers.items()}
     try:
-        if not paypal.verify_webhook_signature(headers, event):
-            raise HTTPException(status_code=400, detail="Invalid PayPal webhook signature.")
+        verified = await run_in_threadpool(paypal.verify_webhook_signature, headers, event)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error))
+    if not verified:
+        raise HTTPException(status_code=400, detail="Invalid PayPal webhook signature.")
 
     event_id = event.get("id")
-    if not entitlements.claim_event(event_id):
-        return {"status": "already_processed"}
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Webhook event has no id.")
+    event_type = str(event.get("event_type") or "")[:80]
+    provider_id = str((event.get("resource") or {}).get("id") or "")[:80]
 
-    resource = event.get("resource", {})
-    event_type = event.get("event_type", "")
-    provider_id = resource.get("id") or resource.get("billing_agreement_id")
-    user_id = resource.get("custom_id")
-    if not user_id and provider_id:
-        prior = entitlements.get_by_provider("paypal", provider_id)
-        user_id = (prior.get("user_id") or prior.get("user_key")) if prior else None
-    if "ACTIVATED" in event_type or "PAYMENT.COMPLETED" in event_type:
-        status = "ACTIVE"
-    elif any(value in event_type for value in ("CANCEL", "SUSPEND", "EXPIRED", "REVOKED")):
-        status = "CANCELLED"
-    else:
-        status = "PENDING"
-    if provider_id and user_id:
-        entitlements.upsert(
-            user_id,
-            "paypal",
-            provider_id,
-            status,
-            plan=resource.get("plan_id"),
-        )
-    record_backend_analytics(
-        "paypal_webhook_received",
-        user_id or "anonymous",
-        {"event_type": event_type, "provider_id": provider_id, "status": status},
-    )
-    return {"status": "processed"}
+    try:
+        if not await run_in_threadpool(entitlements.begin_event, event_id):
+            return {"status": "already_processed"}
+        result = await run_in_threadpool(handle_paypal_event, paypal, entitlements, event)
+        await run_in_threadpool(entitlements.finish_event, event_id)
+    except CheckoutError as error:
+        # A business-rule rejection (for example an amount mismatch): retrying cannot fix it.
+        logger.error("PayPal event %s rejected: %s", event_id, error.message)
+        await run_in_threadpool(entitlements.finish_event, event_id)
+        record_backend_analytics("paypal_webhook_received", "anonymous",
+                                 {"event_type": event_type, "provider_id": provider_id, "status": error.code})
+        return {"status": "rejected", "code": error.code}
+    except Exception:
+        # Not marked as processed, so PayPal's retry will run it again.
+        logger.exception("PayPal event %s failed and will be retried.", event_id)
+        raise HTTPException(status_code=500, detail="Webhook processing failed.")
+
+    user_id = result.order["user_id"] if result.order else "anonymous"
+    record_payment_completed(user_id, result)
+    record_backend_analytics("paypal_webhook_received", user_id,
+                             {"event_type": event_type, "provider_id": provider_id, "status": result.status})
+    return {"status": "processed", "outcome": result.status}
 
 if __name__ == '__main__':
     import uvicorn

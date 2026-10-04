@@ -22,6 +22,8 @@ class PricingConfig:
     bundle_query_allowance: int = 10
     bundle_price_usd: float = 29.00
     bundle_price_formatted: str = "29.00"
+    pack_validity_days: int = 90
+    pack_currency: str = "USD"
     bundle_description: str = (
         "Complete literature review bundle including comprehensive queries, "
         "synthesized Word report, Excel audit trail, query history, and priority synthesis."
@@ -44,6 +46,7 @@ class PricingConfig:
         bundle_queries = int(os.getenv("NEXUS_BUNDLE_QUERY_ALLOWANCE", "10"))
         bundle_price = float(os.getenv("NEXUS_BUNDLE_PRICE_USD", "29.00"))
         bundle_id = os.getenv("NEXUS_BUNDLE_ID", "review_bundle_standard")
+        pack_validity_days = int(os.getenv("NEXUS_PACK_VALIDITY_DAYS", "90"))
         whitelist_env = os.getenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com")
         whitelisted = {email.strip().lower() for email in whitelist_env.split(",") if email.strip()}
 
@@ -56,6 +59,7 @@ class PricingConfig:
             bundle_query_allowance=bundle_queries,
             bundle_price_usd=bundle_price,
             bundle_price_formatted=f"{bundle_price:.2f}",
+            pack_validity_days=pack_validity_days,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,6 +72,8 @@ class PricingConfig:
             "bundle_query_allowance": self.bundle_query_allowance,
             "bundle_price_usd": self.bundle_price_usd,
             "bundle_price_formatted": self.bundle_price_formatted,
+            "pack_validity_days": self.pack_validity_days,
+            "pack_currency": self.pack_currency,
             "bundle_description": self.bundle_description,
             "paywall_headline": self.paywall_headline,
             "paywall_copy_variant": self.paywall_copy_variant,

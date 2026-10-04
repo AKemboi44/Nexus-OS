@@ -1,11 +1,24 @@
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
+from app.payments.catalog import Pack, money
 from app.payments.config import default_pricing_config, PricingConfig
+
+PACK_PROVIDERS = ("pack", "bundle")
+
+
+def parse_time(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 class EntitlementStore:
@@ -55,6 +68,30 @@ class EntitlementStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payment_orders (
+                    order_id TEXT PRIMARY KEY,
+                    user_key TEXT NOT NULL,
+                    pack_id TEXT NOT NULL,
+                    amount TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    capture_id TEXT,
+                    created_at TEXT NOT NULL,
+                    captured_at TEXT,
+                    credited_at TEXT,
+                    refunded_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payment_orders_capture ON payment_orders(capture_id)"
+            )
+            try:
+                connection.execute("ALTER TABLE payment_events ADD COLUMN processed_at TEXT")
+            except Exception:
+                pass
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_query_usage (
@@ -175,7 +212,10 @@ class EntitlementStore:
         if user_key and user_key.strip().lower() in cfg.whitelisted_emails:
             return True
         record = self.get(user_key)
-        return bool(record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"})
+        if not (record and record["status"] in {"ACTIVE", "APPROVED", "COMPLETED"}):
+            return False
+        ends_at = parse_time(record.get("ends_at"))
+        return not (ends_at and ends_at <= datetime.now(timezone.utc))
 
     @staticmethod
     def current_period_month() -> str:
@@ -503,8 +543,10 @@ class EntitlementStore:
                     ),
                 )
 
-    def claim_event(self, event_id: str) -> bool:
-        """Return False for a replayed webhook event."""
+    # --- webhook bookkeeping: an event is final only after it was processed successfully ---
+
+    def begin_event(self, event_id: str) -> bool:
+        """True when this event still needs processing (new, or an earlier attempt failed)."""
         if not event_id:
             raise ValueError("event_id is required.")
         if self.supabase:
@@ -512,12 +554,204 @@ class EntitlementStore:
                 self.supabase.insert("payment_events", {"event_id": event_id})
                 return True
             except SupabaseRequestError as error:
-                if error.status_code == 409:
-                    return False
-                raise
+                if error.status_code != 409:
+                    raise
+            rows = self.supabase.request(
+                "GET", "payment_events",
+                params={"event_id": f"eq.{event_id}", "select": "processed_at", "limit": 1},
+            )
+            return not (rows and rows[0].get("processed_at"))
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO payment_events(event_id, received_at) VALUES (?, ?)",
                 (event_id, datetime.now(timezone.utc).isoformat()),
             )
+            if cursor.rowcount == 1:
+                return True
+            row = connection.execute(
+                "SELECT processed_at FROM payment_events WHERE event_id = ?", (event_id,)
+            ).fetchone()
+            return not (row and row["processed_at"])
+
+    def finish_event(self, event_id: str) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            self.supabase.request(
+                "PATCH", "payment_events",
+                params={"event_id": f"eq.{event_id}"}, json={"processed_at": now_iso},
+            )
+            return
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE payment_events SET processed_at = ? WHERE event_id = ?", (now_iso, event_id)
+            )
+
+    # --- pack orders. Payments never fall back to the ephemeral local file when Supabase fails. ---
+
+    @staticmethod
+    def _order_view(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        return {
+            "order_id": row["order_id"],
+            "user_id": str(row.get("user_id") or row.get("user_key")),
+            "pack_id": row["pack_id"],
+            "amount": money(row["amount"]),
+            "currency": row["currency"],
+            "status": row["status"],
+            "capture_id": row.get("capture_id"),
+        }
+
+    def create_order(self, order_id: str, user_key: str, pack: Pack) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            self.supabase.insert("payment_orders", {
+                "order_id": order_id, "user_id": user_key, "pack_id": pack.id,
+                "amount": pack.price_text, "currency": pack.currency, "status": "pending",
+            })
+            return
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO payment_orders (order_id, user_key, pack_id, amount, currency, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+                (order_id, user_key, pack.id, pack.price_text, pack.currency, now_iso),
+            )
+
+    def get_order(self, order_id: str) -> Optional[Dict[str, Any]]:
+        if self.supabase:
+            rows = self.supabase.request(
+                "GET", "payment_orders",
+                params={"order_id": f"eq.{order_id}", "select": "*", "limit": 1},
+            )
+            return self._order_view(rows[0] if rows else None)
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM payment_orders WHERE order_id = ?", (order_id,)).fetchone()
+        return self._order_view(dict(row) if row else None)
+
+    def get_order_by_capture(self, capture_id: str) -> Optional[Dict[str, Any]]:
+        if self.supabase:
+            rows = self.supabase.request(
+                "GET", "payment_orders",
+                params={"capture_id": f"eq.{capture_id}", "select": "*", "limit": 1},
+            )
+            return self._order_view(rows[0] if rows else None)
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM payment_orders WHERE capture_id = ?", (capture_id,)).fetchone()
+        return self._order_view(dict(row) if row else None)
+
+    def mark_order(self, order_id: str, from_status: str, to_status: str, capture_id: Optional[str] = None) -> bool:
+        """Move an order between states only if it is still in `from_status`."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if self.supabase:
+            body: Dict[str, Any] = {"status": to_status}
+            if capture_id:
+                body["capture_id"] = capture_id
+            if to_status == "captured":
+                body["captured_at"] = now_iso
+            rows = self.supabase.request(
+                "PATCH", "payment_orders",
+                params={"order_id": f"eq.{order_id}", "status": f"eq.{from_status}"},
+                json=body, prefer="return=representation",
+            )
+            return bool(rows)
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE payment_orders SET status = ?, capture_id = COALESCE(?, capture_id), "
+                "captured_at = CASE WHEN ? = 'captured' THEN ? ELSE captured_at END "
+                "WHERE order_id = ? AND status = ?",
+                (to_status, capture_id, to_status, now_iso, order_id, from_status),
+            )
             return cursor.rowcount == 1
+
+    def credit_pack_order(self, order: Dict[str, Any], pack: Pack, capture_id: Optional[str]) -> Dict[str, Any]:
+        """Credit a paid order exactly once. Returns {"credited": False} if it already was."""
+        if self.supabase:
+            result = self.supabase.request(
+                "POST", "rpc/nexus_credit_pack",
+                json={
+                    "p_order_id": order["order_id"], "p_user_id": order["user_id"], "p_pack_id": pack.id,
+                    "p_scans": pack.scans, "p_validity_days": pack.validity_days, "p_capture_id": capture_id,
+                },
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Supabase returned an invalid pack credit result.")
+            return result
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        user_key = order["user_id"]
+        with self._lock, self._connect() as connection:
+            flipped = connection.execute(
+                "UPDATE payment_orders SET status = 'credited', capture_id = COALESCE(?, capture_id), "
+                "captured_at = COALESCE(captured_at, ?), credited_at = ? "
+                "WHERE order_id = ? AND user_key = ? AND status IN ('pending', 'captured')",
+                (capture_id, now_iso, now_iso, order["order_id"], user_key),
+            ).rowcount
+            if flipped != 1:
+                return {"credited": False}
+            existing = connection.execute("SELECT * FROM entitlements WHERE user_key = ?", (user_key,)).fetchone()
+            provider_id = f"pack_{order['order_id']}"
+            if existing is None:
+                new_end = now + timedelta(days=pack.validity_days)
+                connection.execute(
+                    "INSERT INTO entitlements (user_key, provider, provider_id, plan, status, starts_at, ends_at, "
+                    "updated_at, bundle_queries_remaining, total_queries_used) "
+                    "VALUES (?, 'pack', ?, ?, 'ACTIVE', ?, ?, ?, ?, 0)",
+                    (user_key, provider_id, pack.id, now_iso, new_end.isoformat(), now_iso, pack.scans),
+                )
+            elif (
+                existing["status"] == "ACTIVE"
+                and existing["bundle_queries_remaining"] is None
+                and existing["provider"] not in PACK_PROVIDERS
+            ):
+                return {"credited": True, "ends_at": existing["ends_at"], "scans_added": 0, "unlimited": True}
+            else:
+                base = max(parse_time(existing["ends_at"]) or now, now)
+                new_end = base + timedelta(days=pack.validity_days)
+                connection.execute(
+                    "UPDATE entitlements SET provider = 'pack', provider_id = ?, plan = ?, status = 'ACTIVE', "
+                    "ends_at = ?, bundle_queries_remaining = COALESCE(bundle_queries_remaining, 0) + ?, "
+                    "updated_at = ? WHERE user_key = ?",
+                    (provider_id, pack.id, new_end.isoformat(), pack.scans, now_iso, user_key),
+                )
+        return {"credited": True, "ends_at": new_end.isoformat(), "scans_added": pack.scans}
+
+    def refund_pack_order(self, order_id: str, pack: Pack) -> Dict[str, Any]:
+        """Undo a credited pack after a refund or reversal. Idempotent."""
+        if self.supabase:
+            result = self.supabase.request(
+                "POST", "rpc/nexus_refund_pack",
+                json={"p_order_id": order_id, "p_scans": pack.scans, "p_validity_days": pack.validity_days},
+            )
+            if not isinstance(result, dict):
+                raise RuntimeError("Supabase returned an invalid pack refund result.")
+            return result
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        with self._lock, self._connect() as connection:
+            order = connection.execute("SELECT * FROM payment_orders WHERE order_id = ?", (order_id,)).fetchone()
+            if order is None or order["status"] not in ("credited", "captured"):
+                return {"refunded": False}
+            connection.execute(
+                "UPDATE payment_orders SET status = 'refunded', refunded_at = ? WHERE order_id = ?",
+                (now_iso, order_id),
+            )
+            if order["status"] == "credited":
+                ent = connection.execute(
+                    "SELECT * FROM entitlements WHERE user_key = ?", (order["user_key"],)
+                ).fetchone()
+                if ent is not None and ent["provider"] in PACK_PROVIDERS:
+                    remaining = max(0, (ent["bundle_queries_remaining"] or 0) - pack.scans)
+                    if remaining == 0:
+                        ends_at, status = now_iso, "CANCELLED"
+                    else:
+                        current_end = parse_time(ent["ends_at"]) or now
+                        ends_at = max(now, current_end - timedelta(days=pack.validity_days)).isoformat()
+                        status = ent["status"]
+                    connection.execute(
+                        "UPDATE entitlements SET bundle_queries_remaining = ?, ends_at = ?, status = ?, "
+                        "updated_at = ? WHERE user_key = ?",
+                        (remaining, ends_at, status, now_iso, order["user_key"]),
+                    )
+        return {"refunded": True, "was_credited": order["status"] == "credited"}

@@ -1112,24 +1112,20 @@
         window.location.href = `mailto:support@brisklightai.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
 
-    async function startSubscription(plan) {
+    async function startPackCheckout() {
         const status = byId('billingStatus');
         if (!byId('billingConsent').checked) {
-            setMessage(status, 'Please agree to the monthly billing terms before continuing.', 'error');
+            setMessage(status, 'Please agree to the Terms of Use before continuing.', 'error');
             return;
         }
-        const buttons = [...document.querySelectorAll('[data-plan]')];
-        buttons.forEach(button => { button.disabled = true; });
+        const button = byId('buyPack');
+        button.disabled = true;
         setMessage(status, 'Opening secure PayPal checkout…');
         try {
-            const subscription = await apiJson('/v1/paypal/subscriptions', {
-                method: 'POST',
-                body: JSON.stringify({plan})
-            });
-            const approvalUrl = (subscription.links || []).find(link => link.rel === 'approve')?.href;
+            const checkout = await apiJson('/v1/checkout/orders', {method: 'POST', body: JSON.stringify({})});
             let approval;
             try {
-                approval = new URL(approvalUrl);
+                approval = new URL(checkout.approve_url);
             } catch (error) {
                 throw new Error('PayPal did not return a valid secure approval link.');
             }
@@ -1139,9 +1135,43 @@
             }
             window.location.assign(approval.toString());
         } catch (error) {
-            setMessage(status, error.message, 'error');
-            buttons.forEach(button => { button.disabled = false; });
+            setMessage(status, error.payload?.detail?.message || error.message, 'error');
+            button.disabled = false;
         }
+    }
+
+    // PayPal sends the buyer back with ?checkout=complete&token=<order id>. The server verifies the
+    // payment with PayPal and credits the pack; this page only reports the result.
+    async function loadPackInfo() {
+        try {
+            const response = await fetch(`${API_URL}/v1/checkout/pack`);
+            if (!response.ok) return;
+            const pack = await response.json();
+            byId('packPrice').replaceChildren(`$${pack.price} `, Object.assign(document.createElement('small'), {textContent: 'one-time'}));
+            byId('packSummary').textContent =
+                `${pack.scans} scans, plus full Excel audit and Word report downloads for ${pack.validity_days} days.`;
+        } catch (error) {
+            // The static copy in the page stays in place if the price cannot be loaded.
+        }
+    }
+
+    async function finishCheckout(orderId) {
+        const status = byId('billingStatus');
+        byId('plansCard').hidden = false;
+        setMessage(status, 'Confirming your payment with PayPal…');
+        try {
+            const result = await apiJson(`/v1/checkout/orders/${encodeURIComponent(orderId)}/capture`, {method: 'POST'});
+            await refreshEntitlement();
+            if (result.status === 'pending') {
+                setMessage(status, 'PayPal is still processing this payment. Your pack unlocks automatically once it clears.', 'success');
+            } else {
+                setMessage(status, 'Payment confirmed. Your Research Pack is active.', 'success');
+            }
+        } catch (error) {
+            setMessage(status, error.payload?.detail?.message || error.message, 'error');
+        }
+        history.replaceState(null, '', location.pathname);
+        byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
     }
 
     function startWorkspace() {
@@ -1155,6 +1185,7 @@
 
     async function initialize() {
         byId('copyrightYear').textContent = String(new Date().getFullYear());
+        loadPackInfo();
         const checkoutResult = new URLSearchParams(location.search).get('checkout');
         try {
             await exchangeCallback();
@@ -1168,13 +1199,13 @@
                     setMessage(scanStatus, error.message, 'error');
                 }
                 await loadHistory();
-                if (checkoutResult === 'complete') {
-                    byId('plansCard').hidden = false;
-                    setMessage(byId('billingStatus'), 'PayPal approval received. Subscription activation may take a moment; refresh your workspace status shortly.', 'success');
-                    byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
+                const returnedOrder = new URLSearchParams(location.search).get('token');
+                if (checkoutResult === 'complete' && returnedOrder) {
+                    await finishCheckout(returnedOrder);
                 } else if (checkoutResult === 'cancel') {
                     byId('plansCard').hidden = false;
-                    setMessage(byId('billingStatus'), 'Checkout was cancelled. No subscription was activated.', 'error');
+                    setMessage(byId('billingStatus'), 'Checkout was cancelled. You have not been charged.', 'error');
+                    history.replaceState(null, '', location.pathname);
                     byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
                 }
             }
@@ -1272,9 +1303,7 @@
             byId('plansCard').scrollIntoView({behavior: 'smooth', block: 'center'});
         });
         byId('closePlans').addEventListener('click', () => { byId('plansCard').hidden = true; });
-        document.querySelectorAll('[data-plan]').forEach(button => {
-            button.addEventListener('click', () => startSubscription(button.dataset.plan));
-        });
+        byId('buyPack').addEventListener('click', startPackCheckout);
         window.NexusUI = {
             retryReport: (type) => generateReport(type || 'proposal')
         };

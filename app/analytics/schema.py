@@ -267,6 +267,11 @@ register(
     {"provider": text(), "error_code": text(), "order_id": text()},
 )
 register(
+    "payment_completed", "monetization", _SERVER,
+    {"provider": text(), "plan": text(), "payment_type": text(), "order_id": text(), "price": number()},
+    "A pack payment was captured, verified and credited.",
+)
+register(
     "paypal_webhook_received", "monetization", _SERVER,
     {"event_type": text(), "provider_id": text(), "status": text()},
 )

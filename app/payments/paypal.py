@@ -1,8 +1,24 @@
 import base64
 import os
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
+
+from app.payments.catalog import Pack
+
+_ORDER_ID = re.compile(r"^[A-Za-z0-9_-]{5,100}$")
+
+
+class PayPalError(RuntimeError):
+    """A PayPal API call that was rejected, with PayPal's own error name and issue codes."""
+
+    def __init__(self, status_code: int, name: str = "", message: str = "", issues: Optional[List[str]] = None):
+        self.status_code = status_code
+        self.name = name
+        self.issues = issues or []
+        super().__init__(f"PayPal request failed ({status_code} {name}): {message}".strip())
 
 
 class PayPalClient:
@@ -18,7 +34,12 @@ class PayPalClient:
             else "https://api-m.paypal.com"
         )
 
+    def is_configured(self) -> bool:
+        return bool(os.getenv("PAYPAL_CLIENT_ID") and os.getenv("PAYPAL_CLIENT_SECRET"))
+
     def _require_credentials(self):
+        self.client_id = os.getenv("PAYPAL_CLIENT_ID")
+        self.client_secret = os.getenv("PAYPAL_CLIENT_SECRET")
         if not self.client_id or not self.client_secret:
             raise RuntimeError("PayPal credentials are not configured on the server.")
 
@@ -57,15 +78,21 @@ class PayPalClient:
             timeout=30,
             **kwargs,
         )
-        response.raise_for_status()
-        return response.json()
+        if not response.ok:
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            raise PayPalError(
+                response.status_code,
+                str(body.get("name") or ""),
+                str(body.get("message") or "")[:200],
+                [str(d.get("issue")) for d in body.get("details", []) if isinstance(d, dict) and d.get("issue")],
+            )
+        return response.json() if response.content else {}
 
-    def create_order(self, plan: str, user_id: str) -> Dict[str, Any]:
-        plans = {
-            "pro": ("19.00", "Research Pro"),
-            "ultimate": ("49.00", "Research Ultimate"),
-        }
-        amount, description = plans.get(plan, plans["pro"])
+    def create_pack_order(self, pack: Pack, user_id: str, invoice_id: str) -> Dict[str, Any]:
+        """Create an order whose amount comes from the server's catalog, never from the client."""
         return self._request(
             "POST",
             "/v2/checkout/orders",
@@ -73,48 +100,51 @@ class PayPalClient:
                 "intent": "CAPTURE",
                 "purchase_units": [
                     {
-                        "reference_id": f"nexus-{plan}",
-                        "description": description,
+                        "reference_id": pack.id[:127],
+                        "description": f"{pack.name} ({pack.scans} scans)"[:127],
                         "custom_id": str(user_id)[:127],
-                        "amount": {"currency_code": "USD", "value": amount},
+                        "invoice_id": invoice_id[:127],
+                        "amount": {"currency_code": pack.currency, "value": pack.price_text},
                     }
                 ],
                 "application_context": {
                     "brand_name": "Nexus Research AI",
                     "user_action": "PAY_NOW",
+                    "shipping_preference": "NO_SHIPPING",
                     "return_url": os.getenv("PAYPAL_RETURN_URL", ""),
                     "cancel_url": os.getenv("PAYPAL_CANCEL_URL", ""),
                 },
             },
         )
 
-    def create_subscription(self, plan: str, user_id: str) -> Dict[str, Any]:
-        plan_ids = {
-            "pro": os.getenv("PAYPAL_PLAN_ID_PRO"),
-            "ultimate": os.getenv("PAYPAL_PLAN_ID_ULTIMATE"),
-        }
-        plan_id = plan_ids.get(plan, plan_ids["pro"])
-        if not plan_id:
-            raise RuntimeError(f"PayPal subscription plan ID is not configured for: {plan}.")
-        return self._request(
-            "POST",
-            "/v1/billing/subscriptions",
-            json={
-                "plan_id": plan_id,
-                "custom_id": str(user_id)[:127],
-                "application_context": {
-                    "brand_name": "Nexus Research AI",
-                    "user_action": "SUBSCRIBE_NOW",
-                    "return_url": os.getenv("PAYPAL_RETURN_URL", ""),
-                    "cancel_url": os.getenv("PAYPAL_CANCEL_URL", ""),
-                },
-            },
-        )
+    @staticmethod
+    def approval_url(order: Dict[str, Any]) -> str:
+        """The PayPal page the buyer approves on. Refuses anything that is not a paypal.com link."""
+        for link in order.get("links", []):
+            if link.get("rel") in ("payer-action", "approve") and link.get("href"):
+                host = (urlparse(link["href"]).hostname or "").lower()
+                if urlparse(link["href"]).scheme == "https" and (host == "paypal.com" or host.endswith(".paypal.com")):
+                    return link["href"]
+        raise PayPalError(502, "NO_APPROVAL_LINK", "PayPal did not return a valid approval link.")
+
+    @staticmethod
+    def _checked_order_id(order_id: str) -> str:
+        if not order_id or not _ORDER_ID.match(order_id):
+            raise ValueError("A valid PayPal order ID is required.")
+        return order_id
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        return self._request("GET", f"/v2/checkout/orders/{self._checked_order_id(order_id)}")
 
     def capture_order(self, order_id: str) -> Dict[str, Any]:
-        if not order_id or len(order_id) > 100:
-            raise ValueError("A valid PayPal order ID is required.")
-        return self._request("POST", f"/v2/checkout/orders/{order_id}/capture", json={})
+        """Capture an approved order. A repeat call returns the existing captured order."""
+        order_id = self._checked_order_id(order_id)
+        try:
+            return self._request("POST", f"/v2/checkout/orders/{order_id}/capture", json={})
+        except PayPalError as error:
+            if "ORDER_ALREADY_CAPTURED" in error.issues:
+                return self.get_order(order_id)
+            raise
 
     def verify_webhook_signature(self, headers: Dict[str, str], webhook_event: Dict[str, Any]) -> bool:
         webhook_id = os.getenv("PAYPAL_WEBHOOK_ID")

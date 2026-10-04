@@ -49,8 +49,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToUpgradeDetailsBtn = document.getElementById('backToUpgradeDetailsBtn');
     const returnToResearchBtn = document.getElementById('returnToResearchBtn');
     const checkoutStatus = document.getElementById('checkoutStatus');
-    const proPlanOption = document.getElementById('proPlanOption');
-    const ultimatePlanOption = document.getElementById('ultimatePlanOption');
     const checkoutPlanName = document.getElementById('checkoutPlanName');
     const checkoutSourceCapacity = document.getElementById('checkoutSourceCapacity');
     const checkoutDomainCapacity = document.getElementById('checkoutDomainCapacity');
@@ -234,7 +232,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeReportType = null;
     let reportGenerationCancelled = false;
     let reportProcessingActive = false;
-    let selectedPlan = 'pro';
     const manifest = chrome.runtime.getManifest();
     const isLocalTestingInstall = !manifest.update_url;
     let isSignInMode = false;
@@ -388,20 +385,31 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function selectPlan(plan) {
-        selectedPlan = plan === 'ultimate' ? 'ultimate' : 'pro';
-        const ultimate = selectedPlan === 'ultimate';
-        [proPlanOption, ultimatePlanOption].forEach(option => {
-            const selected = option?.dataset.plan === selectedPlan;
-            option?.classList.toggle('selected', selected);
-            option?.setAttribute('aria-pressed', String(selected));
-            const action = option?.querySelector('.plan-action');
-            if (action) action.textContent = selected ? 'Selected plan' : `Choose ${option.dataset.plan === 'ultimate' ? 'Ultimate' : 'Pro'}`;
-        });
-        if (checkoutPlanName) checkoutPlanName.textContent = ultimate ? 'Research Ultimate' : 'Research Pro';
-        if (checkoutPlanPrice) checkoutPlanPrice.textContent = ultimate ? '$49 / month' : '$19 / month';
-        if (checkoutSourceCapacity) checkoutSourceCapacity.textContent = ultimate ? 'More than 100' : 'Up to 100';
-        if (checkoutDomainCapacity) checkoutDomainCapacity.textContent = ultimate ? 'Up to 3 domains' : '1 domain';
+    let packInfo = null;
+
+    async function loadPackInfo() {
+        if (packInfo) return packInfo;
+        try {
+            const response = await fetch(`${await getApiBaseUrl()}/v1/checkout/pack`);
+            if (!response.ok) return null;
+            packInfo = await response.json();
+        } catch (error) {
+            return null;
+        }
+        const price = `$${packInfo.price} ${packInfo.currency} one-time`;
+        const scans = `${packInfo.scans} scans`;
+        const validity = `${packInfo.validity_days} days`;
+        if (checkoutPlanName) checkoutPlanName.textContent = packInfo.name;
+        if (checkoutPlanPrice) checkoutPlanPrice.textContent = price;
+        if (checkoutSourceCapacity) checkoutSourceCapacity.textContent = scans;
+        if (checkoutDomainCapacity) checkoutDomainCapacity.textContent = validity;
+        const priceLabel = document.getElementById('packPriceLabel');
+        if (priceLabel) priceLabel.textContent = price;
+        const summary = document.getElementById('packSummary');
+        if (summary) summary.textContent = `${scans}, plus full Excel audit and Word report downloads for ${validity}.`;
+        const terms = document.getElementById('termsPackPrice');
+        if (terms) terms.textContent = `A Research Pack is a one-time purchase of $${packInfo.price} ${packInfo.currency}. It does not renew.`;
+        return packInfo;
     }
 
     upgradeTile?.addEventListener('click', () => showUpgradeFlow('details'));
@@ -416,12 +424,8 @@ document.addEventListener('DOMContentLoaded', () => {
     closeUpgradeBtn?.addEventListener('click', closeUpgradeFlow);
     backToUpgradeDetailsBtn?.addEventListener('click', () => showUpgradeFlow('details'));
     returnToResearchBtn?.addEventListener('click', closeUpgradeFlow);
-    proPlanOption?.addEventListener('click', () => {
-        selectPlan('pro');
-        showUpgradeFlow('checkout');
-    });
-    ultimatePlanOption?.addEventListener('click', () => {
-        selectPlan('ultimate');
+    document.getElementById('packOption')?.addEventListener('click', () => {
+        loadPackInfo();
         showUpgradeFlow('checkout');
     });
     termsLinkBtn?.addEventListener('click', () => showUpgradeFlow('terms'));
@@ -430,7 +434,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (termsAgreement) termsAgreement.checked = true;
         showUpgradeFlow('checkout');
     });
-    selectPlan('pro');
+    loadPackInfo();
 
     async function refreshEntitlements() {
         const storage = await chrome.storage.local.get(["nexus_auth_user"]);
@@ -893,21 +897,19 @@ document.addEventListener('DOMContentLoaded', () => {
             destination.style.display = 'block';
         }
         try {
-            const storage = await chrome.storage.local.get(['nexus_auth_user']);
-            const response = await fetch(`${await getApiBaseUrl()}/v1/paypal/subscriptions`, {
+            const response = await fetch(`${await getApiBaseUrl()}/v1/checkout/orders`, {
                 method: 'POST',
                 headers: await getApiHeaders(),
-                body: JSON.stringify({
-                    plan: selectedPlan,
-                    user_id: storage.nexus_auth_user?.email || 'anonymous'
-                })
+                body: JSON.stringify({})
             });
-            if (!response.ok) throw new Error(`PayPal order request failed (${response.status}).`);
+            if (!response.ok) {
+                const failure = await response.json().catch(() => ({}));
+                throw new Error(failure.detail?.message || `Checkout request failed (${response.status}).`);
+            }
             const order = await response.json();
-            const approval = (order.links || []).find(link => link.rel === 'approve');
-            if (!approval?.href) throw new Error('PayPal did not return an approval URL.');
-            sendAnalytics('paypal_approval_opened', {plan: selectedPlan, order_id: order.id});
-            chrome.tabs.create({url: approval.href});
+            if (!order.approve_url) throw new Error('PayPal did not return an approval URL.');
+            sendAnalytics('paypal_approval_opened', {plan: order.pack?.id || 'pack', order_id: order.order_id});
+            chrome.tabs.create({url: order.approve_url});
             if (destination) destination.innerText = 'PayPal checkout opened in a new tab.';
         } catch (error) {
             sendAnalytics('payment_failed', {
@@ -1480,7 +1482,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!isPaidUser && !isLocalTestingInstall) {
                 if (draftStatus) {
                     draftStatus.className = 'error';
-                    draftStatus.innerText = "The Complete Literature Review is available to paid users. Upgrade your subscription, then try again.";
+                    draftStatus.innerText = "The Complete Literature Review is available to paid users. Get a Research Pack, then try again.";
                     draftStatus.style.display = 'block';
                 }
                 if (upgradeFromReportBtn) upgradeFromReportBtn.style.display = 'block';

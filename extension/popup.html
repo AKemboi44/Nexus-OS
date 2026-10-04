@@ -401,15 +401,15 @@
   <section class="card auth-terms-screen" id="signupTermsScreen" aria-labelledby="signupTermsTitle">
     <button class="flow-back" id="backToSignupBtn" type="button">← Back to signup</button>
     <h2 id="signupTermsTitle">Nexus Research AI Terms and Conditions</h2>
-    <p>These terms explain how the research workspace, accounts, subscriptions, payments, and generated outputs are handled.</p>
+    <p>These terms explain how the research workspace, accounts, purchases, payments, and generated outputs are handled.</p>
     <h3>1. Account registration</h3>
     <p>You must provide accurate account information and keep your sign-in details secure. Each account is intended for the person or organization that created it.</p>
     <h3>2. Research workspace</h3>
     <p>Nexus Research AI provides evidence discovery, source auditing, synthesis, and report-generation tools. You are responsible for reviewing sources and deciding how to use generated material.</p>
-    <h3>3. Payments and subscriptions</h3>
-    <p>Paid plans are billed at the price shown at checkout and renew according to the selected payment provider's schedule. Payment credentials are handled by the provider and are not stored in the extension.</p>
-    <h3>4. Refunds and cancellation</h3>
-    <p>Refund requests should normally be submitted within seven days of a charge. Completed scans, generated reports, and used subscription time may be excluded. Approved refunds are returned through the original payment method. Future renewals may be cancelled through the payment provider.</p>
+    <h3>3. Payments</h3>
+    <p>A Research Pack is a one-time purchase billed at the price shown at checkout. It does not renew. Payment credentials are handled by PayPal and are not stored in the extension.</p>
+    <h3>4. Refunds</h3>
+    <p>Refund requests should normally be submitted within seven days of a charge. Scans already run and reports already generated may be excluded. Approved refunds are returned through the original payment method.</p>
     <h3>5. Research-output policy</h3>
     <p>Research outputs are decision-support aids. They are not guarantees of truth, safety, publication acceptance, legal compliance, or professional advice. Verify sources, interpretations, and conclusions independently.</p>
     <h3>6. Acceptable use</h3>
@@ -467,22 +467,16 @@
         <div id="upgradeDetailsScreen">
         <button class="flow-back" id="closeUpgradeBtn" type="button">← Back to research</button>
         <div class="upgrade-hero">
-          <p class="upgrade-kicker">Nexus Research AI Pro</p>
-          <h2>Upgrade your research workspace</h2>
+          <p class="upgrade-kicker">Research Pack</p>
+          <h2>Unlock full downloads and more scans</h2>
           <p class="flow-subtitle">Move from quick evidence scans to deeper, publication-ready research preparation.</p>
         </div>
-        <div class="plan-options" role="radiogroup" aria-label="Choose an upgrade plan">
-          <button class="plan-option selected" id="proPlanOption" type="button" data-plan="pro" aria-pressed="true">
-            <strong>Research Pro</strong>
-            <span>Up to 100 sources per scan with complete literature reviews.</span>
-            <span class="plan-price">$19 <small>/ month</small></span>
-            <span class="plan-action">Selected plan</span>
-          </button>
-          <button class="plan-option ultimate" id="ultimatePlanOption" type="button" data-plan="ultimate" aria-pressed="false">
-            <strong>Research Ultimate</strong>
-            <span>More than 100 sources plus up to 3 research domains.</span>
-            <span class="plan-price">$49 <small>/ month</small></span>
-            <span class="plan-action">Choose Ultimate</span>
+        <div class="plan-options" role="group" aria-label="Research Pack">
+          <button class="plan-option selected" id="packOption" type="button">
+            <strong>Research Pack</strong>
+            <span id="packSummary">Full Excel audit and Word report downloads, plus more scans.</span>
+            <span class="plan-price" id="packPriceLabel">One-time payment</span>
+            <span class="plan-action">Continue to checkout</span>
           </button>
         </div>
         <div class="upgrade-benefits">
@@ -501,14 +495,14 @@
         <div class="upgrade-hero">
           <p class="upgrade-kicker">Secure checkout</p>
           <h2>Choose a payment method</h2>
-          <p class="flow-subtitle">Complete your Research Pro upgrade in the next step.</p>
+          <p class="flow-subtitle">Complete your Research Pack purchase in the next step.</p>
         </div>
         <div class="checkout-summary">
-          <div class="checkout-summary-row"><span>Plan</span><strong id="checkoutPlanName">Research Pro</strong></div>
-          <div class="checkout-summary-row"><span>Price</span><strong id="checkoutPlanPrice">$19 / month</strong></div>
-          <div class="checkout-summary-row"><span>Source capacity</span><strong id="checkoutSourceCapacity">Up to 100</strong></div>
-          <div class="checkout-summary-row"><span>Domain support</span><strong id="checkoutDomainCapacity">1 domain</strong></div>
-          <div class="checkout-summary-row"><span>Reports</span><strong>Complete literature reviews</strong></div>
+          <div class="checkout-summary-row"><span>Product</span><strong id="checkoutPlanName">Research Pack</strong></div>
+          <div class="checkout-summary-row"><span>Price</span><strong id="checkoutPlanPrice">One-time payment</strong></div>
+          <div class="checkout-summary-row"><span>Scans included</span><strong id="checkoutSourceCapacity">Loading</strong></div>
+          <div class="checkout-summary-row"><span>Valid for</span><strong id="checkoutDomainCapacity">Loading</strong></div>
+          <div class="checkout-summary-row"><span>Downloads</span><strong>Full Excel audit and Word reports</strong></div>
         </div>
         <p class="flow-subtitle">Select a payment method to continue. Payment details are handled in the secure checkout flow.</p>
         <div class="checkout-methods">
@@ -534,15 +528,15 @@
         </div>
         <div class="terms-screen">
           <h3>Plans and billing</h3>
-          <p>Research Pro is $19 per month. Research Ultimate is $49 per month. The selected plan renews monthly until cancelled through the payment provider.</p>
+          <p id="termsPackPrice">A Research Pack is a one-time purchase at the price shown at checkout. It does not renew.</p>
           <h3>Payment processing</h3>
           <p>Payments are processed by the selected provider. Nexus Research AI does not store card or wallet credentials in the extension.</p>
           <h3>Refunds</h3>
-          <p>Refund requests should be submitted within 7 days of a charge. Completed scans, generated reports, and used subscription time may be excluded from a refund. Any approved refund is returned through the original payment method.</p>
+          <p>Refund requests should be submitted within 7 days of a charge. Scans already run and reports already generated may be excluded from a refund. Any approved refund is returned through the original payment method.</p>
           <h3>Research outputs</h3>
           <p>Reports are research aids, not guarantees of accuracy, safety, publication acceptance, or professional advice. Verify sources and conclusions independently.</p>
-          <h3>Changes and cancellation</h3>
-          <p>You may cancel future renewals through the payment provider. Changes to plans or pricing will be communicated before they take effect where required.</p>
+          <h3>Renewal</h3>
+          <p>A Research Pack does not renew, so there is nothing to cancel. Changes to pricing will be communicated before they take effect where required.</p>
         </div>
         <button class="btn" id="acceptTermsBtn" type="button" style="margin-top:12px;">Accept and return to checkout</button>
       </div>
@@ -699,7 +693,7 @@
         Download previously generated report
       </button>
       <button class="btn" id="upgradeFromReportBtn" type="button" style="display:none; margin-top:8px; background:#7c3aed;">
-        View subscription plans
+        View Research Pack
       </button>
 
       <div class="progress-container" id="scribeProgressContainer" style="margin-top:12px;">
