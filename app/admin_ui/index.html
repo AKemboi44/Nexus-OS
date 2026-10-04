@@ -11,6 +11,7 @@
   <header class="topbar">
     <h1>Nexus metrics</h1>
     <div class="controls" id="controls" hidden>
+      <span class="mode-badge" id="modeBadge" role="status" hidden><span class="dot" aria-hidden="true"></span><span id="modeText"></span></span>
       <div class="segmented" role="group" aria-label="Time window" id="windowPicker">
         <button type="button" data-days="7" aria-pressed="false">7 days</button>
         <button type="button" data-days="30" aria-pressed="true">30 days</button>
@@ -30,6 +31,7 @@
     </form>
   </section>
 
+  <p class="notice warning" id="modeNotice" role="alert" hidden></p>
   <main id="app" hidden>
     <nav class="tabs" role="tablist" id="tabs"></nav>
     <p class="notice" id="notice" role="status" hidden></p>

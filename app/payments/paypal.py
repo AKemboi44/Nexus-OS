@@ -164,3 +164,29 @@ class PayPalClient:
             },
         )
         return result.get("verification_status") == "SUCCESS"
+
+
+def paypal_status() -> Dict[str, Any]:
+    """Which PayPal environment this server will charge against. Never includes credentials.
+
+    The client treats any PAYPAL_MODE other than "sandbox" as live, so the effective mode follows that
+    rule and an unrecognised value is reported as a warning instead of being trusted.
+    """
+    raw_mode = os.getenv("PAYPAL_MODE", "sandbox").strip().lower()
+    configured = bool(os.getenv("PAYPAL_CLIENT_ID") and os.getenv("PAYPAL_CLIENT_SECRET"))
+    webhook = bool(os.getenv("PAYPAL_WEBHOOK_ID"))
+    effective = "sandbox" if raw_mode == "sandbox" else "live"
+    warnings = []
+    if raw_mode not in {"sandbox", "live"}:
+        warnings.append(f'PAYPAL_MODE is "{raw_mode}", which is not recognised and is treated as live.')
+    if configured and effective == "live" and not webhook:
+        warnings.append("Live mode without PAYPAL_WEBHOOK_ID: refunds and late payments will not be applied.")
+    return_url = os.getenv("PAYPAL_RETURN_URL", "")
+    if configured and not return_url.startswith("https://"):
+        warnings.append("PAYPAL_RETURN_URL is not an https address; buyers will not return to the site.")
+    return {
+        "mode": effective if configured else "not_configured",
+        "configured": configured,
+        "webhook_configured": webhook,
+        "warnings": warnings,
+    }

@@ -438,18 +438,42 @@
         });
     }
 
+    // A filled green dot means real money (live); a hollow amber ring means test money (sandbox).
+    const MODE_TEXT = {live: 'PayPal live', sandbox: 'PayPal sandbox', not_configured: 'PayPal not set up'};
+
+    async function renderMode() {
+        const badge = $('modeBadge');
+        const notice = $('modeNotice');
+        try {
+            const {paypal} = await api('/v1/admin/status');
+            const mode = MODE_TEXT[paypal.mode] ? paypal.mode : 'not_configured';
+            badge.className = `mode-badge ${mode}`;
+            $('modeText').textContent = MODE_TEXT[mode];
+            badge.title = mode === 'live' ? 'Buyers are charged real money.'
+                : mode === 'sandbox' ? 'Test mode: no real money moves.' : 'PayPal credentials are not set on the server.';
+            badge.hidden = false;
+            notice.textContent = (paypal.warnings || []).join(' ');
+            notice.hidden = !notice.textContent;
+        } catch (error) {
+            badge.hidden = true;
+            notice.hidden = true;
+        }
+    }
+
     function showApp() {
         $('login').hidden = true;
         $('app').hidden = false;
         $('controls').hidden = false;
         renderTabs();
         render();
+        renderMode();
     }
 
     function signOut(message = '') {
         sessionStorage.removeItem(TOKEN_KEY);
         $('app').hidden = true;
         $('controls').hidden = true;
+        $('modeNotice').hidden = true;
         $('detail').hidden = true;
         $('login').hidden = false;
         $('tokenInput').value = '';
@@ -463,7 +487,7 @@
         showApp();
     });
     $('signOut').addEventListener('click', () => signOut());
-    $('refresh').addEventListener('click', render);
+    $('refresh').addEventListener('click', () => { render(); renderMode(); });
     $('windowPicker').addEventListener('click', event => {
         const button = event.target.closest('button[data-days]');
         if (!button) return;

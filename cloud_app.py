@@ -31,7 +31,7 @@ from app.analytics.context import (
     accept_request_id, configure_logging, current_request_id, reset_request_id, set_request_id,
 )
 from app.analytics.schema import CLIENT, EXTENSION, SERVER, WEB, build_properties
-from app.payments.paypal import PayPalClient, PayPalError
+from app.payments.paypal import PayPalClient, PayPalError, paypal_status
 from app.payments.catalog import all_packs, get_pack
 from app.payments.checkout import CheckoutError, capture_pack_order, create_pack_checkout, handle_paypal_event
 from app.payments import exposure
@@ -1885,6 +1885,13 @@ async def get_admin_instrumentation_health(days: int = 7, x_admin_token: Optiona
     window = _bounded_days(days)
     rows = await run_in_threadpool(analytics.fetch_events, window)
     return instrumentation_health(rows, window)
+
+
+@app.get("/v1/admin/status")
+async def get_admin_status(x_admin_token: Optional[str] = Header(None)):
+    """Which PayPal environment the server is charging against, so a switch to live is visible."""
+    require_admin(x_admin_token)
+    return {"paypal": paypal_status()}
 
 
 @app.get("/v1/admin/trace/{request_id}")

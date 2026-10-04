@@ -48,6 +48,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px 24px 64px; }
 .card .label { color: var(--ink-2); font-size: 13px; }
 .card .value { font-size: 26px; font-weight: 600; }
 .card .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 20px; color: var(--ink-2); font-size: 12px; }
+.mode-badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--page); font-weight: 600; }
+.mode-badge .dot { width: 11px; height: 11px; border: 2px solid var(--muted); border-radius: 50%; background: transparent; }
+.mode-badge.live .dot { border-color: var(--good); background: var(--good); }
+.mode-badge.sandbox .dot { border-color: var(--warning); background: transparent; }
+.mode-badge.not_configured .dot { border-color: var(--muted); background: transparent; border-style: dashed; }
+#modeNotice { margin: 12px 24px 0; border-color: var(--warning); color: var(--ink); }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--ink); }
 .chip .glyph { display: inline-block; width: 14px; text-align: center; }
 .chip.good .glyph { color: var(--good); }
