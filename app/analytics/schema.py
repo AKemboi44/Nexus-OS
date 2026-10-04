@@ -194,7 +194,7 @@ register(
     "report_started", "activation", _SERVER,
     {
         "report_type": text("proposal", "full_starter"), "included_source_count": integer(),
-        "uploaded_source_count": integer(), "domain_category": text(),
+        "uploaded_source_count": integer(), "domain_category": text(), "topic_hash": text(),
     },
 )
 register(

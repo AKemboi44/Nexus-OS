@@ -21,7 +21,10 @@ from typing import Optional, List, Dict, Any, Literal
 from app.supabase_store import SupabaseRequestError, SupabaseRestClient
 from app.research.research_pipeline import ResearchPipeline
 from app.analytics.event_store import AnalyticsEventStore
-from app.analytics import tracing
+from app.analytics import catalog, metrics_engine, tracing  # noqa: F401 (catalog registers the metrics)
+from app.analytics.event_store import MAX_FETCHED_EVENTS
+from app.analytics.health import instrumentation_health
+from app.analytics.schema import event_source as schema_event_source
 from app.analytics.tracing import traced
 from app.analytics.context import (
     accept_request_id, configure_logging, current_request_id, reset_request_id, set_request_id,
@@ -893,6 +896,7 @@ async def generate_research_report(
             "included_source_count": len(payload.included_sources),
             "uploaded_source_count": len(payload.uploaded_sources),
             "domain_category": str(payload.domain or "scholarly")[:40],
+            "topic_hash": hashlib.sha256(topic.casefold().encode("utf-8")).hexdigest()[:12],
         },
     )
     scribe = None
@@ -1743,6 +1747,71 @@ async def get_ab_conversion_analytics(days: int = 30, x_admin_token: Optional[st
     """Returns side-by-side A/B conversion metrics and aha moment timings."""
     require_admin(x_admin_token)
     return analytics.ab_conversion_metrics(days=days)
+
+
+def _bounded_days(days: int) -> int:
+    return min(max(int(days), 1), 180)
+
+
+def _build_scorecard(days: int, only: Optional[str] = None) -> Dict[str, Any]:
+    rows = analytics.fetch_events(days=days * 2)
+    return metrics_engine.scorecard(rows, days, only=only, truncated=len(rows) >= MAX_FETCHED_EVENTS)
+
+
+@app.get("/v1/admin/metrics")
+async def get_admin_metrics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
+    """Scorecard of every registered metric for the window, compared with the previous window."""
+    require_admin(x_admin_token)
+    return await run_in_threadpool(_build_scorecard, _bounded_days(days))
+
+
+@app.get("/v1/admin/metrics/{metric_id}")
+async def get_admin_metric_detail(metric_id: str, days: int = 30, x_admin_token: Optional[str] = Header(None)):
+    require_admin(x_admin_token)
+    if metric_id not in metrics_engine.REGISTRY:
+        raise HTTPException(status_code=404, detail="Unknown metric.")
+    card = await run_in_threadpool(_build_scorecard, _bounded_days(days), metric_id)
+    return card["categories"][0]["metrics"][0] | {
+        "window_days": card["window_days"], "data_truncated": card["data_truncated"],
+    }
+
+
+@app.get("/v1/admin/health")
+async def get_admin_instrumentation_health(days: int = 7, x_admin_token: Optional[str] = Header(None)):
+    require_admin(x_admin_token)
+    window = _bounded_days(days)
+    rows = await run_in_threadpool(analytics.fetch_events, window)
+    return instrumentation_health(rows, window)
+
+
+@app.get("/v1/admin/trace/{request_id}")
+async def get_admin_trace(request_id: str, x_admin_token: Optional[str] = Header(None)):
+    """Every event recorded for one request, oldest first. Users quote this as their Reference ID."""
+    require_admin(x_admin_token)
+    try:
+        rows = await run_in_threadpool(analytics.fetch_events, 30, None, MAX_FETCHED_EVENTS, request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request id.")
+    if not rows:
+        raise HTTPException(status_code=404, detail="No events recorded for that request id.")
+    timeline = [
+        {"event": row["event_name"], "at": row["occurred_at"],
+         "source": schema_event_source(row["properties"], row["session_id"]), "properties": row["properties"]}
+        for row in rows
+    ]
+    calls = [item["properties"] for item in timeline if item["event"] == "llm_call"]
+    return {
+        "request_id": request_id,
+        "timeline": timeline,
+        "summary": {
+            "events": len(timeline),
+            "llm_calls": len(calls),
+            "input_tokens": sum(c.get("input_tokens") or 0 for c in calls),
+            "output_tokens": sum(c.get("output_tokens") or 0 for c in calls),
+            "spans": {i["properties"]["name"]: i["properties"]["duration_ms"]
+                      for i in timeline if i["event"] == "span" and "name" in i["properties"]},
+        },
+    }
 
 
 @app.post("/v1/bundles/purchase")

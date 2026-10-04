@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 EVENT_PAGE_SIZE = 1000
 MAX_FETCHED_EVENTS = 20000
 _EVENT_NAME = re.compile(r"^[a-z0-9_.]{1,120}$")
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 OPERATIONAL_EVENT_NAMES = (
     "scan_completed",
@@ -222,6 +223,7 @@ class AnalyticsEventStore:
         days: int = 30,
         names: Optional[Sequence[str]] = None,
         limit: int = MAX_FETCHED_EVENTS,
+        request_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Events in the window, oldest first, from the store that actually holds them.
 
@@ -233,17 +235,21 @@ class AnalyticsEventStore:
         names = list(names) if names else None
         if names and not all(_EVENT_NAME.match(name) for name in names):
             raise ValueError("Invalid event name filter.")
+        if request_id is not None and not _REQUEST_ID.match(request_id):
+            raise ValueError("Invalid request id.")
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         if self.supabase:
-            events = self._fetch_supabase_events(cutoff, names, limit)
+            events = self._fetch_supabase_events(cutoff, names, limit, request_id)
         else:
-            events = self._fetch_sqlite_events(cutoff, names, limit)
+            events = self._fetch_sqlite_events(cutoff, names, limit, request_id)
         if len(events) >= limit:
             logger.warning("Analytics fetch hit the %d-event cap; older events were left out.", limit)
         events.sort(key=lambda event: event["occurred_at"])
         return events
 
-    def _fetch_supabase_events(self, cutoff: str, names: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
+    def _fetch_supabase_events(
+        self, cutoff: str, names: Optional[List[str]], limit: int, request_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         events: List[Dict[str, Any]] = []
         offset = 0
         while len(events) < limit:
@@ -257,6 +263,8 @@ class AnalyticsEventStore:
             }
             if names:
                 params["event_name"] = f"in.({','.join(names)})"
+            if request_id:
+                params["properties->>request_id"] = f"eq.{request_id}"
             rows = self.supabase.request("GET", "analytics_events", params=params)
             if not isinstance(rows, list):
                 raise RuntimeError("Supabase returned an invalid analytics response.")
@@ -274,7 +282,9 @@ class AnalyticsEventStore:
             offset += page_size
         return events
 
-    def _fetch_sqlite_events(self, cutoff: str, names: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
+    def _fetch_sqlite_events(
+        self, cutoff: str, names: Optional[List[str]], limit: int, request_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         query = (
             "SELECT event_name, user_key, session_id, occurred_at, properties_json "
             "FROM analytics_events WHERE occurred_at >= ?"
@@ -283,6 +293,9 @@ class AnalyticsEventStore:
         if names:
             query += f" AND event_name IN ({','.join('?' for _ in names)})"
             values.extend(names)
+        if request_id:
+            query += " AND json_extract(properties_json, '$.request_id') = ?"
+            values.append(request_id)
         query += " ORDER BY occurred_at DESC LIMIT ?"
         values.append(limit)
         with self._connect() as connection:
