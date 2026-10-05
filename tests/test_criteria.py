@@ -9,7 +9,7 @@ import cloud_app
 from app.research import criteria
 from app.research.criteria import (
     DEFAULT_LABELS, FREE_LIMIT, LABEL_CITED, LABEL_HIGHLY, LABEL_OPEN, LABEL_PEER, LABEL_RECENT, LABEL_REVIEW,
-    LABEL_UNIQUE, PAID_LIMIT, failures, resolve,
+    LABEL_UNIQUE, PAID_LIMIT, evaluate, failures, qualification, resolve,
 )
 from app.research.providers.crossref_provider import CrossrefProvider
 from app.research.providers.openalex_provider import OpenAlexProvider
@@ -42,9 +42,9 @@ def met(label, source, source_type=None):
     (LABEL_CITED, {"citation_count": 1}, {"citation_count": 0}),
     (LABEL_CITED, {}, {"authors": [], "citation_count": 5}),
     (LABEL_RECENT, {"year": 2021}, {"year": 2020}),
-    (LABEL_RECENT, {"year": "2026"}, {"year": None}),
+    (LABEL_RECENT, {"year": "2026"}, {"year": 2020}),
     (LABEL_OPEN, {"is_open_access": True}, {"is_open_access": False}),
-    (LABEL_OPEN, {}, {"is_open_access": None}),
+    (LABEL_OPEN, {"is_open_access": True}, {"is_open_access": False}),
     (LABEL_HIGHLY, {"citation_count": 10}, {"citation_count": 9}),
     (LABEL_REVIEW, {"work_type": "review"}, {"work_type": "journal-article"}),
     (LABEL_REVIEW, {"title": "A systematic review of reasoning evaluation"}, {}),
@@ -79,9 +79,11 @@ def test_every_failure_names_the_criterion_and_the_fact():
     ]
 
 
-def test_missing_metadata_counts_as_not_met_and_says_so():
-    assert "not reported" in failures(src(is_open_access=None), resolve([LABEL_OPEN], None, True), now=NOW)[0]
-    assert "not reported" in failures(src(year=None), resolve([LABEL_RECENT], None, True), now=NOW)[0]
+def test_missing_metadata_is_not_reported_rather_than_missed():
+    for source, label in ((src(is_open_access=None), LABEL_OPEN), (src(year=None), LABEL_RECENT)):
+        result = evaluate(source, resolve([label], None, True), NOW)
+        assert result.missed == () and len(result.unreported) == 1 and "not reported" in result.unreported[0]
+        assert qualification(result, resolve([label], None, True)) != "full"
 
 
 # --- resolving what a client sent ----------------------------------------------------------------------------------------------

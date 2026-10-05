@@ -1,4 +1,5 @@
 # app/research/research_pipeline.py
+import json
 import sys
 import os
 import re
@@ -57,15 +58,32 @@ class ResearchPipeline:
         engines = [(self.openalex, "openalex"), (self.semantic_scholar, "semantic_scholar"), (self.crossref, "crossref")]
         provider_limit = min(max(max_sources * 3, max_sources + 10), 100)
 
+        # The normal search first, then targeted searches the selected criteria make possible (recent, open access,
+        # reviews...), so the pool holds candidates that can actually meet them. A record a targeted search
+        # returns again is dropped here rather than reported as a duplicate.
+        searches = [None] + criteria_rules.hint_variants(criteria_rules.retrieval_hints(criteria))
         for provider, provider_name in engines:
-            try:
-                raw_data = provider.fetch_raw_sources(expanded_query, provider_limit)
-                if isinstance(raw_data, list):
-                    for item in raw_data:
-                        item["__provider_origin__"] = provider_name
-                        combined_raw_sources.append(item)
-            except Exception as e:
-                print(f"[Warning] Engine error: {str(e)}", file=sys.stderr)
+            seen_raw = set()
+            for hints in searches:
+                try:
+                    if hints is None:
+                        raw_data = provider.fetch_raw_sources(expanded_query, provider_limit)
+                    elif provider.supports_hints(hints):
+                        raw_data = provider.fetch_raw_sources(expanded_query, provider_limit, hints)
+                    else:
+                        continue
+                    if isinstance(raw_data, list):
+                        for item in raw_data:
+                            fingerprint = json.dumps(
+                                {k: v for k, v in item.items() if k != "__provider_origin__"},
+                                sort_keys=True, default=str)
+                            if fingerprint in seen_raw:
+                                continue
+                            seen_raw.add(fingerprint)
+                            item["__provider_origin__"] = provider_name
+                            combined_raw_sources.append(item)
+                except Exception as e:
+                    print(f"[Warning] Engine error: {str(e)}", file=sys.stderr)
 
         # Normalize the full pool before any selection so provider response order cannot
         # determine the evidence set.
@@ -139,6 +157,7 @@ class ResearchPipeline:
                 # Every evaluated source carries what it met and missed, so any list can be explained.
                 source["criteria_result"] = evaluation.result_text
                 source["criteria_not_met"] = "; ".join(evaluation.missed)
+                source["criteria_not_reported"] = "; ".join(evaluation.unreported)
                 if fit == "no":
                     if criteria.strict:
                         lead = "Did not meet every selected criterion (strict matching)"
@@ -148,13 +167,14 @@ class ResearchPipeline:
                         needed = criteria_rules.needed_for_closest(evaluation.total)
                         lead = f"Met only {len(evaluation.met)} of {evaluation.total} selected criteria (at least {needed} needed)"
                     source["exclusion_reason"] = (
-                        f"{lead} for '{self._title_label(source)}'. Not met: {'; '.join(evaluation.missed)}. "
+                        f"{lead} for '{self._title_label(source)}'. Not met: {'; '.join(evaluation.missed) or 'none'}."
+                        f"{' Not reported: ' + '; '.join(evaluation.unreported) + '.' if evaluation.unreported else ''} "
                         f"{self._audit_facts(source, 'topic terms matched but too few selected criteria were met')}"
                     )
                     self._remove_ranking_fields(source)
                     excluded_records.append(source)
                 else:
-                    source["_criteria_missed"] = len(evaluation.missed)
+                    source["_criteria_missed"] = evaluation.gap
                     source["_selection_score"] = self._selection_score(source, relevance)
                     eligible_records.append(source)
 
@@ -364,7 +384,7 @@ class ResearchPipeline:
                     *([{"Parameter Key": "Relevance Check", "Value": audit["relevance_check"]}] if "relevance_check" in audit else []),
                     {"Parameter Key": "Matching Mode", "Value": (
                         "Strict: every criterion required" if criteria.strict
-                        else "Closest matches fill the gap (a closest match meets at least half of the criteria)")},
+                        else "Closest matches fill the gap (a closest match meets the minimum share of criteria set for the service)")},
                     {"Parameter Key": "Review Scope", "Value": "Starting evidence sample; not an exhaustive review."},
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
             format_research_workbook(absolute_xlsx_path)
@@ -449,7 +469,9 @@ class ResearchPipeline:
         if not result:
             return ""
         missed = source.get("criteria_not_met")
-        return f" Criteria: {result}" + (f"; not met: {missed}." if missed else ".")
+        unreported = source.get("criteria_not_reported")
+        return (f" Criteria: {result}" + (f"; not met: {missed}" if missed else "")
+                + (f"; not reported: {unreported}" if unreported else "") + ".")
 
     def _inclusion_reason(self, source: Dict[str, Any]) -> str:
         matched = ", ".join(source.get("_matched_terms") or []) or "topic terms"

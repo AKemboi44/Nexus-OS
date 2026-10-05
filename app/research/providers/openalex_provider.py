@@ -31,6 +31,36 @@ def reconstruct_abstract(index: Any) -> str:
     return _ABSTRACT_LABEL.sub("", text, count=1) or text
 
 
+# Work types as OpenAlex names them, for search-time filters.
+_OPENALEX_TYPES = {
+    "review": "review", "journal-article": "article", "conference-paper": "conference-paper",
+    "preprint": "preprint", "book": "book", "book-chapter": "book-chapter",
+}
+
+
+def build_filter(hints: Any) -> str:
+    """The OpenAlex `filter` for a targeted search; empty when the hints give it nothing to filter on."""
+    if not isinstance(hints, dict):
+        return ""
+    parts = []
+    if hints.get("year_from"):
+        parts.append(f"from_publication_date:{int(hints['year_from'])}-01-01")
+    if hints.get("open_access"):
+        parts.append("is_oa:true")
+    if hints.get("min_citations"):
+        parts.append(f"cited_by_count:>{int(hints['min_citations']) - 1}")
+    work_types = hints.get("work_types") or []
+    if hints.get("review"):
+        parts.append("type:review")
+    elif work_types:
+        types = [_OPENALEX_TYPES[t] for t in work_types if t in _OPENALEX_TYPES]
+        if types:
+            parts.append("type:" + "|".join(dict.fromkeys(types)))
+        if "journal-article" in work_types:
+            parts.append("primary_location.source.type:journal")
+    return ",".join(parts)
+
+
 def work_type_of(raw_type: Any, source_type: Any) -> str:
     """OpenAlex's work type, normalized to the names the criteria use."""
     raw_type = str(raw_type or "").lower()
@@ -52,12 +82,18 @@ def work_type_of(raw_type: Any, source_type: Any) -> str:
 
 
 class OpenAlexProvider(DiscoveryProvider):
-    def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def supports_hints(self, hints: Dict[str, Any]) -> bool:
+        return bool(build_filter(hints))
+
+    def fetch_raw_sources(self, query: str, limit: int = 5, hints: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         url = "https://api.openalex.org/works"
+        params = {"search": str(query).strip(), "per-page": int(limit)}
+        if build_filter(hints):
+            params["filter"] = build_filter(hints)
         try:
             response = requests.get(
                 url,
-                params={"search": str(query).strip(), "per-page": int(limit)},
+                params=params,
                 headers={"User-Agent": "NexusResearch/1.0 (mailto:akiptoo20@gmail.com)"},
                 timeout=15
             )

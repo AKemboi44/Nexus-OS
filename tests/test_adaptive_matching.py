@@ -19,6 +19,11 @@ from models.research_dossier import ResearchDossier
 from tests.test_free_tier_exposure import World, sources
 from tests.test_criteria import NOW, src
 
+@pytest.fixture(autouse=True)
+def half_share(monkeypatch):
+    monkeypatch.setenv(criteria.MIN_MATCH_ENV, "50")
+
+
 SIX = [LABEL_PEER, LABEL_CITED, LABEL_UNIQUE, LABEL_RECENT, LABEL_OPEN, LABEL_REVIEW]
 
 
@@ -94,10 +99,10 @@ def test_with_no_full_match_the_closest_matches_are_returned_and_labelled(monkey
 
     included = {s["uid"]: s for s in result["included"]}
     assert set(included) == {"a", "b", "c"}, "good sources are no longer thrown away because none is a review"
-    assert included["a"]["criteria_result"] == "Met 5 of 6"
+    assert included["a"]["criteria_result"] == "Met 4 of 5"
     assert LABEL_REVIEW in included["a"]["criteria_not_met"] and "not a review" in included["a"]["criteria_not_met"]
-    assert included["c"]["criteria_result"] == "Met 4 of 6" and "not open access" in included["c"]["criteria_not_met"]
-    assert "Criteria: Met 5 of 6; not met:" in included["a"]["inclusion_reason"]
+    assert included["c"]["criteria_result"] == "Met 3 of 5" and "not open access" in included["c"]["criteria_not_met"]
+    assert "Criteria: Met 4 of 5; not met:" in included["a"]["inclusion_reason"]
 
     audit = result["audit"]
     assert audit["candidates_meeting_criteria"] == 0 and audit["closest_matches_included"] == 3
@@ -107,8 +112,8 @@ def test_with_no_full_match_the_closest_matches_are_returned_and_labelled(monkey
 def test_a_source_that_misses_too_many_is_excluded_and_says_how_many_it_met(monkeypatch):
     result = run(monkeypatch, resolve(SIX, None, paid=True))
     far = next(s for s in result["excluded"] if s["uid"] == "far")
-    assert "Met only 2 of 6 selected criteria (at least 3 needed)" in far["exclusion_reason"]
-    assert far["criteria_result"] == "Met 2 of 6" and "published in 2005" in far["criteria_not_met"]
+    assert "Met only 1 of 5 selected criteria (at least 3 needed)" in far["exclusion_reason"]
+    assert far["criteria_result"] == "Met 1 of 5" and "published in 2005" in far["criteria_not_met"]
 
 
 def test_strict_mode_returns_nothing_here_and_says_why(monkeypatch):
@@ -124,7 +129,7 @@ def test_full_matches_always_rank_above_closest_matches(monkeypatch):
     candidates.append(src(uid="rev", title="Reasoning evaluation systematic review", doi="10.1/rev", citation_count=11,
                           work_type="review"))
     result = run(monkeypatch, resolve(SIX, None, paid=True), candidates)
-    assert result["included"][0]["uid"] == "rev" and result["included"][0]["criteria_result"] == "Met all 6"
+    assert result["included"][0]["uid"] == "rev" and result["included"][0]["criteria_result"] == "Met all 5"
     assert result["audit"]["candidates_meeting_criteria"] == 1
 
 
@@ -134,7 +139,7 @@ def test_closest_matches_only_fill_the_places_full_matches_leave(monkeypatch):
     assert [s["uid"] for s in result["included"]] == ["rev"]
     assert result["audit"]["closest_matches_included"] == 0
     overflow = next(s for s in result["excluded"] if s["uid"] == "a")
-    assert "Lower topical match" in overflow["exclusion_reason"] and overflow["criteria_result"] == "Met 5 of 6", \
+    assert "Lower topical match" in overflow["exclusion_reason"] and overflow["criteria_result"] == "Met 4 of 5", \
         "even a source cut by rank shows how it fared against the criteria"
 
 
@@ -197,10 +202,10 @@ def test_strict_is_stated_in_the_workbook(monkeypatch, tmp_path):
 
 
 def test_the_free_preview_rows_keep_their_criteria_labels():
-    row = exposure.preview_view({"included": [{"uid": "u", "title": "T", "criteria_result": "Met 5 of 6",
+    row = exposure.preview_view({"included": [{"uid": "u", "title": "T", "criteria_result": "Met 4 of 5",
                                                "criteria_not_met": "Open access (not open access)", "abstract": "SECRET"}],
                                  "excluded": []})["included"][0]
-    assert row["criteria_result"] == "Met 5 of 6" and "abstract" not in row
+    assert row["criteria_result"] == "Met 4 of 5" and "abstract" not in row
 
 
 # --- the endpoint ---------------------------------------------------------------------------------------------------------------------------------

@@ -7,6 +7,7 @@ reason. If the model is unavailable the scan falls back to keyword matching and 
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -17,10 +18,24 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 30
 MAX_BATCHES = 3
-MIN_SCORE = 2          # 3 = directly about the topic, 2 = relevant background, below that = off-topic
+MIN_SCORE_ENV = "NEXUS_MIN_RELEVANCE_SCORE"
+DEFAULT_MIN_SCORE = 2  # 3 = directly about the topic, 2 = relevant background, below that = off-topic
 SCORE_WEIGHT = 0.3     # added to the ranking score per point, so judged relevance outweighs metadata bonuses
 SNIPPET_CHARS = 350
 REASON_CHARS = 160
+
+
+def min_score() -> int:
+    """The lowest relevance score (0-3) that keeps a candidate, from the Railway variable (default 2).
+
+    Read on every call. Anything that is not a whole number falls back to the default; values are held 0-3.
+    """
+    raw = os.getenv(MIN_SCORE_ENV)
+    try:
+        value = int(float(raw)) if raw not in (None, "") else DEFAULT_MIN_SCORE
+    except (ValueError, OverflowError):
+        value = DEFAULT_MIN_SCORE
+    return min(max(value, 0), 3)
 
 
 @dataclass(frozen=True)
@@ -126,9 +141,10 @@ def screen(
                 kept.append(source)
                 continue
             judged += 1
-            if verdict.score < MIN_SCORE:
+            if verdict.score < min_score():
                 rejected.append((source, verdict.reason))
             else:
+                source["_judge_score"] = verdict.score
                 source["_selection_score"] = source.get("_selection_score", 0) + SCORE_WEIGHT * verdict.score
                 kept.append(source)
                 accepted += 1

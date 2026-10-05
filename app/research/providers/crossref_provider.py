@@ -8,10 +8,26 @@ from .base_provider import DiscoveryProvider
 
 
 class CrossrefProvider(DiscoveryProvider):
-    def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        old_stdout = sys.stdout
-        sys.stdout = sys.stderr
+    _TYPES = {
+        "journal-article": "journal-article", "conference-paper": "proceedings-article", "preprint": "posted-content",
+        "book": "book", "book-chapter": "book-chapter",
+    }
 
+    @classmethod
+    def build_filter(cls, hints: Any) -> str:
+        """Crossref can filter by date and type only (no citation count, no open-access flag, no review type)."""
+        if not isinstance(hints, dict) or hints.get("review"):
+            return ""
+        parts = []
+        if hints.get("year_from"):
+            parts.append(f"from-pub-date:{int(hints['year_from'])}-01-01")
+        parts.extend(f"type:{cls._TYPES[t]}" for t in dict.fromkeys(hints.get("work_types") or []) if t in cls._TYPES)
+        return ",".join(parts)
+
+    def supports_hints(self, hints: Dict[str, Any]) -> bool:
+        return bool(self.build_filter(hints))
+
+    def fetch_raw_sources(self, query: str, limit: int = 5, hints: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         absolute_url = "https://api.crossref.org/works"
         print(f"[Crossref Outbound URL]: {absolute_url}", file=sys.stderr)
 
@@ -19,25 +35,26 @@ class CrossrefProvider(DiscoveryProvider):
             "User-Agent": "NexusResearchEngine/1.1 (mailto:akiptoo20@gmail.com) PythonRequests/2.31",
             "Accept": "application/json"
         }
+        params = {"query": str(query).strip(), "rows": int(limit)}
+        if self.build_filter(hints):
+            params["filter"] = self.build_filter(hints)
 
         try:
             response = requests.get(
                 absolute_url,
-                params={"query": str(query).strip(), "rows": int(limit)},
+                params=params,
                 headers=headers,
                 verify=certifi.where(),
                 timeout=15
             )
             if response.status_code == 200:
                 items = response.json().get("message", {}).get("items", [])
-                sys.stdout = old_stdout
                 return items if isinstance(items, list) else []
             else:
                 print(f"[Crossref HTTP Error]: Code {response.status_code}. Content: {response.text[:150]}", file=sys.stderr)
         except Exception as e:
             print(f"[Crossref Exception Handler] {e}", file=sys.stderr)
 
-        sys.stdout = old_stdout
         return []
 
     def normalize_schema(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:

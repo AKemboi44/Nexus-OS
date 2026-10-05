@@ -10,16 +10,37 @@ class SemanticScholarProvider(DiscoveryProvider):
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 
-    def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        old_stdout = sys.stdout
-        sys.stdout = sys.stderr
+    _TYPES = {
+        "review": "Review", "journal-article": "JournalArticle", "conference-paper": "Conference",
+        "book": "Book", "book-chapter": "BookSection",
+    }
 
-        clean_query = requests.utils.quote(str(query).strip())
+    def _filter_params(self, hints: Any) -> Dict[str, str]:
+        """Search-time filters. Without an API key Semantic Scholar rate-limits shared traffic, so none are sent."""
+        if not self.api_key or not isinstance(hints, dict):
+            return {}
+        params: Dict[str, str] = {}
+        if hints.get("year_from"):
+            params["year"] = f"{int(hints['year_from'])}-"
+        if hints.get("min_citations"):
+            params["minCitationCount"] = str(int(hints["min_citations"]))
+        if hints.get("open_access"):
+            params["openAccessPdf"] = ""
+        types = ["Review"] if hints.get("review") else [
+            self._TYPES[t] for t in dict.fromkeys(hints.get("work_types") or []) if t in self._TYPES]
+        if types:
+            params["publicationTypes"] = ",".join(types)
+        return params
+
+    def supports_hints(self, hints: Dict[str, Any]) -> bool:
+        return bool(self._filter_params(hints))
+
+    def fetch_raw_sources(self, query: str, limit: int = 5, hints: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         fields = "title,authors,year,url,abstract,citationCount,isOpenAccess,venue,publicationVenue,publicationTypes,influentialCitationCount"
+        params = {"query": str(query).strip(), "limit": int(limit), "fields": fields, **self._filter_params(hints)}
 
         # FIXED: Canonical absolute API routing endpoint path
-        absolute_url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={clean_query}&limit={int(limit)}&fields={fields}"
-
+        absolute_url = "https://api.semanticscholar.org/graph/v1/paper/search"
         print(f"[Semantic Scholar Outbound URL]: {absolute_url}", file=sys.stderr)
 
         headers = {
@@ -30,10 +51,9 @@ class SemanticScholarProvider(DiscoveryProvider):
             headers["x-api-key"] = self.api_key
 
         try:
-            response = requests.get(absolute_url, headers=headers, verify=certifi.where(), timeout=15)
+            response = requests.get(absolute_url, params=params, headers=headers, verify=certifi.where(), timeout=15)
             if response.status_code == 200:
                 data = response.json().get("data", [])
-                sys.stdout = old_stdout
                 return data if isinstance(data, list) else []
             else:
                 print(f"[Semantic Scholar HTTP Error]: Code {response.status_code}. Content: {response.text[:150]}",
@@ -41,7 +61,6 @@ class SemanticScholarProvider(DiscoveryProvider):
         except Exception as e:
             print(f"[Semantic Scholar Exception Handler] {e}", file=sys.stderr)
 
-        sys.stdout = old_stdout
         return []
 
     @staticmethod
