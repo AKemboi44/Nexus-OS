@@ -1,9 +1,11 @@
 # app/research/providers/openalex_provider.py
+import re
 import requests
 from typing import List, Dict, Any
 from .base_provider import DiscoveryProvider
 
 NO_DESCRIPTION = "No description."
+_ABSTRACT_LABEL = re.compile(r"^Abstract(?:\s*[:.\-–—]\s*|\s+(?=[A-Z]))")
 
 
 def reconstruct_abstract(index: Any) -> str:
@@ -21,7 +23,12 @@ def reconstruct_abstract(index: Any) -> str:
         for position in positions:
             if isinstance(position, int) and not isinstance(position, bool):
                 slots[position] = str(word)
-    return " ".join(slots[position] for position in sorted(slots)) if slots else NO_DESCRIPTION
+    if not slots:
+        return NO_DESCRIPTION
+    text = " ".join(slots[position] for position in sorted(slots))
+    # Some records start with the heading word. Only strip it when it is clearly a label ("Abstract: ..." or
+    # "Abstract As ..."), never a sentence about abstract algebra.
+    return _ABSTRACT_LABEL.sub("", text, count=1) or text
 
 
 def work_type_of(raw_type: Any, source_type: Any) -> str:

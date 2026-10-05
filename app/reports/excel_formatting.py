@@ -7,7 +7,17 @@ _HEADER_ACRONYMS = {
 }
 
 
+# Headers that should not be a mechanical title-casing of the field name.
+_HEADER_LABELS = {
+    "is_peer_reviewed": "Published in journal",
+    "is_open_access": "Open access",
+    "uid": "Source ID",
+}
+
+
 def _title_case_header(value):
+    if str(value or "") in _HEADER_LABELS:
+        return _HEADER_LABELS[str(value)]
     words = str(value or "").replace("_", " ").split()
     return " ".join(
         word.upper() if word.casefold() in _HEADER_ACRONYMS

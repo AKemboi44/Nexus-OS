@@ -277,8 +277,8 @@ class ResearchPipeline:
 
         audit = discovery_results.get("audit", {})
         try:
-            df_inc = pd.DataFrame(included_papers)
-            df_exc = pd.DataFrame(excluded_papers)
+            df_inc = self._drop_empty_optional(pd.DataFrame(self._excel_rows(included_papers)))
+            df_exc = self._drop_empty_optional(pd.DataFrame(self._excel_rows(excluded_papers)))
             if not df_inc.empty and "__provider_origin__" in df_inc.columns: df_inc = df_inc.drop(
                 columns=["__provider_origin__"])
             if not df_exc.empty and "__provider_origin__" in df_exc.columns: df_exc = df_exc.drop(
@@ -369,6 +369,32 @@ class ResearchPipeline:
         }
         return dossier
 
+    OPTIONAL_COLUMNS = ("keywords", "influential_citations", "language")
+
+    @staticmethod
+    def _excel_rows(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Copies of the sources with lists written as text, so cells read "A, B" rather than "['A', 'B']"."""
+        rows = []
+        for source in sources:
+            row = dict(source)
+            if isinstance(row.get("authors"), (list, tuple)):
+                row["authors"] = ", ".join(str(author) for author in row["authors"] if author)
+            if isinstance(row.get("keywords"), (list, tuple)):
+                row["keywords"] = "; ".join(str(keyword) for keyword in row["keywords"] if keyword)
+            rows.append(row)
+        return rows
+
+    @classmethod
+    def _drop_empty_optional(cls, frame):
+        """Remove optional columns that are empty (or zero) on every row; real data columns are never dropped."""
+        def empty(value):
+            return value is None or value == "" or value == [] or value == 0 or (isinstance(value, float) and value != value)
+
+        return frame.drop(columns=[
+            column for column in cls.OPTIONAL_COLUMNS
+            if column in frame.columns and all(empty(value) for value in frame[column])
+        ])
+
     def _summarize(self, query: str, evidence_blocks: List[Dict[str, Any]], ledger=None):
         """(status, text, note): the AI summary only when the model really wrote one from the abstracts.
 
@@ -453,11 +479,36 @@ class ResearchPipeline:
         except (TypeError, ValueError):
             return 0
 
-    @staticmethod
-    def _source_contribution(source: Dict[str, Any]) -> str:
+    _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
+    _FINDING_CUE = re.compile(
+        r"\b(we |this (?:study|paper|article|review|work)|found|finds?|show(?:s|ed|n)?|demonstrate[sd]?|"
+        r"conclude[sd]?|propos(?:e|es|ed)|reveal(?:s|ed)?|indicate[sd]?|suggest(?:s|ed)?)\b",
+        re.IGNORECASE,
+    )
+    CONTRIBUTION_CHARS = 260
+
+    @classmethod
+    def _key_sentences(cls, text: str, limit: int = CONTRIBUTION_CHARS) -> str:
+        """The sentence(s) that say what the source contributes, never cut in the middle of a word."""
+        sentences = [part.strip() for part in cls._SENTENCE_BREAK.split(text) if part.strip()]
+        if not sentences:
+            return ""
+        index = next((i for i, sentence in enumerate(sentences) if cls._FINDING_CUE.search(sentence)), 0)
+        chosen = sentences[index]
+        if len(chosen) < 120 and index + 1 < len(sentences):
+            chosen = f"{chosen} {sentences[index + 1]}"
+        if len(chosen) <= limit:
+            return chosen
+        cut = chosen[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+        return cut + "…"
+
+    @classmethod
+    def _source_contribution(cls, source: Dict[str, Any]) -> str:
         abstract = re.sub(r"\s+", " ", str(source.get("abstract") or "")).strip()
-        if abstract:
-            return abstract[:600]
+        if abstract.casefold() not in ("no description.", "no description"):
+            contribution = cls._key_sentences(abstract) if abstract else ""
+            if contribution:
+                return contribution
         details = [str(source.get(field) or "").strip() for field in ("title", "venue", "year", "doi", "url")]
         details = [detail for detail in details if detail]
         return "Metadata contribution: " + "; ".join(details[:4]) if details else "No usable abstract or source metadata supplied."
