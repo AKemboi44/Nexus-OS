@@ -19,6 +19,7 @@ from app.reports.excel_formatting import format_research_workbook
 from app.synthesis.citation_engine import CitationEngine
 from app.research.spelling import normalize_topic_spelling
 from app.research import criteria as criteria_rules
+from app.research import relevance as relevance_rules
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -47,7 +48,8 @@ class ResearchPipeline:
 
     def _discover_sources_real(self, query: str, max_sources: int = 5,
                                selected_reasons: List[str] = None,
-                               criteria: "criteria_rules.Resolved" = None) -> Dict[str, Any]:
+                               criteria: "criteria_rules.Resolved" = None,
+                               ledger=None) -> Dict[str, Any]:
         criteria = criteria or criteria_rules.resolve(selected_reasons, None, paid=True)
         query = normalize_topic_spelling(query)
         expanded_query = self._pre_process_query(query)
@@ -143,14 +145,28 @@ class ResearchPipeline:
                 source["_selection_score"] = self._selection_score(source, relevance)
                 eligible_records.append(source)
 
-        eligible_records.sort(
-            key=lambda source: (
+        def rank(source):
+            return (
                 -source["_selection_score"],
                 -source["_relevance_score"],
                 str(source.get("title") or "").casefold(),
                 str(source.get("uid") or "").casefold(),
             )
+
+        # Best candidates first, so the relevance check sees the most promising ones. Keyword matching cannot tell
+        # a different field using the same words from the topic; a model reads the title and abstract.
+        eligible_records.sort(key=rank)
+        eligible_records, off_topic, relevance_note = relevance_rules.screen(
+            query, eligible_records, max_sources, self.insight_engine.registry, ledger
         )
+        for source, reason in off_topic:
+            source["exclusion_reason"] = (
+                f"Judged off-topic for '{self._title_label(source)}': {reason}. "
+                f"{self._audit_facts(source, 'keyword match found the topic words but the relevance check judged it off-topic')}"
+            )
+            self._remove_ranking_fields(source)
+            excluded_records.append(source)
+        eligible_records.sort(key=rank)
         included_records = eligible_records[:max_sources]
         for source in included_records:
             source["inclusion_reason"] = self._inclusion_reason(source)
@@ -173,7 +189,8 @@ class ResearchPipeline:
                 "unique_candidates_reviewed": len(unique_records),
                 "active_criteria": criteria.labels,
                 "criteria": criteria.summary(),
-                "candidates_meeting_criteria": len(eligible_records),
+                "candidates_meeting_criteria": len(eligible_records) + len(off_topic),
+                "relevance_check": relevance_note,
             },
         }
 
@@ -188,7 +205,9 @@ class ResearchPipeline:
         # The caller (the API) resolves criteria against the user's plan; other callers get the paid limit.
         criteria = criteria or criteria_rules.resolve(selected_inclusion_reasons, None, paid=True)
         selected_reasons = criteria.labels
-        discovery_results = self._discover_sources_real(query, max_sources, selected_reasons, criteria)
+        discovery_results = self._discover_sources_real(
+            query, max_sources, selected_reasons, criteria, **({"ledger": ledger} if ledger is not None else {})
+        )
         included_papers = discovery_results["included"]
         excluded_papers = discovery_results["excluded"]
         for source in additional_sources or []:
@@ -281,6 +300,7 @@ class ResearchPipeline:
                 {"Metric": "Active selection criteria", "Value": criteria_text},
                 *([{"Metric": "Candidates meeting all criteria", "Value": audit["candidates_meeting_criteria"]}]
                   if "candidates_meeting_criteria" in audit else []),
+                *([{"Metric": "Relevance check", "Value": audit["relevance_check"]}] if "relevance_check" in audit else []),
                 {"Metric": "Selection scope", "Value": "Selected sources are a starting evidence sample from the retrieved candidates, not an exhaustive literature review."},
                 {"Metric": "Synthesis status", "Value": synthesis_note},
                 {"Metric": "Synthesis summary", "Value": str(synthesis_text) if synthesis_status == "ai" else "Not generated"},
@@ -318,6 +338,7 @@ class ResearchPipeline:
                     {"Parameter Key": "Candidates Retrieved", "Value": audit.get("candidates_retrieved", len(included_papers) + len(excluded_papers))},
                     {"Parameter Key": "Candidates Reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
                     {"Parameter Key": "Active Criteria", "Value": criteria_text},
+                    *([{"Parameter Key": "Relevance Check", "Value": audit["relevance_check"]}] if "relevance_check" in audit else []),
                     {"Parameter Key": "Review Scope", "Value": "Starting evidence sample; not an exhaustive review."},
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
             format_research_workbook(absolute_xlsx_path)

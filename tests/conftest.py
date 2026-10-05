@@ -102,3 +102,10 @@ def synthesized_draft_json():
 def no_live_proposal_provider(monkeypatch):
     """Tests must never reach a real model provider, whatever keys exist in the environment."""
     monkeypatch.setattr("app.reports.proposal_service._default_provider", lambda: _UnconfiguredProvider())
+
+
+@pytest.fixture(autouse=True)
+def no_live_synthesis_providers(monkeypatch):
+    """Scans, summaries and relevance checks must not call a real model whatever keys the machine has."""
+    from app.synthesis.providers import SynthesisProviderRegistry
+    monkeypatch.setattr(SynthesisProviderRegistry, "_discover_providers", classmethod(lambda cls: []))
