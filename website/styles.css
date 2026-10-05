@@ -383,6 +383,16 @@ body { font-size: 16px; }
 .criteria-fieldset .check-type select { min-width: 0; height: 36px; padding: 0 10px; font-size: 12px; }
 @media (max-width: 520px) { .criteria-grid { grid-template-columns: minmax(0, 1fr); } }
 
+/* Adaptive matching: say what each list is based on, and what each source met or missed. */
+.criteria-strict { margin: 10px 0 0; align-items: flex-start; }
+.criteria-strict small { display: block; color: #68758b; font-weight: 400; }
+.criteria-used { margin: 0 24px 14px; padding: 10px 14px; border: 1px solid #cdd9ff; border-radius: 10px; background: #f4f7ff; color: #3b4961; font-size: 13px; line-height: 1.55; }
+.criteria-used[hidden] { display: none; }
+.criteria-chip { display: inline-block; margin: 6px 0 0; padding: 4px 9px; border-radius: 8px; font-size: 11px; font-weight: 700; line-height: 1.45; }
+.criteria-chip.full { color: #116448; background: #e3f7ee; }
+.criteria-chip.partial { color: #7a4a05; background: #fdf0d5; }
+.source-why { margin: 6px 0 0; color: #66728a; font-size: 11px; line-height: 1.55; }
+
 /* Free results: a few real rows, then a counted, locked remainder with a way to unlock it. */
 .locked-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 12px 14px; border: 1px dashed #b7c3e6; border-radius: 12px; color: #4a5878; background: repeating-linear-gradient(135deg, #f4f6fd, #f4f6fd 8px, #eef1fb 8px, #eef1fb 16px); font-size: 14px; font-weight: 700; }
 .locked-row::before { content: "🔒"; flex: 0 0 auto; }

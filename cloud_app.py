@@ -105,6 +105,7 @@ class ScanRequest(BaseModel):
     uploaded_sources: List[Dict[str, Any]] = Field(default_factory=list)
     selected_inclusion_reasons: List[str] = Field(default_factory=list)
     source_type: Optional[str] = None
+    strict_criteria: bool = False
 
 class AnalyticsEvent(BaseModel):
     user_id: Optional[str] = "anonymous"
@@ -603,6 +604,7 @@ async def execute_cloud_scan(
     scan_criteria = criteria_rules.resolve(
         payload.selected_inclusion_reasons, payload.source_type,
         paid=exposure.is_entitled(entitlements, user_id, user_email),
+        strict=payload.strict_criteria,
     )
     # The scan's model calls (summary, themes) are recorded so their cost is visible on /admin.
     scan_ledger = RequestLedger(request_id=current_request_id() or run_id_str, max_calls=16)

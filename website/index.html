@@ -8,7 +8,7 @@
   <title>Nexus Research AI — Filtered evidence for defensible proposals</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="canonical" href="https://www.brisklightai.com/">
-  <link rel="stylesheet" href="/styles.css?v=50350d46">
+  <link rel="stylesheet" href="/styles.css?v=7b1d4ec1">
 </head>
 <body>
   <header class="site-header">
@@ -156,6 +156,7 @@
                 </label>
               </div>
             </fieldset>
+            <label class="check-label criteria-strict"><input type="checkbox" id="strictCriteria"><span>Require every selected criterion <small>(fewer results, none below your standard)</small></span></label>
             <button class="button button-primary scan-submit" id="scanSubmit" type="submit">Run evidence scan <span aria-hidden="true">→</span></button>
             <p class="form-message" id="scanStatus" role="status" aria-live="polite"></p>
             <div class="upgrade-prompt" id="scanUpgrade" hidden></div>
@@ -184,6 +185,7 @@
       </div>
       <section class="workspace-card results-card" id="scanResults" hidden>
         <div class="results-heading"><div><span class="card-kicker">SCAN COMPLETE</span><h3 id="resultTitle">Evidence review</h3></div></div>
+        <p class="criteria-used" id="criteriaUsed" hidden></p>
         <div class="upgrade-banner" id="upgradeBanner" hidden><p id="upgradeBannerText"></p><button class="button button-primary" id="upgradeBannerButton" type="button">See the Research Pack</button></div>
         <div class="result-stats" aria-label="Scan source totals">
           <div class="result-stat reviewed-stat"><strong id="reviewedCount">0</strong><span>Sources Reviewed</span></div>
@@ -222,7 +224,7 @@
             <div><strong id="reportProgressLabel">Preparing report</strong><span>Estimated progress while the report is generated.</span></div>
           </div>
         </div>
-        <div class="results-columns"><section class="evidence-panel included-panel"><h4><span class="panel-indicator">✓</span> Included evidence<small>Passed your review criteria</small></h4><div id="includedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="includedPagination" hidden><span id="includedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="includedPrev" type="button" aria-label="Previous included sources page">←</button><button class="button button-outline library-page-button" id="includedNext" type="button" aria-label="Next included sources page">→</button></div></div></section><section class="evidence-panel filtered-panel"><h4><span class="panel-indicator">–</span> Filtered candidates<small>Excluded or below the selected criteria</small></h4><div id="excludedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="excludedPagination" hidden><span id="excludedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="excludedPrev" type="button" aria-label="Previous filtered sources page">←</button><button class="button button-outline library-page-button" id="excludedNext" type="button" aria-label="Next filtered sources page">→</button></div></div></section></div>
+        <div class="results-columns"><section class="evidence-panel included-panel"><h4><span class="panel-indicator">✓</span> Included evidence<small id="includedBasis">Passed your review criteria</small></h4><div id="includedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="includedPagination" hidden><span id="includedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="includedPrev" type="button" aria-label="Previous included sources page">←</button><button class="button button-outline library-page-button" id="includedNext" type="button" aria-label="Next included sources page">→</button></div></div></section><section class="evidence-panel filtered-panel"><h4><span class="panel-indicator">–</span> Filtered candidates<small id="excludedBasis">Excluded or below the selected criteria</small></h4><div id="excludedSources" class="source-list"></div><div class="library-pagination evidence-pagination" id="excludedPagination" hidden><span id="excludedPageLabel" aria-live="polite"></span><div><button class="button button-outline library-page-button" id="excludedPrev" type="button" aria-label="Previous filtered sources page">←</button><button class="button button-outline library-page-button" id="excludedNext" type="button" aria-label="Next filtered sources page">→</button></div></div></section></div>
       </section>
       <section class="workspace-card plans-card pricing" id="plansCard" hidden>
         <div class="pricing-hero">
@@ -280,6 +282,6 @@
     <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
     <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
   </footer>
-  <script src="/app.js?v=5bf06ae5" defer></script>
+  <script src="/app.js?v=a5187ab5" defer></script>
 </body>
 </html>

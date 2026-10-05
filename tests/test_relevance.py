@@ -230,8 +230,9 @@ def test_the_check_runs_after_the_rules_so_excluded_sources_cost_no_tokens(monke
     judge = Judge()
     old = scan_sources()
     old[0]["year"] = 2001
+    old[0]["citation_count"] = 0   # misses two of the three defaults, so it is not even a closest match
     scan_pipeline(monkeypatch, judge, old)._discover_sources_real(TOPIC, 5, None, None)
-    assert "Benchmarks for testing AI intelligence" not in judge.prompts[0], "the 2001 paper failed the recency default first"
+    assert "Benchmarks for testing AI intelligence" not in judge.prompts[0], "it failed the criteria first"
 
 
 def test_the_workbook_records_how_relevance_was_checked(monkeypatch, tmp_path):

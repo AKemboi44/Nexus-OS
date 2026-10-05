@@ -1,10 +1,13 @@
 """Evidence criteria: what a user can ask a scan to require of its sources, and how many they get.
 
-Each criterion is a plain rule over the metadata the providers return. A source that misses a selected
-criterion is excluded with the criterion and the fact that failed it, so the audit explains every decision.
-Missing metadata counts as "not met": we do not guess in the user's favour.
+Each criterion is a plain rule over the metadata the providers return. Missing metadata counts as "not met":
+we do not guess in the user's favour. A source that meets every criterion is a full match. Unless the user asks
+for strict matching, sources that meet at least half of them (and every "hard" one) are closest matches that
+can fill the places full matches leave empty, each labelled with what it missed. Anything below that is excluded
+with the criterion and the fact that failed it, so the audit explains every decision.
 """
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +17,7 @@ from app.synthesis.citation_engine import CitationEngine
 
 FREE_LIMIT = 3
 PAID_LIMIT = 8
+MIN_SHARE = 0.5   # a closest match meets at least this share of the selected criteria
 RECENT_YEARS = 5
 HIGHLY_CITED = 10
 
@@ -48,6 +52,7 @@ _REVIEW_PATTERN = re.compile(
 class Criterion:
     label: str
     check: Callable[[Dict[str, Any], int], Optional[str]]  # returns None when met, else the fact that failed
+    hard: bool = False  # a hard criterion is never relaxed: a closest match must meet it
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class Resolved:
     defaults_applied: bool
     limited: bool
     limit: int
+    strict: bool = False
 
     @property
     def labels(self) -> List[str]:
@@ -63,7 +69,7 @@ class Resolved:
 
     def summary(self) -> Dict[str, Any]:
         return {"applied": self.labels, "defaults_applied": self.defaults_applied,
-                "limited": self.limited, "limit": self.limit}
+                "limited": self.limited, "limit": self.limit, "strict": self.strict}
 
 
 def _number(value: Any) -> int:
@@ -151,10 +157,12 @@ def type_criterion(source_type: Optional[str]) -> Optional[Criterion]:
     if not entry:
         return None
     name, allowed = entry
-    return Criterion(f"{TYPE_PREFIX}{name}", _type_check(allowed, name))
+    # Choosing "Journal articles" must never admit a preprint, so the type is never relaxed.
+    return Criterion(f"{TYPE_PREFIX}{name}", _type_check(allowed, name), hard=True)
 
 
-def resolve(selected_labels: Optional[Sequence[str]], source_type: Optional[str], paid: bool) -> Resolved:
+def resolve(selected_labels: Optional[Sequence[str]], source_type: Optional[str], paid: bool,
+            strict: bool = False) -> Resolved:
     """Turn what a client sent into the criteria that will really be applied.
 
     Unknown labels are ignored; order is canonical; with nothing selected the defaults apply; the plan's
@@ -169,19 +177,56 @@ def resolve(selected_labels: Optional[Sequence[str]], source_type: Optional[str]
     if defaults_applied:
         chosen = [_BY_LABEL[label] for label in DEFAULT_LABELS]
     limit = PAID_LIMIT if paid else FREE_LIMIT
-    return Resolved(tuple(chosen[:limit]), defaults_applied, len(chosen) > limit, limit)
+    return Resolved(tuple(chosen[:limit]), defaults_applied, len(chosen) > limit, limit, bool(strict))
 
 
 def current_year() -> int:
     return datetime.now(timezone.utc).year
 
 
-def failures(source: Dict[str, Any], resolved: Resolved, now: Optional[int] = None) -> List[str]:
-    """Every selected criterion the source misses, each with the fact that failed it."""
+@dataclass(frozen=True)
+class Evaluation:
+    met: Tuple[str, ...]
+    missed: Tuple[str, ...]        # each with the fact that failed it, e.g. "Open access source (not open access)"
+    hard_missed: bool
+
+    @property
+    def total(self) -> int:
+        return len(self.met) + len(self.missed)
+
+    @property
+    def result_text(self) -> str:
+        return f"Met all {self.total}" if not self.missed else f"Met {len(self.met)} of {self.total}"
+
+
+def evaluate(source: Dict[str, Any], resolved: Resolved, now: Optional[int] = None) -> Evaluation:
+    """Which selected criteria a source meets and which it misses."""
     year = now or current_year()
-    missed = []
+    met, missed, hard_missed = [], [], False
     for criterion in resolved.applied:
         fact = criterion.check(source, year)
         if fact:
             missed.append(f"{criterion.label} ({fact})")
-    return missed
+            hard_missed = hard_missed or criterion.hard
+        else:
+            met.append(criterion.label)
+    return Evaluation(tuple(met), tuple(missed), hard_missed)
+
+
+def needed_for_closest(total: int) -> int:
+    """How many criteria a closest match must meet."""
+    return max(1, math.ceil(total * MIN_SHARE))
+
+
+def qualification(evaluation: Evaluation, resolved: Resolved) -> str:
+    """"full" (meets everything), "closest" (meets enough to fill a gap) or "no"."""
+    if not evaluation.missed:
+        return "full"
+    if resolved.strict or evaluation.hard_missed:
+        return "no"
+    return "closest" if len(evaluation.met) >= needed_for_closest(evaluation.total) else "no"
+
+
+def failures(source: Dict[str, Any], resolved: Resolved, now: Optional[int] = None) -> List[str]:
+    """Every selected criterion the source misses, each with the fact that failed it."""
+    return list(evaluate(source, resolved, now).missed)

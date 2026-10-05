@@ -133,20 +133,34 @@ class ResearchPipeline:
                 )
                 self._remove_ranking_fields(source)
                 excluded_records.append(source)
-            elif criteria_rules.failures(source, criteria):
-                missed = "; ".join(criteria_rules.failures(source, criteria))
-                source["exclusion_reason"] = (
-                    f"Did not meet the selected criteria for '{self._title_label(source)}': {missed}. "
-                    f"{self._audit_facts(source, 'topic terms matched but a selected criterion was not met')}"
-                )
-                self._remove_ranking_fields(source)
-                excluded_records.append(source)
             else:
-                source["_selection_score"] = self._selection_score(source, relevance)
-                eligible_records.append(source)
+                evaluation = criteria_rules.evaluate(source, criteria)
+                fit = criteria_rules.qualification(evaluation, criteria)
+                # Every evaluated source carries what it met and missed, so any list can be explained.
+                source["criteria_result"] = evaluation.result_text
+                source["criteria_not_met"] = "; ".join(evaluation.missed)
+                if fit == "no":
+                    if criteria.strict:
+                        lead = "Did not meet every selected criterion (strict matching)"
+                    elif evaluation.hard_missed:
+                        lead = "Did not meet a required criterion"
+                    else:
+                        needed = criteria_rules.needed_for_closest(evaluation.total)
+                        lead = f"Met only {len(evaluation.met)} of {evaluation.total} selected criteria (at least {needed} needed)"
+                    source["exclusion_reason"] = (
+                        f"{lead} for '{self._title_label(source)}'. Not met: {'; '.join(evaluation.missed)}. "
+                        f"{self._audit_facts(source, 'topic terms matched but too few selected criteria were met')}"
+                    )
+                    self._remove_ranking_fields(source)
+                    excluded_records.append(source)
+                else:
+                    source["_criteria_missed"] = len(evaluation.missed)
+                    source["_selection_score"] = self._selection_score(source, relevance)
+                    eligible_records.append(source)
 
         def rank(source):
             return (
+                source.get("_criteria_missed", 0),   # full matches first, then the closest matches
                 -source["_selection_score"],
                 -source["_relevance_score"],
                 str(source.get("title") or "").casefold(),
@@ -156,6 +170,8 @@ class ResearchPipeline:
         # Best candidates first, so the relevance check sees the most promising ones. Keyword matching cannot tell
         # a different field using the same words from the topic; a model reads the title and abstract.
         eligible_records.sort(key=rank)
+        full_matches = sum(1 for source in eligible_records if not source.get("_criteria_missed"))
+        closest_available = len(eligible_records) - full_matches
         eligible_records, off_topic, relevance_note = relevance_rules.screen(
             query, eligible_records, max_sources, self.insight_engine.registry, ledger
         )
@@ -168,8 +184,9 @@ class ResearchPipeline:
             excluded_records.append(source)
         eligible_records.sort(key=rank)
         included_records = eligible_records[:max_sources]
+        closest_included = sum(1 for source in included_records if source.get("_criteria_missed"))
         for source in included_records:
-            source["inclusion_reason"] = self._inclusion_reason(source)
+            source["inclusion_reason"] = self._inclusion_reason(source) + self._criteria_sentence(source)
             self._remove_ranking_fields(source)
         for source in eligible_records[max_sources:]:
             source["exclusion_reason"] = (
@@ -189,7 +206,9 @@ class ResearchPipeline:
                 "unique_candidates_reviewed": len(unique_records),
                 "active_criteria": criteria.labels,
                 "criteria": criteria.summary(),
-                "candidates_meeting_criteria": len(eligible_records) + len(off_topic),
+                "candidates_meeting_criteria": full_matches,
+                "closest_matches_available": closest_available,
+                "closest_matches_included": closest_included,
                 "relevance_check": relevance_note,
             },
         }
@@ -301,6 +320,10 @@ class ResearchPipeline:
                 *([{"Metric": "Candidates meeting all criteria", "Value": audit["candidates_meeting_criteria"]}]
                   if "candidates_meeting_criteria" in audit else []),
                 *([{"Metric": "Relevance check", "Value": audit["relevance_check"]}] if "relevance_check" in audit else []),
+                {"Metric": "Matching mode", "Value": (
+                    "Strict: every criterion required" if criteria.strict else "Closest matches fill the gap")},
+                *([{"Metric": "Closest matches included", "Value": audit["closest_matches_included"]}]
+                  if "closest_matches_included" in audit else []),
                 {"Metric": "Selection scope", "Value": "Selected sources are a starting evidence sample from the retrieved candidates, not an exhaustive literature review."},
                 {"Metric": "Synthesis status", "Value": synthesis_note},
                 {"Metric": "Synthesis summary", "Value": str(synthesis_text) if synthesis_status == "ai" else "Not generated"},
@@ -339,6 +362,9 @@ class ResearchPipeline:
                     {"Parameter Key": "Candidates Reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
                     {"Parameter Key": "Active Criteria", "Value": criteria_text},
                     *([{"Parameter Key": "Relevance Check", "Value": audit["relevance_check"]}] if "relevance_check" in audit else []),
+                    {"Parameter Key": "Matching Mode", "Value": (
+                        "Strict: every criterion required" if criteria.strict
+                        else "Closest matches fill the gap (a closest match meets at least half of the criteria)")},
                     {"Parameter Key": "Review Scope", "Value": "Starting evidence sample; not an exhaustive review."},
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
             format_research_workbook(absolute_xlsx_path)
@@ -361,6 +387,7 @@ class ResearchPipeline:
             "criteria": {
                 **criteria.summary(),
                 "candidates_meeting_all": audit.get("candidates_meeting_criteria"),
+                "closest_matches_included": audit.get("closest_matches_included"),
                 "candidates_checked": audit.get("unique_candidates_reviewed"),
             },
             "included": included_papers,
@@ -414,6 +441,15 @@ class ResearchPipeline:
         if status == "no_evidence":
             return status, "", "Not generated: none of the included sources had an abstract to summarize"
         return "template", "", "Not generated: the AI service was unavailable"
+
+    @staticmethod
+    def _criteria_sentence(source: Dict[str, Any]) -> str:
+        """What the source met and missed, appended to its inclusion reason."""
+        result = source.get("criteria_result")
+        if not result:
+            return ""
+        missed = source.get("criteria_not_met")
+        return f" Criteria: {result}" + (f"; not met: {missed}." if missed else ".")
 
     def _inclusion_reason(self, source: Dict[str, Any]) -> str:
         matched = ", ".join(source.get("_matched_terms") or []) or "topic terms"
@@ -537,7 +573,7 @@ class ResearchPipeline:
 
     @staticmethod
     def _remove_ranking_fields(source: Dict[str, Any]) -> None:
-        for field in ("_relevance_score", "_matched_terms", "_selection_score"):
+        for field in ("_relevance_score", "_matched_terms", "_selection_score", "_criteria_missed"):
             source.pop(field, None)
 
     @staticmethod

@@ -124,7 +124,7 @@ def test_unknown_labels_and_types_are_ignored_and_any_means_no_type():
 
 def test_the_summary_is_what_the_clients_receive():
     assert resolve([LABEL_OPEN], None, paid=False).summary() == {
-        "applied": [LABEL_OPEN], "defaults_applied": False, "limited": False, "limit": 3}
+        "applied": [LABEL_OPEN], "defaults_applied": False, "limited": False, "limit": 3, "strict": False}
 
 
 # --- provider metadata -------------------------------------------------------------------------------------------------------------
@@ -189,21 +189,21 @@ def discover(monkeypatch, resolved, max_sources=10):
     return pipeline._discover_sources_real("Reasoning evaluation", max_sources, None, resolved)
 
 
-def test_defaults_exclude_old_and_uncited_papers_and_say_why(monkeypatch):
-    result = discover(monkeypatch, resolve([], None, paid=True))
+def test_strict_defaults_exclude_old_and_uncited_papers_and_say_why(monkeypatch):
+    result = discover(monkeypatch, resolve([], None, paid=True, strict=True))
     assert {s["uid"] for s in result["included"]} == {"a", "d"}
     reasons = {s["uid"]: s["exclusion_reason"] for s in result["excluded"]}
     assert "published in 2018" in reasons["b"] and "Recent publication" in reasons["b"]
-    assert "no citations recorded" in reasons["c"]
-    assert result["audit"]["criteria"]["defaults_applied"] is True
+    assert "no citations recorded" in reasons["c"] and "strict matching" in reasons["c"]
+    assert result["audit"]["criteria"]["defaults_applied"] is True and result["audit"]["criteria"]["strict"] is True
     assert result["audit"]["candidates_meeting_criteria"] == 2
 
 
-def test_a_stricter_selection_returns_fewer_sources_with_reasons(monkeypatch):
-    result = discover(monkeypatch, resolve([LABEL_OPEN, LABEL_HIGHLY, LABEL_RECENT], None, paid=True))
+def test_a_strict_selection_returns_fewer_sources_with_reasons(monkeypatch):
+    result = discover(monkeypatch, resolve([LABEL_OPEN, LABEL_HIGHLY, LABEL_RECENT], None, paid=True, strict=True))
     assert [s["uid"] for s in result["included"]] == ["a"]
     d_reason = next(s["exclusion_reason"] for s in result["excluded"] if s["uid"] == "d")
-    assert "not open access" in d_reason and "Did not meet the selected criteria" in d_reason
+    assert "not open access" in d_reason and "strict matching" in d_reason
     assert result["audit"]["active_criteria"] == [LABEL_RECENT, LABEL_OPEN, LABEL_HIGHLY]
 
 

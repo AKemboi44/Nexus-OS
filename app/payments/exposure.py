@@ -20,7 +20,7 @@ RESULT_KEYS = (
 )
 SOURCE_KEYS = (
     "uid", "title", "authors", "venue", "year", "doi", "url", "citation_count", "is_peer_reviewed",
-    "provider_source", "domain", "inclusion_reason", "exclusion_reason",
+    "provider_source", "domain", "inclusion_reason", "exclusion_reason", "criteria_result", "criteria_not_met",
 )
 
 

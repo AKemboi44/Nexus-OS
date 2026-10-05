@@ -882,6 +882,19 @@
         const meta = [source.authors?.slice?.(0, 2).join(', '), source.year, source.venue || source.journal]
             .filter(Boolean).join(' · ');
         appendText(card, 'p', meta || (included ? 'Included in this review.' : source.exclusion_reason || 'Filtered by the scan.'));
+        if (included && source.criteria_result) {
+            // Green when it meets every criterion, amber when it is a closest match, always with what it missed.
+            appendText(
+                card, 'p',
+                source.criteria_not_met
+                    ? `${source.criteria_result} criteria · not met: ${source.criteria_not_met}`
+                    : `${source.criteria_result} criteria`,
+                source.criteria_not_met ? 'criteria-chip partial' : 'criteria-chip full'
+            );
+        }
+        if (!included) {
+            appendText(card, 'p', `Why excluded: ${source.exclusion_reason || 'Filtered by the scan.'}`, 'source-why');
+        }
         if (source.abstract) {
             appendText(card, 'p', cleanDisplayedSourceText(source.abstract).slice(0, 380));
         }
@@ -954,8 +967,29 @@
         byId(nextId).disabled = currentPage >= totalPages - 1;
     }
 
+    // Say what the lists are based on, so no list is a black box.
+    function renderCriteriaUsed(data) {
+        const info = data && data.criteria;
+        const line = byId('criteriaUsed');
+        if (!info || !Array.isArray(info.applied) || !info.applied.length) {
+            line.hidden = true;
+            byId('includedBasis').textContent = 'Passed your review criteria';
+            byId('excludedBasis').textContent = 'Excluded or below the selected criteria';
+            return;
+        }
+        const count = info.applied.length;
+        line.textContent = `Criteria used: ${info.applied.join(' · ')}${info.defaults_applied ? ' (the defaults: you chose none)' : ''}. `
+            + (info.strict
+                ? 'Strict matching: every criterion is required.'
+                : 'Closest matches fill the gap: a source must meet at least half of them, and each one shows what it met and missed.');
+        line.hidden = false;
+        byId('includedBasis').textContent = info.strict ? `Met all ${count} criteria` : `Met all or most of ${count} criteria`;
+        byId('excludedBasis').textContent = `Judged against ${count} ${count === 1 ? 'criterion' : 'criteria'}`;
+    }
+
     function renderResult(data, {scroll = true} = {}) {
         activeResult = data;
+        renderCriteriaUsed(data);
         renderUpsells(data);
         renderDeliverables(data);
         track('results_viewed', {
@@ -1555,11 +1589,17 @@
         if (!info || !Array.isArray(info.applied) || !info.applied.length) return '';
         const checked = Number(info.candidates_checked);
         const meeting = Number(info.candidates_meeting_all);
+        const closest = Number(info.closest_matches_included) || 0;
         let note = '';
         if (Number.isFinite(checked) && checked > 0 && Number.isFinite(meeting)) {
             note = ` ${meeting} of ${checked} candidates met ${info.applied.length === 1 ? 'your criterion' : `all ${info.applied.length} criteria`}`
                 + `${info.defaults_applied ? ' (the defaults: cited, recent, and unique and topic-relevant)' : ''}.`;
-            if (meeting === 0) note += ' Try selecting fewer criteria.';
+            if (closest > 0) note += ` ${closest} closest ${closest === 1 ? 'match was' : 'matches were'} added; each met at least half and shows what it missed.`;
+            if (meeting === 0 && closest === 0) {
+                note += info.strict
+                    ? ' Try selecting fewer criteria, or switch off "Require every selected criterion".'
+                    : ' No candidates met at least half of your criteria. Try selecting fewer criteria.';
+            }
         }
         if (info.limited) note += ` Your plan applies up to ${info.limit} criteria; the others were left out.`;
         return note;
@@ -1589,6 +1629,7 @@
                     selected_inclusion_reasons: [...document.querySelectorAll('.criteria-fieldset input:checked')]
                         .map(input => input.value),
                     source_type: byId('sourceType').value === 'any' ? null : byId('sourceType').value,
+                    strict_criteria: byId('strictCriteria').checked,
                     uploaded_sources: []
                 })
             });
