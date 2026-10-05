@@ -923,6 +923,7 @@ async def generate_research_report(
         },
     )
     scribe = None
+    review_ledger = RequestLedger(request_id=current_request_id() or str(uuid4()), max_calls=60)
     credit_claimed = False
     try:
         if payload.research_run_id:
@@ -1161,6 +1162,7 @@ async def generate_research_report(
                 report_type=payload.report_type,
             )
             scribe = ScribeResearchAgent()
+            scribe.ledger = review_ledger
             with tempfile.TemporaryDirectory(prefix="nexus-report-") as report_directory:
                 if payload.report_type == "full_starter":
                     scribe.generate_complete_literature_review(
@@ -1217,6 +1219,7 @@ async def generate_research_report(
                     "report_cache_version": REPORT_CACHE_VERSION,
                 }
                 telemetry = scribe_telemetry(scribe)
+                record_llm_calls(user_id, review_ledger)
                 quality_report = dossier.quality_report
                 record_backend_analytics(
                     "report_completed",
@@ -1306,10 +1309,19 @@ async def generate_research_report(
         raise
     except ReportSynthesisError as error:
         logger.warning("Word report failed its synthesis quality gate: %s", error)
+        record_llm_calls(user_id, review_ledger)
 
         # Classify the error to provide structured response
         provider = getattr(scribe, 'telemetry_last_provider', None) or getattr(scribe, 'provider', 'unknown') if scribe else 'unknown'
         classification = classify_provider_error(error, provider)
+        # A review the editor could not finish is not an unknown error: say what happened and that retrying is safe.
+        error_code = "report_incomplete" if classification.kind == "unknown" else classification.kind
+        message = (
+            "We could not finish this literature review. Nothing was lost; please try again."
+            if error_code == "report_incomplete" else (classification.public_message or str(error))
+        )
+        # The reference is the request id, so /admin trace, the X-Request-ID header and the logs all agree.
+        reference = current_request_id() or str(uuid4())
 
         record_backend_analytics(
             "report_failed",
@@ -1318,7 +1330,7 @@ async def generate_research_report(
                 "duration_ms": elapsed_milliseconds(started_at),
                 "report_type": payload.report_type,
                 "error_category": "quality_or_provider",
-                "error_kind": classification.kind,
+                "error_kind": error_code,
                 "provider": classification.provider,
                 **(scribe_telemetry(scribe) if scribe else {}),
             },
@@ -1328,17 +1340,18 @@ async def generate_research_report(
         raise HTTPException(
             status_code=503,
             detail={
-                "message": str(error),
-                "error_code": classification.kind,
+                "message": message,
+                "error_code": error_code,
                 "provider": classification.provider,
-                "retryable": classification.retryable,
+                "retryable": True if error_code == "report_incomplete" else classification.retryable,
                 "retry_after_seconds": classification.retry_after_seconds,
-                "reference": str(uuid4()),
+                "reference": reference,
                 "is_paid": entitlements.is_active(user_id),
             }
         ) from error
     except Exception as error:
         logger.exception("Word report generation failed for report type %s.", payload.report_type)
+        record_llm_calls(user_id, review_ledger)
         record_backend_analytics(
             "report_failed",
             user_id,

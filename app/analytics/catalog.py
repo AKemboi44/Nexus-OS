@@ -321,10 +321,15 @@ def llm_error_rate(ctx):
                        _counts(e.props.get("error_kind") for e in errors))
 
 
-def _calls_by_request(ctx):
+# Model calls older than the purpose field have none; they were all proposal calls.
+PROPOSAL_PURPOSES = {"proposal_synthesis", None}
+REVIEW_PURPOSES = {"literature_review"}
+
+
+def _calls_by_request(ctx, purposes=PROPOSAL_PURPOSES):
     grouped = defaultdict(list)
     for call in ctx.of("llm_call"):
-        if call.request_id:
+        if call.request_id and call.props.get("purpose") in purposes:
             grouped[call.request_id].append(call)
     return grouped
 
@@ -351,11 +356,9 @@ def _request_cost(calls, prices) -> Optional[float]:
     return total
 
 
-@metric("cost_per_proposal", "Estimated cost per proposal", RELIABILITY, "usd",
-        "Mean model cost per proposal from configured prices (LLM_PRICES_JSON). Unpriced models are skipped.")
-def cost_per_proposal(ctx):
+def _mean_request_cost(ctx, purposes) -> Measurement:
     prices, costs, unpriced = price_table(), [], 0
-    for calls in _calls_by_request(ctx).values():
+    for calls in _calls_by_request(ctx, purposes).values():
         total = _request_cost(calls, prices)
         if total is None:
             unpriced += 1
@@ -363,6 +366,18 @@ def cost_per_proposal(ctx):
             costs.append(total)
     return Measurement(mean(costs), n=len(costs), breakdown={"requests_unpriced": unpriced,
                                                               "total_usd": sum(costs)})
+
+
+@metric("cost_per_proposal", "Estimated cost per proposal", RELIABILITY, "usd",
+        "Mean model cost per proposal from configured prices (LLM_PRICES_JSON). Unpriced models are skipped.")
+def cost_per_proposal(ctx):
+    return _mean_request_cost(ctx, PROPOSAL_PURPOSES)
+
+
+@metric("cost_per_literature_review", "Estimated cost per literature review", RELIABILITY, "usd",
+        "Mean model cost of one complete literature review (all chunks, retries and fallbacks), from configured prices.")
+def cost_per_literature_review(ctx):
+    return _mean_request_cost(ctx, REVIEW_PURPOSES)
 
 
 @metric("cache_hit_rate", "Report cache hit rate", RELIABILITY, "rate",

@@ -1,9 +1,13 @@
 # app/agents/scribe_agent.py - Part A
+import contextvars
+import logging
 import os
 import sys
 import re
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from importlib.metadata import PackageNotFoundError, version
 from docx import Document
@@ -15,6 +19,15 @@ from app.research.publication_quality import PublicationQualityGate
 from app.research.spelling import normalize_topic_spelling
 from app.synthesis.providers import DegradationLogger
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+
+# The literature review is written in small chunks: a single request for every section overran the model's
+# output limit, and one weak paragraph used to fail the whole report.
+EDITORIAL_CHUNK_SIZE = 5
+EDITORIAL_RETRY_CHUNK_SIZE = 3
+EDITORIAL_MAX_WORKERS = 4
+EDITORIAL_CHUNK_MAX_TOKENS = 4096
 
 
 class ReportSynthesisError(RuntimeError):
@@ -96,6 +109,8 @@ class ScribeResearchAgent:
         self.fallback_mode = None
         self._provider_limit_detected = False
         self._cover_author_paragraph = None
+        self._counter_lock = threading.Lock()
+        self.ledger = None
         load_dotenv()
         claude_api_key = os.getenv("CLAUDE_API_KEY")
         gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -770,8 +785,49 @@ class ScribeResearchAgent:
             "429", "resource_exhausted", "quota", "rate_limit_error", "rate limit",
         ))
 
+    def _ledger_start(self, provider, model):
+        ledger = getattr(self, "ledger", None)
+        if ledger is None:
+            return None
+        try:
+            return ledger.add_call("literature_review", provider, str(model)), time.monotonic()
+        except RuntimeError:
+            return None  # the call budget is a safety net; it must never break the report
+
+    def _ledger_finish(self, handle, outcome, response=None, error=None, error_kind=None):
+        if handle is None:
+            return
+        call, started = handle
+        usage = getattr(response, "usage", None)
+        metadata = getattr(response, "usage_metadata", None)
+        input_tokens = getattr(usage, "input_tokens", None) or getattr(metadata, "prompt_token_count", None)
+        output_tokens = getattr(usage, "output_tokens", None) or getattr(metadata, "candidates_token_count", None)
+        self.ledger.complete_call(
+            call, outcome,
+            http_status=self._http_status(error) if error is not None else None,
+            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            error_kind=error_kind or (type(error).__name__[:40] if error is not None else None),
+        )
+
+    def _claude_create(self, request):
+        handle = self._ledger_start("anthropic", request.get("model"))
+        try:
+            response = self.client.messages.create(**request)
+        except Exception as error:
+            self._ledger_finish(handle, "provider_error", error=error)
+            raise
+        truncated = getattr(response, "stop_reason", None) == "max_tokens"
+        self._ledger_finish(
+            handle, "invalid_output" if truncated else "ok", response=response,
+            error_kind="max_tokens" if truncated else None,
+        )
+        return response
+
     def _generate_content(self, contents, config=None):
-        self.telemetry_attempts += 1
+        with self._counter_lock:
+            self.telemetry_attempts += 1
         if self.provider == "anthropic":
             settings = config or {}
             max_tokens = int(
@@ -798,7 +854,7 @@ class ScribeResearchAgent:
                     }
                 }
             try:
-                response = self.client.messages.create(**request)
+                response = self._claude_create(request)
             except Exception as error:
                 if "output_config" in request and self._http_status(error) == 400:
                     err_msg = str(error)
@@ -811,7 +867,7 @@ class ScribeResearchAgent:
                     )
                     request.pop("output_config")
                     try:
-                        response = self.client.messages.create(**request)
+                        response = self._claude_create(request)
                     except Exception as retry_error:
                         return self._generate_with_gemini_or_raise(
                             contents, config, retry_error
@@ -828,11 +884,10 @@ class ScribeResearchAgent:
                 text=text,
                 stop_reason=getattr(response, "stop_reason", None),
             )
-            if result.stop_reason == "max_tokens" and self.gemini_client:
+            if result.stop_reason == "max_tokens" and self.gemini_client and not settings.get("keep_truncated"):
                 self.telemetry_fallback_used = True
-                print(
-                    "[Scribe Editorial Notice]: Claude reached its output limit. "
-                    f"Completing the report with Gemini model {self.gemini_model}."
+                logger.warning(
+                    "Claude reached its output limit; completing with Gemini model %s.", self.gemini_model
                 )
                 return self._generate_with_gemini(contents, config)
             return result
@@ -856,10 +911,9 @@ class ScribeResearchAgent:
         err_msg = str(claude_error)
         if len(err_msg) > 120:
             err_msg = err_msg[:120] + "..."
-        print(
-            "[Scribe Editorial Notice]: Claude request failed "
-            f"(status={status_code}, error={err_msg}). "
-            f"Falling back to Gemini model {self.gemini_model}."
+        logger.warning(
+            "Claude request failed (status=%s, error=%s); falling back to Gemini model %s.",
+            status_code, err_msg, self.gemini_model,
         )
         self.telemetry_fallback_used = True
         return self._generate_with_gemini(contents, config)
@@ -867,6 +921,7 @@ class ScribeResearchAgent:
     def _generate_with_gemini(self, contents, config=None):
         settings = dict(config or {})
         settings.pop("model", None)
+        settings.pop("keep_truncated", None)
         if self.provider == "gemini":
             client = self.client
             model = self.model or self.gemini_model or "gemini-3.6-flash"
@@ -875,14 +930,21 @@ class ScribeResearchAgent:
             model = self.gemini_model or "gemini-3.6-flash"
         self.telemetry_last_provider = "gemini"
         self.telemetry_last_model = model
-        return client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=settings,
-        ) if settings else client.models.generate_content(
-            model=model,
-            contents=contents,
-        )
+        handle = self._ledger_start("gemini", model)
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=settings,
+            ) if settings else client.models.generate_content(
+                model=model,
+                contents=contents,
+            )
+        except Exception as error:
+            self._ledger_finish(handle, "provider_error", error=error)
+            raise
+        self._ledger_finish(handle, "ok", response=response)
+        return response
 
     @staticmethod
     def _http_status(error):
@@ -1834,16 +1896,49 @@ class ScribeResearchAgent:
         if not entries:
             return
 
-        payload = [
-            {
-                "id": entry["id"],
-                "section": entry["section"],
-                "claim": entry["claim"],
-                "evidence": entry["evidence"],
-            }
-            for entry in entries
-        ]
-        prompt = (
+        self._editorial_batch_attempted = True
+        logger.info(
+            "Literature review: writing %d items in chunks of %d (retry chunks of %d).",
+            len(entries), EDITORIAL_CHUNK_SIZE, EDITORIAL_RETRY_CHUNK_SIZE,
+        )
+        pending = list(entries)
+        for round_number, size in enumerate((EDITORIAL_CHUNK_SIZE, EDITORIAL_RETRY_CHUNK_SIZE), 1):
+            if not pending:
+                break
+            chunks = [pending[index:index + size] for index in range(0, len(pending), size)]
+            self._run_editorial_chunks(topic, chunks, round_number)
+            pending = [entry for entry in pending if entry["key"] not in self._editorial_cache]
+        self._editorial_synthesis_complete = not pending
+        logger.info(
+            "Literature review: %d of %d items written%s.",
+            len(entries) - len(pending), len(entries),
+            "" if not pending else f"; could not validate {', '.join(entry['id'] for entry in pending[:8])}",
+        )
+
+    def _run_editorial_chunks(self, topic, chunks, round_number):
+        """Run the chunks concurrently; only the main thread touches the cache."""
+        limit_error = None
+        accepted_sets = []
+        with ThreadPoolExecutor(max_workers=min(EDITORIAL_MAX_WORKERS, len(chunks))) as pool:
+            futures = [
+                # each task gets a copy of the request context so its log lines carry the request id
+                pool.submit(contextvars.copy_context().run, self._editorial_chunk, topic, chunk, round_number, number)
+                for number, chunk in enumerate(chunks, 1)
+            ]
+            for future in futures:
+                try:
+                    accepted_sets.append(future.result())
+                except ReportProviderLimitError as error:
+                    limit_error = limit_error or error
+                except Exception as error:
+                    logger.warning("Literature review chunk failed unexpectedly: %s", error)
+        for accepted in accepted_sets:
+            self._editorial_cache.update(accepted)
+        if limit_error:
+            raise limit_error
+
+    def _editorial_prompt(self, topic, payload):
+        return (
             "You are an expert academic literature-synthesis editor preparing prose for a "
             "researcher's working document. For every supplied item, write exactly two "
             "substantial, connected paragraphs, each 65-100 words and at least three complete "
@@ -1863,56 +1958,74 @@ class ScribeResearchAgent:
             "Include every ID once and exactly two paragraphs per item.\n"
             f"Research topic: {topic}\nReport sections: {json.dumps(payload, ensure_ascii=False)}"
         )
-        if self._editorial_calls >= 5:
-            return
-        self._editorial_batch_attempted = True
-        try:
+
+    def _validate_editorial_entry(self, candidates):
+        """(prose, None) when both paragraphs pass, else (None, the rule that rejected them)."""
+        if not isinstance(candidates, list) or len(candidates) != 2:
+            return None, "paragraph_count"
+        cleaned = [self._clean_prose(candidate) for candidate in candidates]
+        for candidate in cleaned:
+            if not 55 <= len(candidate.split()) <= 150:
+                return None, "word_count"
+            if len(re.findall(r"[.!?](?:\s|$)", candidate)) < 3:
+                return None, "sentences"
+            if not candidate.endswith((".", "!", "?")):
+                return None, "punctuation"
+            if self._has_repeated_word_corruption(candidate):
+                return None, "repeated_words"
+        return "\n\n".join(cleaned), None
+
+    def _editorial_chunk(self, topic, chunk, round_number, number):
+        """One model call for a few items. Returns {cache key: prose} for the items that passed."""
+        label = f"{round_number}.{number}"
+        payload = [
+            {"id": entry["id"], "section": entry["section"], "claim": entry["claim"], "evidence": entry["evidence"]}
+            for entry in chunk
+        ]
+        with self._counter_lock:
             self._editorial_calls += 1
-            response = self._generate_content(contents=prompt)
-            response_text = str(response.text or "").strip()
-            if response_text.startswith("```"):
-                response_lines = response_text.splitlines()
-                response_text = "\n".join(
-                    response_lines[1:-1] if response_lines[-1].strip() == "```"
-                    else response_lines[1:]
-                )
-            response_data = json.loads(response_text)
-            paragraphs = response_data.get("paragraphs")
-            if not isinstance(paragraphs, list):
-                return
-            by_id = {
-                item.get("id"): item.get("paragraphs")
-                for item in paragraphs
-                if isinstance(item, dict)
-            }
-            for entry in entries:
-                candidates = by_id.get(entry["id"])
-                if not isinstance(candidates, list) or len(candidates) != 2:
-                    continue
-                cleaned = [self._clean_prose(candidate) for candidate in candidates]
-                if all(
-                    55 <= len(candidate.split()) <= 150
-                    and len(re.findall(r"[.!?](?:\s|$)", candidate)) >= 3
-                    and candidate.endswith((".", "!", "?"))
-                    and not self._has_repeated_word_corruption(candidate)
-                    for candidate in cleaned
-                ):
-                    self._editorial_cache[entry["key"]] = "\n\n".join(cleaned)
-            self._editorial_synthesis_complete = all(
-                entry["key"] in self._editorial_cache for entry in entries
+        try:
+            response = self._generate_content(
+                contents=self._editorial_prompt(topic, payload),
+                # The output limit and the truncation rule are Claude settings; other providers take the default.
+                config=(
+                    {"max_output_tokens": EDITORIAL_CHUNK_MAX_TOKENS, "keep_truncated": True}
+                    if self.provider == "anthropic" else None
+                ),
             )
-        except (ValueError, TypeError, AttributeError) as error:
-            if self._is_provider_limit_error(error):
-                raise ReportProviderLimitError(
-                    "All configured report providers are temporarily at their request or quota limit."
-                ) from error
-            print(f"[Scribe Synthesis Warning]: Invalid editorial response: {error}")
         except Exception as error:
             if self._is_provider_limit_error(error):
                 raise ReportProviderLimitError(
                     "All configured report providers are temporarily at their request or quota limit."
                 ) from error
-            print(f"[Scribe Synthesis Warning]: Editorial synthesis unavailable: {error}")
+            logger.warning("Literature review chunk %s: the model call failed: %s", label, error)
+            return {}
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            logger.warning("Literature review chunk %s: the answer was cut off at the output limit.", label)
+            return {}
+        response_text = str(getattr(response, "text", "") or "").strip()
+        if response_text.startswith("```"):
+            response_lines = response_text.splitlines()
+            response_text = "\n".join(
+                response_lines[1:-1] if response_lines[-1].strip() == "```" else response_lines[1:]
+            )
+        try:
+            paragraphs = json.loads(response_text).get("paragraphs")
+        except (ValueError, TypeError, AttributeError) as error:
+            logger.warning("Literature review chunk %s: invalid_json (%s).", label, error)
+            return {}
+        if not isinstance(paragraphs, list):
+            logger.warning("Literature review chunk %s: invalid_json (no paragraphs list).", label)
+            return {}
+        by_id = {item.get("id"): item.get("paragraphs") for item in paragraphs if isinstance(item, dict)}
+        accepted = {}
+        for entry in chunk:
+            prose, reason = self._validate_editorial_entry(by_id.get(entry["id"]))
+            if reason:
+                logger.info("Literature review item %s rejected in chunk %s: %s.", entry["id"], label, reason)
+            else:
+                accepted[entry["key"]] = prose
+        return accepted
 
     def _normalize_editorial_claim(self, claim, topic):
         normalized = self._clean_prose(claim)

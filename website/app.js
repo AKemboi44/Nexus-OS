@@ -1526,6 +1526,10 @@
                 statusClass = 'warning';
                 errorTitle = "Service temporarily busy";
                 errorMessage = "The report service is at capacity. Try again in a few minutes.";
+            } else if (errorCode === 'report_incomplete') {
+                statusClass = 'warning';
+                errorTitle = "Literature review not finished";
+                errorMessage = "We could not finish this literature review. Nothing was lost; please try again in a moment.";
             } else if (errorCode === 'auth' || errorCode === 'config') {
                 errorTitle = "Service error";
                 errorMessage = "A configuration issue occurred. Contact support if this persists.";
