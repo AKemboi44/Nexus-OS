@@ -220,13 +220,11 @@ class ResearchPipeline:
 
         evidence_blocks = [{
             'id': p.get('uid') or p.get('doi') or p.get('title'),
+            'title': p.get('title'),
+            'abstract': p.get('abstract', ''),
             'content': p.get('abstract', ''),
         } for p in included_papers]
-        if evidence_blocks:
-            insight_obj = self.insight_engine.generate_insight(query, evidence_blocks)
-            synthesis_text = insight_obj.insight
-        else:
-            synthesis_text = "### Multi-Engine Analysis\nNo relevant data points returned."
+        synthesis_status, synthesis_text, synthesis_note = self._summarize(query, evidence_blocks)
 
         try:
             dossier = DossierGenerator().generate_comprehensive_dossier(
@@ -266,7 +264,8 @@ class ResearchPipeline:
                 {"Metric": "Excluded sources", "Value": len(excluded_papers)},
                 {"Metric": "Active selection criteria", "Value": "; ".join(audit.get("active_criteria", selected_reasons))},
                 {"Metric": "Selection scope", "Value": "Selected sources are a starting evidence sample from the retrieved candidates, not an exhaustive literature review."},
-                {"Metric": "Synthesis summary", "Value": str(synthesis_text)},
+                {"Metric": "Synthesis status", "Value": synthesis_note},
+                {"Metric": "Synthesis summary", "Value": str(synthesis_text) if synthesis_status == "ai" else "Not generated"},
             ])
             with pd.ExcelWriter(absolute_xlsx_path, engine='openpyxl') as writer:
                 pd.DataFrame({"Core Emerging Themes": core_themes}).to_excel(
@@ -307,9 +306,6 @@ class ResearchPipeline:
         except Exception as e:
             print(f"[Excel Error]: {str(e)}", file=sys.stderr)
 
-        first_url = "https://semanticscholar.org"
-        if included_papers: first_url = included_papers[0].get("url") or first_url
-
         gate = PublicationQualityGate()
         quality_report = gate.validate_dossier(dossier, included_papers)
 
@@ -318,12 +314,8 @@ class ResearchPipeline:
             "status": "success",
             "domain_executed": "scholarly",
             "synthesis": str(synthesis_text),
-            "grounding_fidelity_score": 0.95 if included_papers else 0.00,
-            "topical_relevance_signal": 1.00 if included_papers else 0.00,
-            "pymupdf_fulltext_chunks_pushed": len(evidence_blocks),
+            "synthesis_status": synthesis_status,
             "excel_report_saved_at": str(absolute_xlsx_path),
-            "apa_format_citation": f"A. Kemboi (2026). Synthesis. {first_url}",
-            "bluebook_format_citation": f"Synthesis, ({first_url}).",
             "discovery_report_name": os.path.basename(absolute_xlsx_path),
             "discovery_report_directory": os.path.dirname(absolute_xlsx_path),
             "inclusion_reasons": selected_reasons,
@@ -332,6 +324,23 @@ class ResearchPipeline:
             "quality_report": quality_report,
         }
         return dossier
+
+    def _summarize(self, query: str, evidence_blocks: List[Dict[str, Any]]):
+        """(status, text, note): the AI summary only when the model really wrote one from the abstracts.
+
+        Anything else is reported as such, with no text, so a refusal or filler line is never presented
+        (or reused as a research theme) as if it were analysis.
+        """
+        if not evidence_blocks:
+            return "no_sources", "", "Not generated: no sources were included"
+        insight = self.insight_engine.generate_insight(query, evidence_blocks)
+        status = getattr(insight, "status", "ai")
+        if status == "ai":
+            used = len(self.insight_engine.usable_evidence(evidence_blocks))
+            return "ai", str(insight.insight), f"AI-written from {used} {'source' if used == 1 else 'sources'}"
+        if status == "no_evidence":
+            return status, "", "Not generated: none of the included sources had an abstract to summarize"
+        return "template", "", "Not generated: the AI service was unavailable"
 
     def _inclusion_reason(self, source: Dict[str, Any]) -> str:
         matched = ", ".join(source.get("_matched_terms") or []) or "topic terms"

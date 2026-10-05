@@ -3,6 +3,27 @@ import requests
 from typing import List, Dict, Any
 from .base_provider import DiscoveryProvider
 
+NO_DESCRIPTION = "No description."
+
+
+def reconstruct_abstract(index: Any) -> str:
+    """Rebuild an abstract from OpenAlex's inverted index, {word: [every position it occurs at]}.
+
+    Each word goes at each of its own positions; the text is the words in position order. (Repeating
+    a word once per occurrence at its first position scrambles the text: "of of of of artificial".)
+    """
+    if not isinstance(index, dict):
+        return NO_DESCRIPTION
+    slots: Dict[int, str] = {}
+    for word, positions in index.items():
+        if not isinstance(positions, list):
+            continue
+        for position in positions:
+            if isinstance(position, int) and not isinstance(position, bool):
+                slots[position] = str(word)
+    return " ".join(slots[position] for position in sorted(slots)) if slots else NO_DESCRIPTION
+
+
 class OpenAlexProvider(DiscoveryProvider):
     def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         url = "https://api.openalex.org/works"
@@ -22,15 +43,12 @@ class OpenAlexProvider(DiscoveryProvider):
     def normalize_schema(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         primary_location = raw_data.get("primary_location") or {}
         venue_source = primary_location.get("source") or {}
-        abstract_index = raw_data.get("abstract_inverted_index") or {}
-        abstract = " ".join(
-            word
-            for word, positions in sorted(
-                abstract_index.items(),
-                key=lambda item: min(item[1]) if item[1] else 0
-            )
-            for _ in positions
-        ) if isinstance(abstract_index, dict) else "No description."
+        abstract = reconstruct_abstract(raw_data.get("abstract_inverted_index"))
+        # OpenAlex has no peer-review field. As with Semantic Scholar, "published in a journal" is the
+        # signal we have: it is not a verified peer review, and preprints or repository copies are excluded.
+        published_in_journal = (
+            venue_source.get("type") == "journal" and primary_location.get("is_published") is not False
+        )
         return {
             "uid": raw_data.get("id"),
             "title": raw_data.get("title"),
@@ -38,7 +56,7 @@ class OpenAlexProvider(DiscoveryProvider):
             "venue": venue_source.get("display_name", "Unknown Venue"),
             "year": raw_data.get("publication_year"),
             "citation_count": raw_data.get("cited_by_count", 0),
-            "is_peer_reviewed": venue_source.get("is_peer_reviewed", False),
+            "is_peer_reviewed": published_in_journal,
             "abstract": abstract,
             "url": raw_data.get("doi") or raw_data.get("id"),
             "domain": "scholarly"
