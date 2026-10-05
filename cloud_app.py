@@ -223,7 +223,7 @@ def require_supabase_database() -> SupabaseRestClient:
 
 
 DOSSIER_DOWNLOAD_LIMIT = 3
-DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com"}
+DOSSIER_DOWNLOAD_WHITELIST = {"akiptoo20@gmail.com", "hildakiptoo97@gmail.com"}
 DOSSIER_STORAGE_BUCKET = "research-dossiers"
 REPORT_CACHE_VERSION = "7"
 REPORT_CACHE_PREFIX = "report-cache"

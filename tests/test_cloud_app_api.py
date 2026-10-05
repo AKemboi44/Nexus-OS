@@ -302,6 +302,13 @@ def test_dossier_download_is_owner_scoped_and_claims_free_allowance(monkeypatch)
     assert database.download == (cloud_app.DOSSIER_STORAGE_BUCKET, path)
 
 
+def test_dossier_download_whitelist_includes_both_admins(monkeypatch):
+    monkeypatch.setattr(cloud_app.entitlements, "is_active", lambda user_id: False)
+    for email in ("akiptoo20@gmail.com", " HildaKiptoo97@Gmail.com "):
+        assert cloud_app.is_dossier_download_unlimited({"id": "user-id", "email": email})
+    assert not cloud_app.is_dossier_download_unlimited({"id": "user-id", "email": "other@example.com"})
+
+
 def test_dossier_download_whitelist_bypasses_quota(monkeypatch):
     run_id = UUID("c843eafe-7bd6-4ba1-92f9-d592d16fcd91")
     filename = "research_audit_ai_20261001_120000.xlsx"

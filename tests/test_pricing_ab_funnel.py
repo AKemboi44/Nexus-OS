@@ -25,10 +25,17 @@ def test_pricing_config_and_feature_flag(monkeypatch):
     assert "admin@nexus.test" in cfg.whitelisted_emails
 
 
-def test_whitelisted_user_unlimited_privileges(tmp_path):
+def test_default_whitelist_includes_both_admins(monkeypatch):
+    monkeypatch.delenv("NEXUS_WHITELISTED_EMAILS", raising=False)
+
+    assert {"akiptoo20@gmail.com", "hildakiptoo97@gmail.com"} <= PricingConfig.from_env().whitelisted_emails
+    assert {"akiptoo20@gmail.com", "hildakiptoo97@gmail.com"} <= PricingConfig().whitelisted_emails
+
+
+@pytest.mark.parametrize("whitelisted_email", ["akiptoo20@gmail.com", "hildakiptoo97@gmail.com"])
+def test_whitelisted_user_unlimited_privileges(tmp_path, whitelisted_email):
     db_path = str(tmp_path / "test_entitlements_whitelist.sqlite3")
     store = EntitlementStore(database_path=db_path)
-    whitelisted_email = "akiptoo20@gmail.com"
     user_id = "user_whitelisted_123"
 
     # Even after 10 queries, whitelisted user is still allowed with paid tier

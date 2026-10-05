@@ -10,7 +10,7 @@ class PricingConfig:
     pricing_model_enabled: bool = True
 
     # Whitelisted emails with unlimited query and full access privileges
-    whitelisted_emails: Set[str] = field(default_factory=lambda: {"akiptoo20@gmail.com"})
+    whitelisted_emails: Set[str] = field(default_factory=lambda: {"akiptoo20@gmail.com", "hildakiptoo97@gmail.com"})
 
     # Free tier query allowance (queries per user per month)
     free_query_allowance: int = 1
@@ -47,7 +47,7 @@ class PricingConfig:
         bundle_price = float(os.getenv("NEXUS_BUNDLE_PRICE_USD", "10.00"))
         bundle_id = os.getenv("NEXUS_BUNDLE_ID", "starter_20")
         pack_validity_days = int(os.getenv("NEXUS_PACK_VALIDITY_DAYS", "90"))
-        whitelist_env = os.getenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com")
+        whitelist_env = os.getenv("NEXUS_WHITELISTED_EMAILS", "akiptoo20@gmail.com,hildakiptoo97@gmail.com")
         whitelisted = {email.strip().lower() for email in whitelist_env.split(",") if email.strip()}
 
         return cls(
