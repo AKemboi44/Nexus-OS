@@ -1,18 +1,15 @@
+import logging
 import os
 import sys
 from dotenv import load_dotenv
-from typing import List, Dict  # <-- Restores the missing type definitions
+from typing import List, Dict, Optional
 
 # Ensure local project architecture paths map cleanly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from models.research_insight import ResearchInsight
+from app.synthesis.providers import SynthesisProviderRegistry
 
-try:
-    from google import genai
-
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
+logger = logging.getLogger(__name__)
 
 
 STATUS_AI = "ai"
@@ -23,25 +20,11 @@ _NO_TEXT = {"", "no description", "no description.", "n/a", "none", "empty"}
 
 
 class InsightEngine:
-    def __init__(self, evidence_store=None):
+    def __init__(self, evidence_store=None, registry: Optional[SynthesisProviderRegistry] = None):
         self.evidence_store = evidence_store
-        self.client = None
-
-        # 1. Force fetch current workspace environment properties
+        # Claude first, Gemini as the backup, one retry on a transient error: the same providers the dossier uses.
         load_dotenv()
-
-        # 2. Extract standard API keys defined in your local configurations
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-
-        # 3. Securely instantiate the modern Google Gen AI client wrapper
-        if api_key and HAS_GENAI:
-            try:
-                self.client = genai.Client(api_key=api_key)
-                print("Gemini Client (google-genai) successfully initialized.")
-            except Exception as e:
-                print(f"Client constructor processing error: {e}")
-        else:
-            print("Warning: GEMINI_API_KEY / GOOGLE_API_KEY missing from environment scope.")
+        self.registry = registry or SynthesisProviderRegistry()
 
     @staticmethod
     def usable_evidence(evidence_items) -> List[tuple]:
@@ -61,7 +44,7 @@ class InsightEngine:
             usable.append((str(title or "Untitled source").strip(), text[:MAX_ABSTRACT_CHARS]))
         return usable
 
-    def generate_insight(self, theme: str, evidence_items: List[Dict]) -> ResearchInsight:
+    def generate_insight(self, theme: str, evidence_items: List[Dict], ledger=None) -> ResearchInsight:
         usable = self.usable_evidence(evidence_items)
         if not usable:
             # Nothing to summarize: do not ask the model (it can only refuse) and do not invent findings.
@@ -75,9 +58,6 @@ class InsightEngine:
             insight=f"No AI summary was generated for '{theme}': the AI service was unavailable for this scan.",
             supported_by=evidence_items, status=STATUS_TEMPLATE,
         )
-        if not self.client:
-            return unavailable
-
         evidence_str = "".join(
             f"\n[{i}] Title: {title}\nAbstract: {abstract}\n" for i, (title, abstract) in enumerate(usable, 1)
         )
@@ -89,12 +69,14 @@ class InsightEngine:
             f"Synthesize an insightful research summary:"
         )
         try:
-            # Targeted to the modern gemini-3.6-flash model as required by the API server
-            response = self.client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-            text = str(response.text or "").strip()
+            text, provider = self.registry.generate_with_failover(
+                prompt, ledger=ledger, purpose="scan_summary", max_tokens=1200
+            )
+            text = str(text or "").strip()
         except Exception as e:
-            print(f"[InsightEngine API Error]: {e}")
+            logger.warning("Scan summary unavailable: %s", e)
             return unavailable
         if not text:
+            logger.warning("Scan summary: the provider returned no text.")
             return unavailable
         return ResearchInsight(theme=theme, insight=text, supported_by=evidence_items, status=STATUS_AI)

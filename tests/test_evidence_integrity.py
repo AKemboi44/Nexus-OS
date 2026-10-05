@@ -5,29 +5,35 @@ from openpyxl import load_workbook
 
 from app.research.research_pipeline import ResearchPipeline
 from app.synthesis.insight_engine import InsightEngine
+from app.synthesis.providers import SynthesisProviderError, SynthesisUnavailableError
 from models.research_dossier import ResearchDossier
 
 ABSTRACT = "Large language models were evaluated on reasoning benchmarks, showing uneven performance across tasks."
 
 
 class FakeGenai:
-    """Stands in for the Gemini client and records every prompt."""
+    """Stands in for the provider registry and records every prompt."""
 
     def __init__(self, text="A grounded synthesis of the supplied abstracts.", error=None):
-        self.prompts, self.text, self.error = [], text, error
-        self.models = self
+        self.prompts, self.text, self.error, self.kwargs = [], text, error, []
 
-    def generate_content(self, model, contents):
-        self.prompts.append(contents)
+    def generate_with_failover(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        self.kwargs.append(kwargs)
         if self.error:
-            raise self.error
-        return type("Response", (), {"text": self.text})()
+            raise SynthesisProviderError(str(self.error))
+        return self.text, "fake"
+
+
+class NoProviders:
+    prompts = []
+
+    def generate_with_failover(self, prompt, **kwargs):
+        raise SynthesisUnavailableError("No synthesis provider configured or available")
 
 
 def engine(client):
-    instance = InsightEngine()
-    instance.client = client
-    return instance
+    return InsightEngine(registry=client if client is not None else NoProviders())
 
 
 def pipeline_block(title="Evaluating reasoning in language models", abstract=ABSTRACT):
@@ -110,7 +116,7 @@ def source(title="Evaluating reasoning in language models", abstract=ABSTRACT):
 
 def run(monkeypatch, tmp_path, client, included, themes=None):
     pipeline = ResearchPipeline()
-    pipeline.insight_engine.client = client
+    pipeline.insight_engine.registry = client
     monkeypatch.setattr(pipeline, "_discover_sources_real", lambda *args: {
         "included": [dict(s) for s in included], "excluded": [],
         "audit": {"candidates_retrieved": len(included), "unique_candidates_reviewed": len(included),

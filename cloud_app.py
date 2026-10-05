@@ -596,18 +596,24 @@ async def execute_cloud_scan(
             "topic_corrected": topic_corrected,
         },
     )
+    # The scan's model calls (summary, themes) are recorded so their cost is visible on /admin.
+    scan_ledger = RequestLedger(request_id=current_request_id() or run_id_str, max_calls=16)
     try:
         uploaded_sources = parse_uploaded_sources(payload.uploaded_sources, payload.domain or "scholarly")
         dossier_bytes = None
         with tempfile.TemporaryDirectory(prefix="nexus-dossier-") as dossier_directory:
             with traced(user_id, "scan.discovery"):
-                result_data = pipeline.run_research(
-                    query=topic,
-                    max_sources=effective_max_sources,
-                    additional_sources=uploaded_sources,
-                    selected_inclusion_reasons=payload.selected_inclusion_reasons,
-                    output_directory=dossier_directory,
-                )
+                try:
+                    result_data = pipeline.run_research(
+                        query=topic,
+                        max_sources=effective_max_sources,
+                        additional_sources=uploaded_sources,
+                        selected_inclusion_reasons=payload.selected_inclusion_reasons,
+                        output_directory=dossier_directory,
+                        ledger=scan_ledger,
+                    )
+                finally:
+                    record_llm_calls(user_id, scan_ledger)
             if hasattr(result_data, "to_dict"):
                 result_data = result_data.to_dict()
             elif hasattr(result_data, "model_dump"):

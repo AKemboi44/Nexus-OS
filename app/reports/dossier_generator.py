@@ -42,7 +42,8 @@ class DossierGenerator:
     def generate_comprehensive_dossier(self, query: str, included_sources: list,
                                        custom_prompt: str = None,
                                        domain: str = "scholarly",
-                                       report_type: str = "proposal") -> ResearchDossier:
+                                       report_type: str = "proposal",
+                                       ledger=None) -> ResearchDossier:
         """Assembles, analyzes, and synthesizes structured research dossiers using refined prompts."""
         query = normalize_topic_spelling(query)
         dossier = ResearchDossier(query=query)
@@ -78,7 +79,9 @@ class DossierGenerator:
         base_prompt += f"\n\nSource Material for Extraction:\n{source_context}\n\n"
 
         try:
-            text, provider_name = self.provider_registry.generate_with_failover(base_prompt)
+            text, provider_name = self.provider_registry.generate_with_failover(
+                base_prompt, ledger=ledger, purpose="dossier_themes"
+            )
             self._parse_synthesis_payload(text, dossier)
         except SynthesisProviderError:
             raise

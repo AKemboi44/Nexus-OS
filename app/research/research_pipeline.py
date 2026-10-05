@@ -173,7 +173,8 @@ class ResearchPipeline:
     def run_research(self, query: str, max_sources: int = 5,
                      additional_sources: List[Dict[str, Any]] = None,
                      selected_inclusion_reasons: List[str] = None,
-                     output_directory: str = None) -> Dict[str, Any]:
+                     output_directory: str = None,
+                     ledger=None) -> Dict[str, Any]:
         query = normalize_topic_spelling(query)
         selected_reasons = list(dict.fromkeys(
             str(reason).strip() for reason in (selected_inclusion_reasons or []) if str(reason).strip()
@@ -224,12 +225,14 @@ class ResearchPipeline:
             'abstract': p.get('abstract', ''),
             'content': p.get('abstract', ''),
         } for p in included_papers]
-        synthesis_status, synthesis_text, synthesis_note = self._summarize(query, evidence_blocks)
+        synthesis_status, synthesis_text, synthesis_note = self._summarize(query, evidence_blocks, ledger)
 
         try:
             dossier = DossierGenerator().generate_comprehensive_dossier(
                 query=query,
                 included_sources=included_papers,
+                # Only passed when there is one, so a narrower stand-in generator keeps working.
+                **({"ledger": ledger} if ledger is not None else {}),
             )
         except Exception as e:
             # Audit generation must not fail even if synthesis provider is degraded/unavailable
@@ -325,7 +328,7 @@ class ResearchPipeline:
         }
         return dossier
 
-    def _summarize(self, query: str, evidence_blocks: List[Dict[str, Any]]):
+    def _summarize(self, query: str, evidence_blocks: List[Dict[str, Any]], ledger=None):
         """(status, text, note): the AI summary only when the model really wrote one from the abstracts.
 
         Anything else is reported as such, with no text, so a refusal or filler line is never presented
@@ -333,7 +336,10 @@ class ResearchPipeline:
         """
         if not evidence_blocks:
             return "no_sources", "", "Not generated: no sources were included"
-        insight = self.insight_engine.generate_insight(query, evidence_blocks)
+        insight = (
+            self.insight_engine.generate_insight(query, evidence_blocks, ledger=ledger)
+            if ledger is not None else self.insight_engine.generate_insight(query, evidence_blocks)
+        )
         status = getattr(insight, "status", "ai")
         if status == "ai":
             used = len(self.insight_engine.usable_evidence(evidence_blocks))

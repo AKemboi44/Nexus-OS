@@ -62,10 +62,29 @@ class DegradationLogger:
         cls._events.clear()
 
 
+# Errors worth one more try on the same provider: short-lived overload, timeouts and connection trouble.
+# Quota and "exhausted" errors are not: they will not clear in a second.
+_TRANSIENT_MARKERS = (
+    "503", "529", "502", "504", "429", "overloaded", "unavailable", "high demand", "timeout", "timed out",
+    "connection", "rate_limit", "rate limit",
+)
+_NOT_TRANSIENT_MARKERS = ("quota", "exhausted", "billing", "api key", "invalid_api_key", "permission", "not found")
+
+
+def is_transient_error(error: Exception) -> bool:
+    # The provider wrappers prefix their own wording ("quota/rate limit: ..."); judge the original error.
+    message = str(getattr(error, "raw_error", None) or error).lower()
+    if any(marker in message for marker in _NOT_TRANSIENT_MARKERS):
+        return False
+    return any(marker in message for marker in _TRANSIENT_MARKERS)
+
+
 class SynthesisProvider(ABC):
     """Unified interface for AI synthesis providers."""
     name: str = "base"
     provider: str = "unknown"
+    # (input tokens, output tokens) of the most recent generate_text call, for cost tracking.
+    last_usage: Optional[Tuple[Optional[int], Optional[int]]] = None
 
     @abstractmethod
     def generate_text(self, prompt: str, **kwargs) -> str:
@@ -114,6 +133,7 @@ class GeminiSynthesisProvider(SynthesisProvider):
             raise err
         model_name = kwargs.get("model", self.model)
         try:
+            self.last_usage = None
             if hasattr(self.client, "models") and hasattr(self.client.models, "generate_content"):
                 response = self.client.models.generate_content(
                     model=model_name,
@@ -126,6 +146,8 @@ class GeminiSynthesisProvider(SynthesisProvider):
                 response = gen_model.generate_content(prompt)
             else:
                 raise AttributeError(f"Unsupported Gemini client structure: {type(self.client)}")
+            meta = getattr(response, "usage_metadata", None)
+            self.last_usage = (getattr(meta, "prompt_token_count", None), getattr(meta, "candidates_token_count", None))
             return getattr(response, "text", "") or ""
         except Exception as e:
             err_str = str(e).lower()
@@ -212,11 +234,14 @@ class ClaudeSynthesisProvider(SynthesisProvider):
             raise err
         model_name = kwargs.get("model", self.model)
         try:
+            self.last_usage = None
             response = self.client.messages.create(
                 model=model_name,
                 max_tokens=kwargs.get("max_tokens", 4096),
                 messages=[{"role": "user", "content": prompt}],
             )
+            usage = getattr(response, "usage", None)
+            self.last_usage = (getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None))
             text_blocks = [block.text for block in response.content if getattr(block, "type", "") == "text"]
             return "".join(text_blocks)
         except Exception as e:
@@ -290,22 +315,62 @@ class SynthesisProviderRegistry:
                 return p
         return self._providers[0] if self._providers else GeminiSynthesisProvider()
 
+    retry_delay_seconds = float(os.getenv("SYNTHESIS_RETRY_DELAY_SECONDS", "1.5"))
+
+    @staticmethod
+    def _begin(ledger, purpose, provider, attempt):
+        if ledger is None:
+            return None
+        try:
+            call = ledger.add_call(purpose, provider.name, str(getattr(provider, "model", "unknown")), attempt)
+        except RuntimeError:
+            return None  # the call budget is a safety net; it must never break a scan
+        return call, time.monotonic()
+
+    @staticmethod
+    def _end(ledger, handle, provider, outcome, error=None):
+        if handle is None:
+            return
+        call, started = handle
+        usage = getattr(provider, "last_usage", None) if outcome == "ok" else None
+        input_tokens, output_tokens = usage if usage else (None, None)
+        ledger.complete_call(
+            call, outcome,
+            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            error_kind=getattr(error, "error_type", None) if error is not None else None,
+        )
+
     def generate_with_failover(self, prompt: str, **kwargs) -> tuple[str, str]:
         """Attempts generation with available providers in order.
+
+        A transient error (overload, timeout) is retried once on the same provider before moving on, and
+        every attempt is recorded in `ledger` (with `purpose`) when one is given.
         Returns tuple of (generated_text, provider_name).
         Raises SynthesisProviderError if all providers fail.
         """
+        ledger = kwargs.pop("ledger", None)
+        purpose = kwargs.pop("purpose", "synthesis")
         last_error = None
         for provider in self._providers:
             if not provider.is_configured():
                 continue
-            try:
-                text = provider.generate_text(prompt, **kwargs)
+            for attempt in (1, 2):
+                handle = self._begin(ledger, purpose, provider, attempt)
+                try:
+                    text = provider.generate_text(prompt, **kwargs)
+                except SynthesisProviderError as e:
+                    self._end(ledger, handle, provider, "provider_error", error=e)
+                    last_error = e
+                    if attempt == 1 and is_transient_error(e):
+                        logger.info("Provider %s hit a transient error; retrying once.", provider.name)
+                        time.sleep(self.retry_delay_seconds)
+                        continue
+                    logger.info("Provider %s failed, trying next provider if available...", provider.name)
+                    break
+                self._end(ledger, handle, provider, "ok")
                 return text, provider.name
-            except SynthesisProviderError as e:
-                last_error = e
-                logger.info("Provider %s failed, trying next provider if available...", provider.name)
-                continue
         if last_error:
             raise last_error
         err = SynthesisUnavailableError("No synthesis provider configured or available")

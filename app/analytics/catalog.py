@@ -324,6 +324,7 @@ def llm_error_rate(ctx):
 # Model calls older than the purpose field have none; they were all proposal calls.
 PROPOSAL_PURPOSES = {"proposal_synthesis", None}
 REVIEW_PURPOSES = {"literature_review"}
+SCAN_PURPOSES = {"scan_summary", "dossier_themes", "relevance_check"}
 
 
 def _calls_by_request(ctx, purposes=PROPOSAL_PURPOSES):
@@ -372,6 +373,12 @@ def _mean_request_cost(ctx, purposes) -> Measurement:
         "Mean model cost per proposal from configured prices (LLM_PRICES_JSON). Unpriced models are skipped.")
 def cost_per_proposal(ctx):
     return _mean_request_cost(ctx, PROPOSAL_PURPOSES)
+
+
+@metric("cost_per_scan", "Estimated model cost per scan", RELIABILITY, "usd",
+        "Mean model cost of one evidence scan (summary, themes and relevance check), from configured prices.")
+def cost_per_scan(ctx):
+    return _mean_request_cost(ctx, SCAN_PURPOSES)
 
 
 @metric("cost_per_literature_review", "Estimated cost per literature review", RELIABILITY, "usd",
