@@ -35,6 +35,7 @@ from app.payments.paypal import PayPalClient, PayPalError, paypal_status
 from app.payments.catalog import all_packs, get_pack
 from app.payments.checkout import CheckoutError, capture_pack_order, create_pack_checkout, handle_paypal_event
 from app.payments import exposure
+from app.research import criteria as criteria_rules
 from app.reports.snapshot import snapshot_from_docx
 from app.payments.entitlements import EntitlementStore
 from app.synthesis.citation_engine import CitationEngine
@@ -103,6 +104,7 @@ class ScanRequest(BaseModel):
     domain: Optional[str] = "scholarly"
     uploaded_sources: List[Dict[str, Any]] = Field(default_factory=list)
     selected_inclusion_reasons: List[str] = Field(default_factory=list)
+    source_type: Optional[str] = None
 
 class AnalyticsEvent(BaseModel):
     user_id: Optional[str] = "anonymous"
@@ -596,6 +598,12 @@ async def execute_cloud_scan(
             "topic_corrected": topic_corrected,
         },
     )
+    # Evidence criteria are resolved here, against the plan: free accounts get 3, paid 8, and nothing selected
+    # means the defaults. A client cannot ask for more than its plan allows.
+    scan_criteria = criteria_rules.resolve(
+        payload.selected_inclusion_reasons, payload.source_type,
+        paid=exposure.is_entitled(entitlements, user_id, user_email),
+    )
     # The scan's model calls (summary, themes) are recorded so their cost is visible on /admin.
     scan_ledger = RequestLedger(request_id=current_request_id() or run_id_str, max_calls=16)
     try:
@@ -611,6 +619,7 @@ async def execute_cloud_scan(
                         selected_inclusion_reasons=payload.selected_inclusion_reasons,
                         output_directory=dossier_directory,
                         ledger=scan_ledger,
+                        criteria=scan_criteria,
                     )
                 finally:
                     record_llm_calls(user_id, scan_ledger)

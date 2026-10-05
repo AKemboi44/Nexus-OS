@@ -18,6 +18,7 @@ from app.reports.dossier_generator import DossierGenerator
 from app.reports.excel_formatting import format_research_workbook
 from app.synthesis.citation_engine import CitationEngine
 from app.research.spelling import normalize_topic_spelling
+from app.research import criteria as criteria_rules
 from .providers.openalex_provider import OpenAlexProvider
 from .providers.semantic_scholar_provider import SemanticScholarProvider
 from .providers.crossref_provider import CrossrefProvider
@@ -25,11 +26,6 @@ from .providers.crossref_provider import CrossrefProvider
 
 # app/research/research_pipeline.py - Block 2 of 3
 class ResearchPipeline:
-    DEFAULT_AUDIT_CRITERIA = [
-        "Topic relevance",
-        "Publication recency",
-        "Usable research metadata or evidence",
-    ]
     _STOP_WORDS = {
         "about", "and", "are", "for", "from", "how", "into", "of", "on", "or",
         "the", "to", "with", "using", "use", "in", "a", "an",
@@ -50,7 +46,9 @@ class ResearchPipeline:
         return processed
 
     def _discover_sources_real(self, query: str, max_sources: int = 5,
-                               selected_reasons: List[str] = None) -> Dict[str, Any]:
+                               selected_reasons: List[str] = None,
+                               criteria: "criteria_rules.Resolved" = None) -> Dict[str, Any]:
+        criteria = criteria or criteria_rules.resolve(selected_reasons, None, paid=True)
         query = normalize_topic_spelling(query)
         expanded_query = self._pre_process_query(query)
         combined_raw_sources = []
@@ -133,6 +131,14 @@ class ResearchPipeline:
                 )
                 self._remove_ranking_fields(source)
                 excluded_records.append(source)
+            elif criteria_rules.failures(source, criteria):
+                missed = "; ".join(criteria_rules.failures(source, criteria))
+                source["exclusion_reason"] = (
+                    f"Did not meet the selected criteria for '{self._title_label(source)}': {missed}. "
+                    f"{self._audit_facts(source, 'topic terms matched but a selected criterion was not met')}"
+                )
+                self._remove_ranking_fields(source)
+                excluded_records.append(source)
             else:
                 source["_selection_score"] = self._selection_score(source, relevance)
                 eligible_records.append(source)
@@ -165,7 +171,9 @@ class ResearchPipeline:
                 "candidates_retrieved": len(combined_raw_sources),
                 "candidates_reviewed": len(normalized_records),
                 "unique_candidates_reviewed": len(unique_records),
-                "active_criteria": selected_reasons or self.DEFAULT_AUDIT_CRITERIA,
+                "active_criteria": criteria.labels,
+                "criteria": criteria.summary(),
+                "candidates_meeting_criteria": len(eligible_records),
             },
         }
 
@@ -174,12 +182,13 @@ class ResearchPipeline:
                      additional_sources: List[Dict[str, Any]] = None,
                      selected_inclusion_reasons: List[str] = None,
                      output_directory: str = None,
-                     ledger=None) -> Dict[str, Any]:
+                     ledger=None,
+                     criteria: "criteria_rules.Resolved" = None) -> Dict[str, Any]:
         query = normalize_topic_spelling(query)
-        selected_reasons = list(dict.fromkeys(
-            str(reason).strip() for reason in (selected_inclusion_reasons or []) if str(reason).strip()
-        )) or self.DEFAULT_AUDIT_CRITERIA.copy()
-        discovery_results = self._discover_sources_real(query, max_sources, selected_reasons)
+        # The caller (the API) resolves criteria against the user's plan; other callers get the paid limit.
+        criteria = criteria or criteria_rules.resolve(selected_inclusion_reasons, None, paid=True)
+        selected_reasons = criteria.labels
+        discovery_results = self._discover_sources_real(query, max_sources, selected_reasons, criteria)
         included_papers = discovery_results["included"]
         excluded_papers = discovery_results["excluded"]
         for source in additional_sources or []:
@@ -247,6 +256,7 @@ class ResearchPipeline:
         working_dir = output_directory or r"C:\Users\Abraham.Kemboi\PycharmProjects\Nexus-os"
         absolute_xlsx_path = os.path.join(working_dir, filename)
 
+        audit = discovery_results.get("audit", {})
         try:
             df_inc = pd.DataFrame(included_papers)
             df_exc = pd.DataFrame(excluded_papers)
@@ -257,6 +267,9 @@ class ResearchPipeline:
 
             core_themes = dossier.themes or self._derive_core_themes(query, synthesis_text, included_papers)
             audit = discovery_results.get("audit", {})
+            criteria_text = "; ".join(audit.get("active_criteria", selected_reasons)) + (
+                " (defaults applied: no criteria were selected)" if criteria.defaults_applied else ""
+            ) + (f" (limited to {criteria.limit} by plan)" if criteria.limited else "")
             summary = pd.DataFrame([
                 {"Metric": "Research topic", "Value": query},
                 {"Metric": "Domain", "Value": "scholarly"},
@@ -265,7 +278,9 @@ class ResearchPipeline:
                 {"Metric": "Candidates reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
                 {"Metric": "Included sources", "Value": len(included_papers)},
                 {"Metric": "Excluded sources", "Value": len(excluded_papers)},
-                {"Metric": "Active selection criteria", "Value": "; ".join(audit.get("active_criteria", selected_reasons))},
+                {"Metric": "Active selection criteria", "Value": criteria_text},
+                *([{"Metric": "Candidates meeting all criteria", "Value": audit["candidates_meeting_criteria"]}]
+                  if "candidates_meeting_criteria" in audit else []),
                 {"Metric": "Selection scope", "Value": "Selected sources are a starting evidence sample from the retrieved candidates, not an exhaustive literature review."},
                 {"Metric": "Synthesis status", "Value": synthesis_note},
                 {"Metric": "Synthesis summary", "Value": str(synthesis_text) if synthesis_status == "ai" else "Not generated"},
@@ -302,7 +317,7 @@ class ResearchPipeline:
                     {"Parameter Key": "Requested Source Cap", "Value": max_sources},
                     {"Parameter Key": "Candidates Retrieved", "Value": audit.get("candidates_retrieved", len(included_papers) + len(excluded_papers))},
                     {"Parameter Key": "Candidates Reviewed", "Value": audit.get("unique_candidates_reviewed", len(included_papers) + len(excluded_papers))},
-                    {"Parameter Key": "Active Criteria", "Value": "; ".join(audit.get("active_criteria", selected_reasons))},
+                    {"Parameter Key": "Active Criteria", "Value": criteria_text},
                     {"Parameter Key": "Review Scope", "Value": "Starting evidence sample; not an exhaustive review."},
                 ]).to_excel(writer, sheet_name='Run Audit Configuration', index=False)
             format_research_workbook(absolute_xlsx_path)
@@ -322,6 +337,11 @@ class ResearchPipeline:
             "discovery_report_name": os.path.basename(absolute_xlsx_path),
             "discovery_report_directory": os.path.dirname(absolute_xlsx_path),
             "inclusion_reasons": selected_reasons,
+            "criteria": {
+                **criteria.summary(),
+                "candidates_meeting_all": audit.get("candidates_meeting_criteria"),
+                "candidates_checked": audit.get("unique_candidates_reviewed"),
+            },
             "included": included_papers,
             "excluded": excluded_papers,
             "quality_report": quality_report,

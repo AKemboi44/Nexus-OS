@@ -8,7 +8,7 @@
   <title>Nexus Research AI — Filtered evidence for defensible proposals</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="canonical" href="https://www.brisklightai.com/">
-  <link rel="stylesheet" href="/styles.css?v=5d93ce17">
+  <link rel="stylesheet" href="/styles.css?v=50350d46">
 </head>
 <body>
   <header class="site-header">
@@ -137,10 +137,24 @@
             </div>
             <fieldset class="criteria-fieldset"><legend>Evidence criteria <span id="criteriaLimit">(up to 3, optional)</span></legend>
               <p class="criteria-hint" id="criteriaHint">Free accounts can select up to 3 criteria. Upgrade to select up to 5.</p>
-              <label class="check-label"><input type="checkbox" value="Peer-reviewed or journal-associated source"><span>Peer-reviewed or journal-associated</span></label>
-              <label class="check-label"><input type="checkbox" value="Cited source with usable metadata"><span>Cited with usable metadata</span></label>
-              <label class="check-label"><input type="checkbox" value="Unique source relevant to the requested topic"><span>Unique and topic-relevant</span></label>
-              <label class="check-label"><input type="checkbox" value="Recent publication within the research area"><span>Recent publication</span></label>
+              <div class="criteria-grid">
+                <label class="check-label"><input type="checkbox" value="Peer-reviewed or journal-associated source"><span>Peer-reviewed or journal-associated</span></label>
+                <label class="check-label"><input type="checkbox" value="Cited source with usable metadata"><span>Cited with usable metadata</span></label>
+                <label class="check-label"><input type="checkbox" value="Unique source relevant to the requested topic"><span>Unique and topic-relevant</span></label>
+                <label class="check-label"><input type="checkbox" value="Recent publication within the research area"><span>Recent publication</span></label>
+                <label class="check-label"><input type="checkbox" value="Open access source"><span>Open access</span></label>
+                <label class="check-label"><input type="checkbox" value="Highly cited source (10+ citations)"><span>Highly cited (10+ citations)</span></label>
+                <label class="check-label"><input type="checkbox" value="Review, survey or meta-analysis"><span>Review, survey or meta-analysis</span></label>
+                <label class="check-type" for="sourceType"><span>Publication type</span>
+                  <select id="sourceType" name="source_type">
+                    <option value="any">Any type</option>
+                    <option value="journal">Journal articles</option>
+                    <option value="conference">Conference papers</option>
+                    <option value="preprint">Preprints</option>
+                    <option value="book">Books and chapters</option>
+                  </select>
+                </label>
+              </div>
             </fieldset>
             <button class="button button-primary scan-submit" id="scanSubmit" type="submit">Run evidence scan <span aria-hidden="true">→</span></button>
             <p class="form-message" id="scanStatus" role="status" aria-live="polite"></p>
@@ -266,6 +280,6 @@
     <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
     <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
   </footer>
-  <script src="/app.js?v=6c7fc139" defer></script>
+  <script src="/app.js?v=5bf06ae5" defer></script>
 </body>
 </html>

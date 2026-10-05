@@ -87,7 +87,7 @@ def test_website_surfaces_exports_library_controls_and_email_only_signin():
     assert "LIBRARY_PAGE_SIZE = 5" in js
     assert "HISTORY_PAGE_SIZE = 3" in js
     assert "filteredRuns.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE)" in js
-    assert "Free accounts can choose up to 3 criteria. Upgrade to select up to 5." in js
+    assert "Free accounts can choose up to ${FREE_MAX_CRITERIA} criteria. Upgrade to choose up to ${PAID_MAX_CRITERIA}." in js
     assert "function displayName(email)" in js
     assert "mailto:${SUPPORT_EMAIL}" in js and "SUPPORT_EMAIL = 'brisklightke@gmail.com'" in js
     assert "WhatsApp support is coming soon" not in js and "SUPPORT_WHATSAPP = '254743852707'" in js

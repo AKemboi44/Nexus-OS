@@ -374,6 +374,15 @@ body { font-size: 16px; }
   .plan-actions .button { width: 100%; }
 }
 
+/* Evidence criteria: seven checkboxes and the publication-type selector fill a two-column grid. */
+.criteria-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 22px; margin-top: 4px; }
+.criteria-grid .check-label { margin: 0; min-width: 0; }
+.criteria-grid { align-items: center; }
+.criteria-fieldset .check-type { display: grid; gap: 4px; min-width: 0; margin: 0; }
+.criteria-fieldset .check-type > span { font-size: 12px; font-weight: 700; color: #3b4961; }
+.criteria-fieldset .check-type select { min-width: 0; height: 36px; padding: 0 10px; font-size: 12px; }
+@media (max-width: 520px) { .criteria-grid { grid-template-columns: minmax(0, 1fr); } }
+
 /* Free results: a few real rows, then a counted, locked remainder with a way to unlock it. */
 .locked-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 12px 14px; border: 1px dashed #b7c3e6; border-radius: 12px; color: #4a5878; background: repeating-linear-gradient(135deg, #f4f6fd, #f4f6fd 8px, #eef1fb 8px, #eef1fb 16px); font-size: 14px; font-weight: 700; }
 .locked-row::before { content: "🔒"; flex: 0 0 auto; }

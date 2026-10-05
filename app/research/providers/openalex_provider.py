@@ -24,6 +24,26 @@ def reconstruct_abstract(index: Any) -> str:
     return " ".join(slots[position] for position in sorted(slots)) if slots else NO_DESCRIPTION
 
 
+def work_type_of(raw_type: Any, source_type: Any) -> str:
+    """OpenAlex's work type, normalized to the names the criteria use."""
+    raw_type = str(raw_type or "").lower()
+    if raw_type == "review":
+        return "review"
+    if raw_type in ("preprint", "posted-content"):
+        return "preprint"
+    if raw_type in ("conference-paper", "proceedings-article", "proceedings"):
+        return "conference-paper"
+    if raw_type in ("book", "monograph"):
+        return "book"
+    if raw_type in ("book-chapter", "book-section"):
+        return "book-chapter"
+    if raw_type == "dataset":
+        return "dataset"
+    if raw_type == "article":
+        return "journal-article" if source_type == "journal" else "other"
+    return "other"
+
+
 class OpenAlexProvider(DiscoveryProvider):
     def fetch_raw_sources(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         url = "https://api.openalex.org/works"
@@ -58,6 +78,9 @@ class OpenAlexProvider(DiscoveryProvider):
             "citation_count": raw_data.get("cited_by_count", 0),
             "is_peer_reviewed": published_in_journal,
             "abstract": abstract,
+            "work_type": work_type_of(raw_data.get("type"), venue_source.get("type")),
+            "is_open_access": (raw_data.get("open_access") or {}).get("is_oa", primary_location.get("is_oa")),
+            "language": raw_data.get("language"),
             "url": raw_data.get("doi") or raw_data.get("id"),
             "domain": "scholarly"
         }

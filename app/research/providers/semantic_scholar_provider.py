@@ -15,7 +15,7 @@ class SemanticScholarProvider(DiscoveryProvider):
         sys.stdout = sys.stderr
 
         clean_query = requests.utils.quote(str(query).strip())
-        fields = "title,authors,year,url,abstract,citationCount,isOpenAccess,venue,publicationVenue,influentialCitationCount"
+        fields = "title,authors,year,url,abstract,citationCount,isOpenAccess,venue,publicationVenue,publicationTypes,influentialCitationCount"
 
         # FIXED: Canonical absolute API routing endpoint path
         absolute_url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={clean_query}&limit={int(limit)}&fields={fields}"
@@ -44,6 +44,25 @@ class SemanticScholarProvider(DiscoveryProvider):
         sys.stdout = old_stdout
         return []
 
+    @staticmethod
+    def _work_type(publication_types: Any, pub_venue: Any) -> str:
+        types = {str(item) for item in publication_types or [] if item}
+        if types & {"Review", "MetaAnalysis"}:
+            return "review"
+        if pub_venue and pub_venue.get("type") == "repository":
+            return "preprint"
+        if "Conference" in types:
+            return "conference-paper"
+        if "Book" in types:
+            return "book"
+        if "BookSection" in types:
+            return "book-chapter"
+        if "Dataset" in types:
+            return "dataset"
+        if "JournalArticle" in types or (pub_venue and pub_venue.get("type") == "journal"):
+            return "journal-article"
+        return "other"
+
     def normalize_schema(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         authors_raw = raw_data.get("authors", [])
         authors_list = [auth.get("name") for auth in authors_raw if auth.get("name")]
@@ -56,9 +75,12 @@ class SemanticScholarProvider(DiscoveryProvider):
             "venue": venue_name or "Academic Preprint / Archive",
             "year": str(raw_data.get("year", "n.d.")),
             "citation_count": raw_data.get("citationCount", 0),
-            "is_peer_reviewed": True if pub_venue and pub_venue.get("type") == "journal" else raw_data.get(
-                "isOpenAccess", False),
+            # Published in a journal. (Being open access says nothing about peer review.)
+            "is_peer_reviewed": bool(pub_venue and pub_venue.get("type") == "journal"),
             "abstract": raw_data.get("abstract", "No description."),
+            "work_type": self._work_type(raw_data.get("publicationTypes"), pub_venue),
+            "is_open_access": raw_data.get("isOpenAccess"),
+            "language": None,
             # FIXED: Correct base URL mapping frame for web link strings
             "url": raw_data.get("url") or f"https://api.semanticscholar.org/{raw_data.get('paperId')}",
             "domain": "scholarly",

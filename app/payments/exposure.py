@@ -16,7 +16,7 @@ PREVIEW_ROWS = 3
 RESULT_KEYS = (
     "query", "status", "domain_executed", "discovery_report_name", "inclusion_reasons",
     "ab_variant", "is_paid_user", "queries_remaining", "free_allowance", "requires_paywall",
-    "paywall_copy", "dossier_download", "research_run_id", "saved_dossier_id",
+    "paywall_copy", "dossier_download", "research_run_id", "saved_dossier_id", "criteria",
 )
 SOURCE_KEYS = (
     "uid", "title", "authors", "venue", "year", "doi", "url", "citation_count", "is_peer_reviewed",

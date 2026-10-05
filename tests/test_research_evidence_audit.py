@@ -72,7 +72,9 @@ def test_pipeline_ranks_topic_matches_before_selection_and_audits_overflow(monke
     monkeypatch.setattr(pipeline.semantic_scholar, "normalize_schema", lambda source: source.copy())
     monkeypatch.setattr(pipeline.crossref, "normalize_schema", lambda source: source.copy())
 
-    result = pipeline._discover_sources_real("Token optimization", max_sources=1)
+    # Only "unique" is selected: the default criteria (cited, recent) would exclude the 2012 paper before it reaches
+    # the ranking overflow this test is about.
+    result = pipeline._discover_sources_real("Token optimization", 1, ["Unique source relevant to the requested topic"])
 
     assert [source["title"] for source in result["included"]] == ["Token optimization for compilers"]
     reason = result["included"][0]["inclusion_reason"]

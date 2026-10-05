@@ -67,7 +67,7 @@ def test_research_pipeline_normalizes_misspelled_query(monkeypatch, tmp_path):
         }
     ]
 
-    monkeypatch.setattr(pipeline, "_discover_sources_real", lambda query, max_sources=5, selected_reasons=None: {
+    monkeypatch.setattr(pipeline, "_discover_sources_real", lambda query, max_sources=5, selected_reasons=None, criteria=None: {
         "included": [test_sources[0].copy()],
         "excluded": [],
         "audit": {

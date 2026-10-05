@@ -9,6 +9,7 @@
     const SESSION_KEY = 'nexus_web_supabase_session';
     const FREE_MAX_SOURCES = 20;
     const FREE_MAX_CRITERIA = 3;
+    const PAID_MAX_CRITERIA = 8;
     const LIBRARY_PAGE_SIZE = 5;
     const HISTORY_PAGE_SIZE = 3;
     const RESULT_PAGE_SIZE = 3;
@@ -701,10 +702,11 @@
         updateUpgradeButton();
         renderUpsells(activeResult);
         if (activeResult) renderDeliverables(activeResult);
-        byId('criteriaLimit').textContent = `(up to ${paid ? 5 : 3}, optional)`;
-        byId('criteriaHint').textContent = paid
-            ? 'Choose up to 5 criteria to focus your evidence review.'
-            : 'Free accounts can choose up to 3 criteria. Upgrade to select up to 5.';
+        byId('criteriaLimit').textContent = `(up to ${paid ? PAID_MAX_CRITERIA : FREE_MAX_CRITERIA}, optional)`;
+        byId('criteriaHint').textContent = (paid
+            ? `Choose up to ${PAID_MAX_CRITERIA} criteria to focus your evidence review.`
+            : `Free accounts can choose up to ${FREE_MAX_CRITERIA} criteria. Upgrade to choose up to ${PAID_MAX_CRITERIA}.`)
+            + ' If you choose none, we apply: cited, recent, and unique and topic-relevant.';
     }
 
     function appendText(parent, tag, text, className = '') {
@@ -1547,6 +1549,22 @@
         }
     }
 
+    // "5 of 18 candidates met all 3 criteria" so the user sees what their choices did, and why a strict choice returned few.
+    function criteriaNote(data) {
+        const info = data && data.criteria;
+        if (!info || !Array.isArray(info.applied) || !info.applied.length) return '';
+        const checked = Number(info.candidates_checked);
+        const meeting = Number(info.candidates_meeting_all);
+        let note = '';
+        if (Number.isFinite(checked) && checked > 0 && Number.isFinite(meeting)) {
+            note = ` ${meeting} of ${checked} candidates met ${info.applied.length === 1 ? 'your criterion' : `all ${info.applied.length} criteria`}`
+                + `${info.defaults_applied ? ' (the defaults: cited, recent, and unique and topic-relevant)' : ''}.`;
+            if (meeting === 0) note += ' Try selecting fewer criteria.';
+        }
+        if (info.limited) note += ` Your plan applies up to ${info.limit} criteria; the others were left out.`;
+        return note;
+    }
+
     async function runScan(event) {
         event.preventDefault();
         hideUpgradePrompts();
@@ -1570,12 +1588,13 @@
                     domain: byId('domain').value,
                     selected_inclusion_reasons: [...document.querySelectorAll('.criteria-fieldset input:checked')]
                         .map(input => input.value),
+                    source_type: byId('sourceType').value === 'any' ? null : byId('sourceType').value,
                     uploaded_sources: []
                 })
             });
             renderResult(data);
             finishActivityProgress('scan', 'Evidence scan complete.');
-            setMessage(scanStatus, 'Scan complete. Your research was saved to your account.', 'success');
+            setMessage(scanStatus, `Scan complete.${criteriaNote(data)} Your research was saved to your account.`, 'success');
             await loadHistory();
             refreshEntitlement().catch(() => {});
         } catch (error) {
@@ -1626,14 +1645,20 @@
         }
     }
 
+    // The publication-type selector counts as one criterion when it is set to anything but "Any type".
+    function criteriaCount() {
+        return document.querySelectorAll('.criteria-fieldset input:checked').length
+            + (byId('sourceType').value !== 'any' ? 1 : 0);
+    }
+
     function handleCriteriaLimit(event) {
-        const checked = document.querySelectorAll('.criteria-fieldset input:checked');
-        const max = paid ? 5 : FREE_MAX_CRITERIA;
-        if (checked.length <= max) return;
+        const max = paid ? PAID_MAX_CRITERIA : FREE_MAX_CRITERIA;
+        if (criteriaCount() <= max) return;
         if (event.target instanceof HTMLInputElement) event.target.checked = false;
+        else if (event.target instanceof HTMLSelectElement) event.target.value = 'any';
         setMessage(scanStatus, paid
-            ? 'You can select up to 5 evidence criteria.'
-            : 'Free accounts can select up to 3 criteria. Upgrade to select up to 5.', 'error');
+            ? `You can select up to ${PAID_MAX_CRITERIA} evidence criteria.`
+            : `Free accounts can select up to ${FREE_MAX_CRITERIA} criteria. Upgrade to select up to ${PAID_MAX_CRITERIA}.`, 'error');
         byId('scanStatus').classList.add('status-callout', 'limit-callout');
         updateUpgradeButton();
         byId('scanStatus').scrollIntoView({behavior: 'smooth', block: 'center'});

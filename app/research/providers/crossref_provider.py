@@ -77,6 +77,9 @@ class CrossrefProvider(DiscoveryProvider):
             # Crossref's work type alone does not establish peer review.
             "is_peer_reviewed": False,
             "abstract": abstract,
+            "work_type": self._work_type(raw_data.get("type")),
+            "is_open_access": self._open_access(raw_data.get("license")),
+            "language": raw_data.get("language"),
             "doi": doi,
             "url": url or "",
             "keywords": raw_data.get("subject") if isinstance(raw_data.get("subject"), list) else [],
@@ -84,6 +87,26 @@ class CrossrefProvider(DiscoveryProvider):
             "provider_source": "crossref",
             "influential_citations": 0,
         }
+
+    @staticmethod
+    def _work_type(raw_type: Any) -> str:
+        raw_type = str(raw_type or "").lower()
+        return {
+            "journal-article": "journal-article",
+            "posted-content": "preprint",
+            "proceedings-article": "conference-paper",
+            "book": "book", "monograph": "book", "edited-book": "book",
+            "book-chapter": "book-chapter", "book-section": "book-chapter",
+            "dataset": "dataset",
+        }.get(raw_type, "other")
+
+    @staticmethod
+    def _open_access(licenses: Any):
+        """True only when a Creative Commons licence is declared; Crossref says nothing otherwise."""
+        for item in licenses if isinstance(licenses, list) else []:
+            if "creativecommons.org" in str((item or {}).get("URL", "")).lower():
+                return True
+        return None
 
     @staticmethod
     def _first_text(value: Any) -> str:
