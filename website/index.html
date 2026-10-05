@@ -8,7 +8,7 @@
   <title>Nexus Research AI — Filtered evidence for defensible proposals</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="canonical" href="https://www.brisklightai.com/">
-  <link rel="stylesheet" href="/styles.css?v=7b1d4ec1">
+  <link rel="stylesheet" href="/styles.css?v=8bdac257">
 </head>
 <body>
   <header class="site-header">
@@ -259,6 +259,11 @@
         <label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email" required>
         <label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required>
         <button class="button button-primary auth-submit" id="authSubmit" type="submit">Sign in</button>
+        <button class="auth-link" id="forgotPassword" type="button">Forgot password?</button>
+      </form>
+      <form id="resetForm" hidden>
+        <label for="resetPassword">New password</label><input id="resetPassword" type="password" autocomplete="new-password" minlength="8" required>
+        <button class="button button-primary auth-submit" id="resetSubmit" type="submit">Set new password</button>
       </form>
       <p class="form-message" id="authStatus" role="status" aria-live="polite"></p>
       <p class="auth-legal">By continuing, you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy.</a></p>
@@ -282,6 +287,6 @@
     <div class="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
     <span class="copyright">© <span id="copyrightYear"></span> Brisklight AI</span>
   </footer>
-  <script src="/app.js?v=a5187ab5" defer></script>
+  <script src="/app.js?v=affc37ee" defer></script>
 </body>
 </html>

@@ -450,3 +450,5 @@ body { font-size: 16px; }
 .snapshot-counts { margin: 10px 0 0; color: #55627c; font-size: 12px; font-weight: 700; }
 @media (max-width: 880px) { .snapshot-cards { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .sheet-row { grid-template-columns: 2fr .6fr 1.4fr; } .sheet-row > :nth-child(2) { display: none; } }
+.auth-link { display: block; margin: 12px auto 0; padding: 0; border: 0; background: none; color: #55627c; font-size: 12px; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.auth-link[hidden] { display: none; }

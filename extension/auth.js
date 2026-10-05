@@ -1,6 +1,7 @@
 (() => {
     const SUPABASE_URL = 'https://mdjgrtkjjcwmhuhpsjsk.supabase.co';
     const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_xp5XQM7DThmmgsVpG4wZog_QVVnOOmw';
+    const WEBSITE_URL = 'https://www.brisklightai.com/';
     const SESSION_KEY = 'nexus_supabase_session';
     const PKCE_KEY = 'nexus_supabase_oauth';
     let refreshInProgress = null;
@@ -187,6 +188,12 @@
                 body: {email, password}
             });
             return storeSession(session);
+        },
+        async requestPasswordReset(email) {
+            await authRequest(`recover?redirect_to=${encodeURIComponent(WEBSITE_URL)}`, {
+                method: 'POST',
+                body: {email}
+            });
         },
         signInWithGoogle,
         getSession,

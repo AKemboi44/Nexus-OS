@@ -28,6 +28,7 @@
     let packInfo = null;
     let packs = [];
     let authMode = 'signin';
+    let recoveryPending = false;
     let activeResult = null;
     let researchRuns = [];
     let savedDossiers = [];
@@ -133,6 +134,7 @@
                 expires_in: Number(hash.get('expires_in') || 3600),
                 user
             });
+            recoveryPending = hash.get('type') === 'recovery';
             window.history.replaceState({}, document.title, url.pathname);
             return true;
         }
@@ -148,12 +150,24 @@
     function setAuthMode(mode) {
         authMode = mode;
         const signingUp = mode === 'signup';
+        byId('authForm').hidden = false;
+        byId('resetForm').hidden = true;
+        byId('forgotPassword').hidden = signingUp;
         byId('authSignInTab').classList.toggle('active', !signingUp);
         byId('authSignUpTab').classList.toggle('active', signingUp);
         byId('authTitle').textContent = signingUp ? 'Create your Nexus account' : 'Welcome to Nexus';
         byId('authSubmit').textContent = signingUp ? 'Create account' : 'Sign in';
         byId('authPassword').autocomplete = signingUp ? 'new-password' : 'current-password';
         setMessage(authStatus, '');
+    }
+
+    function openPasswordReset() {
+        setAuthMode('signin');
+        byId('authForm').hidden = true;
+        byId('resetForm').hidden = false;
+        byId('authTitle').textContent = 'Set a new password';
+        dialog.hidden = false;
+        byId('resetPassword').focus();
     }
 
     function renderAuthState() {
@@ -1822,6 +1836,10 @@
             await exchangeCallback();
             await getSession();
             renderAuthState();
+            if (recoveryPending && session) {
+                openPasswordReset();
+                return;
+            }
             if (session) {
                 track('workspace_opened');
                 try {
@@ -1855,6 +1873,52 @@
         wireFeedback();
         byId('authSignInTab').addEventListener('click', () => setAuthMode('signin'));
         byId('authSignUpTab').addEventListener('click', () => setAuthMode('signup'));
+        byId('forgotPassword').addEventListener('click', async () => {
+            const email = byId('authEmail').value.trim();
+            if (!byId('authEmail').checkValidity() || !email) {
+                setMessage(authStatus, 'Enter your email above, then choose Forgot password.', 'error');
+                return;
+            }
+            byId('forgotPassword').disabled = true;
+            try {
+                await authRequest(`recover?redirect_to=${encodeURIComponent(`${window.location.origin}/`)}`, {
+                    method: 'POST',
+                    body: {email}
+                });
+                setMessage(authStatus, 'If an account exists for that email, we have sent a link to reset your password.', 'success');
+            } catch (error) {
+                setMessage(authStatus, error.message, 'error');
+            } finally {
+                byId('forgotPassword').disabled = false;
+            }
+        });
+        byId('resetForm').addEventListener('submit', async event => {
+            event.preventDefault();
+            const password = byId('resetPassword').value;
+            byId('resetSubmit').disabled = true;
+            try {
+                if (password.length < 8) throw new Error('Choose a password with at least 8 characters.');
+                const current = await getSession();
+                if (!current) throw new Error('This reset link has expired. Request a new one.');
+                await authRequest('user', {method: 'PUT', accessToken: current.access_token, body: {password}});
+                recoveryPending = false;
+                byId('resetPassword').value = '';
+                dialog.hidden = true;
+                setAuthMode('signin');
+                renderAuthState();
+                try {
+                    await refreshEntitlement();
+                } catch (error) {
+                    setMessage(scanStatus, error.message, 'error');
+                }
+                await loadHistory();
+                startWorkspace();
+            } catch (error) {
+                setMessage(authStatus, error.message, 'error');
+            } finally {
+                byId('resetSubmit').disabled = false;
+            }
+        });
         byId('authForm').addEventListener('submit', async event => {
             event.preventDefault();
             const email = byId('authEmail').value.trim();

@@ -68,6 +68,24 @@ def test_website_is_static_and_uses_existing_authenticated_services():
     assert (website / "terms.html").is_file()
 
 
+def test_forgot_password_flow_on_website_and_extension():
+    website_html = (ROOT / "website/index.html").read_text(encoding="utf-8")
+    website_js = (ROOT / "website/app.js").read_text(encoding="utf-8")
+    popup_html = (ROOT / "extension/popup.html").read_text(encoding="utf-8")
+    popup_js = (ROOT / "extension/popup.js").read_text(encoding="utf-8")
+    auth_js = (ROOT / "extension/auth.js").read_text(encoding="utf-8")
+
+    assert 'id="forgotPassword"' in website_html and 'id="resetForm"' in website_html
+    assert "authRequest(`recover?redirect_to=" in website_js
+    assert "hash.get('type') === 'recovery'" in website_js
+    assert "authRequest('user', {method: 'PUT'" in website_js
+
+    assert 'id="forgotPasswordBtn"' in popup_html
+    assert "requestPasswordReset(email)" in popup_js
+    assert "recover?redirect_to=${encodeURIComponent(WEBSITE_URL)}" in auth_js
+    assert "WEBSITE_URL = 'https://www.brisklightai.com/'" in auth_js
+
+
 def test_website_surfaces_exports_library_controls_and_email_only_signin():
     website = ROOT / "website"
     html = (website / "index.html").read_text(encoding="utf-8")

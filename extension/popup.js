@@ -82,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const returnToSignupBtn = document.getElementById('returnToSignupBtn');
     const googleSignupBtn = document.getElementById('googleSignupBtn');
     const toggleAuthModeBtn = document.getElementById('toggleAuthModeBtn');
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
     const signOutBtn = document.getElementById('signOutBtn');
     const signedInText = document.getElementById('signedInText');
     const authIntro = document.getElementById('authIntro');
@@ -286,6 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (signupPassword) signupPassword.autocomplete = signIn ? 'current-password' : 'new-password';
         if (signupTermsLabel) signupTermsLabel.hidden = signIn;
         if (signupTerms) signupTerms.required = !signIn;
+        if (forgotPasswordBtn) forgotPasswordBtn.hidden = !signIn;
         const submitButton = document.getElementById('emailSignupBtn');
         if (submitButton) submitButton.textContent = signIn ? 'Sign in with email' : 'Create account with email';
         if (toggleAuthModeBtn) toggleAuthModeBtn.textContent = signIn
@@ -295,6 +297,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     toggleAuthModeBtn?.addEventListener('click', () => setAuthMode(!isSignInMode));
+
+    forgotPasswordBtn?.addEventListener('click', async () => {
+        const email = signupEmail?.value.trim().toLowerCase();
+        if (!signupEmail?.checkValidity() || !email) {
+            setAuthStatus('Enter your email above, then choose Forgot password.');
+            return;
+        }
+        forgotPasswordBtn.disabled = true;
+        try {
+            await window.NexusAuth.requestPasswordReset(email);
+            setAuthStatus('If an account exists for that email, we have sent a link to reset your password.', 'success');
+        } catch (error) {
+            setAuthStatus(error.message);
+        } finally {
+            forgotPasswordBtn.disabled = false;
+        }
+    });
 
     signupForm?.addEventListener('submit', async event => {
         event.preventDefault();
