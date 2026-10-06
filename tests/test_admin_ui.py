@@ -24,6 +24,11 @@ def test_dashboard_serves_html_with_a_strict_csp():
     assert _client().get("/admin/").status_code == 200
 
 
+def test_csp_allows_only_self_and_the_auth_host_for_requests():
+    csp = _client().get("/admin").headers["content-security-policy"]
+    assert "connect-src 'self' https://mdjgrtkjjcwmhuhpsjsk.supabase.co;" in csp
+
+
 def test_assets_are_served_with_the_right_types():
     client = _client()
     script, styles = client.get("/admin/admin.js"), client.get("/admin/admin.css")
@@ -46,6 +51,7 @@ def test_page_script_never_turns_data_into_markup():
     assert 'style="' not in js and "setAttribute('style'" not in js
     assert "localStorage" not in js, "the admin token must not outlive the tab"
     assert "sessionStorage" in js and "X-Admin-Token" in js
+    assert "grant_type=password" in js and "/verify" in js and "/challenge" in js, "email sign-in with a one-time code"
 
 
 def test_page_holds_no_figures_or_secrets():

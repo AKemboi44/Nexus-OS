@@ -99,3 +99,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .tooltip { position: fixed; z-index: 10; max-width: 260px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, .12); pointer-events: none; }
 @media (forced-colors: active) { .spark-line, .line { stroke: CanvasText; } .bar { fill: CanvasText; } }
+.login form { margin-bottom: 10px; }
+.login form[hidden] { display: none; }
+.login .message { text-align: center; }
+.login button.link { border: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; font-size: 0.85em; }
+.login .secret { margin: 0; text-align: center; font-family: monospace; word-break: break-all; }
+.login img { justify-self: center; }

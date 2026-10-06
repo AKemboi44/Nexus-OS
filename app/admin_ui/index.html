@@ -24,11 +24,28 @@
 
   <section class="login" id="login">
     <form id="loginForm">
+      <label for="emailInput">Email</label>
+      <input id="emailInput" type="email" autocomplete="username" required>
+      <label for="passwordInput">Password</label>
+      <input id="passwordInput" type="password" autocomplete="current-password" required>
+      <button type="submit" id="loginSubmit">Sign in</button>
+      <button type="button" class="link" id="useTokenBtn">Use admin token instead</button>
+    </form>
+    <form id="mfaForm" hidden>
+      <p id="mfaPrompt"></p>
+      <img id="mfaQr" alt="Authenticator app QR code" width="180" height="180" hidden>
+      <p class="secret" id="mfaSecret" hidden></p>
+      <label for="mfaCode">6-digit code</label>
+      <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      <button type="submit" id="mfaSubmit">Verify</button>
+    </form>
+    <form id="tokenForm" hidden>
       <label for="tokenInput">Admin token</label>
       <input id="tokenInput" type="password" autocomplete="off" required>
       <button type="submit">Open dashboard</button>
-      <p class="message" id="loginMessage" role="alert"></p>
+      <button type="button" class="link" id="usePasswordBtn">Sign in with email instead</button>
     </form>
+    <p class="message" id="loginMessage" role="alert"></p>
   </section>
 
   <p class="notice warning" id="modeNotice" role="alert" hidden></p>

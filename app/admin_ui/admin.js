@@ -2,6 +2,9 @@
     'use strict';
 
     const TOKEN_KEY = 'nexus_admin_token';
+    const SESSION_KEY = 'nexus_admin_session';
+    const SUPABASE_URL = 'https://mdjgrtkjjcwmhuhpsjsk.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_xp5XQM7DThmmgsVpG4wZog_QVVnOOmw';
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const ENVELOPE_KEYS = new Set(['source', 'schema_v', 'request_id', 'app_version', 'exp']);
     const STATUS = {
@@ -81,14 +84,57 @@
 
     // --- API ---------------------------------------------------------------------------
 
-    async function api(path) {
+    function readSession() {
+        try {
+            return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function saveSession(session) {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+            access_token: session.access_token, refresh_token: session.refresh_token,
+        }));
+    }
+
+    async function supabase(path, {body, accessToken} = {}) {
+        const headers = {apikey: SUPABASE_PUBLISHABLE_KEY, 'Content-Type': 'application/json'};
+        if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+            method: 'POST', headers, body: JSON.stringify(body || {}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.msg || data.error_description || data.message || `Sign-in failed (${response.status}).`);
+        }
+        return data;
+    }
+
+    async function refreshSession() {
+        const session = readSession();
+        if (!session?.refresh_token) return false;
+        try {
+            saveSession(await supabase('token?grant_type=refresh_token', {body: {refresh_token: session.refresh_token}}));
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async function api(path, retried = false) {
         const token = sessionStorage.getItem(TOKEN_KEY);
-        const response = await fetch(path, {headers: {'X-Admin-Token': token || ''}});
-        if (response.status === 401) {
-            signOut('Admin token not accepted.');
+        const session = readSession();
+        const headers = {};
+        if (token) headers['X-Admin-Token'] = token;
+        else if (session) headers.Authorization = `Bearer ${session.access_token}`;
+        const response = await fetch(path, {headers});
+        if (response.status === 401 && !token && !retried && await refreshSession()) return api(path, true);
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 401 || response.status === 403) {
+            signOut(response.status === 403 && typeof body.detail === 'string' ? body.detail : 'Sign-in not accepted.');
             throw new Error('unauthorized');
         }
-        const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status}).`);
         return body;
     }
@@ -469,23 +515,95 @@
         renderMode();
     }
 
+    function showForm(name) {
+        ['loginForm', 'mfaForm', 'tokenForm'].forEach(id => { $(id).hidden = id !== name; });
+        $('loginMessage').textContent = '';
+    }
+
     function signOut(message = '') {
         sessionStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_KEY);
+        pending = null;
         $('app').hidden = true;
         $('controls').hidden = true;
         $('modeNotice').hidden = true;
         $('detail').hidden = true;
         $('login').hidden = false;
-        $('tokenInput').value = '';
+        ['emailInput', 'passwordInput', 'tokenInput', 'mfaCode'].forEach(id => { $(id).value = ''; });
+        showForm('loginForm');
         $('loginMessage').textContent = message;
     }
 
-    $('loginForm').addEventListener('submit', event => {
+    // The password sign-in only reaches the dashboard once a one-time code has upgraded the session.
+    let pending = null;
+
+    async function beginEnrollment() {
+        const enrolment = await supabase('factors', {
+            accessToken: pending.accessToken,
+            body: {factor_type: 'totp', friendly_name: `Nexus admin ${Date.now()}`},
+        });
+        pending.factorId = enrolment.id;
+        $('mfaPrompt').textContent = 'Scan this code with an authenticator app, then enter the 6-digit code it shows.';
+        $('mfaQr').src = enrolment.totp.qr_code;
+        $('mfaQr').hidden = false;
+        $('mfaSecret').textContent = `Manual key: ${enrolment.totp.secret}`;
+        $('mfaSecret').hidden = false;
+        showForm('mfaForm');
+    }
+
+    $('loginForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        $('loginSubmit').disabled = true;
+        try {
+            const result = await supabase('token?grant_type=password', {
+                body: {email: $('emailInput').value.trim(), password: $('passwordInput').value},
+            });
+            pending = {accessToken: result.access_token};
+            const factor = (result.user?.factors || []).find(f => f.factor_type === 'totp' && f.status === 'verified');
+            if (factor) {
+                pending.factorId = factor.id;
+                $('mfaPrompt').textContent = 'Enter the 6-digit code from your authenticator app.';
+                $('mfaQr').hidden = true;
+                $('mfaSecret').hidden = true;
+                showForm('mfaForm');
+            } else {
+                await beginEnrollment();
+            }
+        } catch (error) {
+            pending = null;
+            $('loginMessage').textContent = error.message;
+        } finally {
+            $('loginSubmit').disabled = false;
+        }
+    });
+
+    $('mfaForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        $('mfaSubmit').disabled = true;
+        try {
+            const challenge = await supabase(`factors/${pending.factorId}/challenge`, {accessToken: pending.accessToken});
+            const session = await supabase(`factors/${pending.factorId}/verify`, {
+                accessToken: pending.accessToken,
+                body: {challenge_id: challenge.id, code: $('mfaCode').value.trim()},
+            });
+            saveSession(session);
+            pending = null;
+            $('mfaCode').value = '';
+            showApp();
+        } catch (error) {
+            $('loginMessage').textContent = error.message;
+        } finally {
+            $('mfaSubmit').disabled = false;
+        }
+    });
+
+    $('tokenForm').addEventListener('submit', event => {
         event.preventDefault();
         sessionStorage.setItem(TOKEN_KEY, $('tokenInput').value.trim());
-        $('loginMessage').textContent = '';
         showApp();
     });
+    $('useTokenBtn').addEventListener('click', () => showForm('tokenForm'));
+    $('usePasswordBtn').addEventListener('click', () => showForm('loginForm'));
     $('signOut').addEventListener('click', () => signOut());
     $('refresh').addEventListener('click', () => { render(); renderMode(); });
     $('windowPicker').addEventListener('click', event => {
@@ -496,5 +614,5 @@
         render();
     });
 
-    if (sessionStorage.getItem(TOKEN_KEY)) showApp();
+    if (sessionStorage.getItem(TOKEN_KEY) || readSession()) showApp();
 })();
