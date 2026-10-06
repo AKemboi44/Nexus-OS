@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from uuid import UUID, uuid4
 from urllib.parse import quote
-from fastapi import FastAPI, HTTPException, Header, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Header, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -169,6 +169,47 @@ def require_admin(x_admin_token: Optional[str]):
     configured = os.getenv("NEXUS_ADMIN_TOKEN")
     if not configured or not x_admin_token or not secrets.compare_digest(x_admin_token, configured):
         raise HTTPException(status_code=401, detail="Admin authentication required.")
+
+
+DEFAULT_ADMIN_EMAILS = "akiptoo20@gmail.com"
+
+
+def admin_emails() -> set:
+    """Accounts allowed into the admin dashboard, from NEXUS_ADMIN_EMAILS. Read per call so a change applies at once."""
+    raw = os.getenv("NEXUS_ADMIN_EMAILS") or DEFAULT_ADMIN_EMAILS
+    return {email.strip().lower() for email in raw.split(",") if email.strip()}
+
+
+def _assurance_level(authorization: str) -> Optional[str]:
+    """The `aal` claim of a Supabase token that require_supabase_user has already verified."""
+    try:
+        segment = authorization.split(None, 1)[1].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
+    except (IndexError, ValueError):
+        return None
+    return claims.get("aal") if isinstance(claims, dict) else None
+
+
+def admin_access(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Admit the shared admin token, or an allow-listed Supabase account that has passed two-factor sign-in."""
+    if x_admin_token:
+        require_admin(x_admin_token)
+        return
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Admin authentication required.")
+    user = require_supabase_user(authorization)
+    email = str(user.get("email") or "").strip().lower()
+    if email not in admin_emails() or not user.get("email_confirmed_at"):
+        raise HTTPException(status_code=403, detail="This account does not have admin access.")
+    if _assurance_level(authorization) != "aal2":
+        raise HTTPException(status_code=403, detail="Two-factor authentication required.")
+
+
+def is_admin_user(user: Dict[str, Any]) -> bool:
+    return str(user.get("email") or "").strip().lower() in admin_emails() and bool(user.get("email_confirmed_at"))
 
 
 def require_api_access(x_api_key: Optional[str]):
@@ -1835,16 +1876,14 @@ async def submit_report_feedback(
 
 
 @app.get("/v1/admin/analytics")
-async def get_admin_analytics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
-    require_admin(x_admin_token)
+async def get_admin_analytics(days: int = 30, _admin: None = Depends(admin_access)):
     return analytics.summary(days=days)
 
 
 @app.get("/v1/analytics/ab-conversion")
 @app.get("/api/analytics/ab-conversion")
-async def get_ab_conversion_analytics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
+async def get_ab_conversion_analytics(days: int = 30, _admin: None = Depends(admin_access)):
     """Returns side-by-side A/B conversion metrics and aha moment timings."""
-    require_admin(x_admin_token)
     return analytics.ab_conversion_metrics(days=days)
 
 
@@ -1860,7 +1899,7 @@ def _build_scorecard(days: int, only: Optional[str] = None) -> Dict[str, Any]:
 ADMIN_UI_DIR = Path(__file__).resolve().parent / "app" / "admin_ui"
 ADMIN_UI_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://mdjgrtkjjcwmhuhpsjsk.supabase.co; "
         "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     ),
     "Cache-Control": "no-store",
@@ -1892,15 +1931,13 @@ async def admin_dashboard_styles():
 
 
 @app.get("/v1/admin/metrics")
-async def get_admin_metrics(days: int = 30, x_admin_token: Optional[str] = Header(None)):
+async def get_admin_metrics(days: int = 30, _admin: None = Depends(admin_access)):
     """Scorecard of every registered metric for the window, compared with the previous window."""
-    require_admin(x_admin_token)
     return await run_in_threadpool(_build_scorecard, _bounded_days(days))
 
 
 @app.get("/v1/admin/metrics/{metric_id}")
-async def get_admin_metric_detail(metric_id: str, days: int = 30, x_admin_token: Optional[str] = Header(None)):
-    require_admin(x_admin_token)
+async def get_admin_metric_detail(metric_id: str, days: int = 30, _admin: None = Depends(admin_access)):
     if metric_id not in metrics_engine.REGISTRY:
         raise HTTPException(status_code=404, detail="Unknown metric.")
     card = await run_in_threadpool(_build_scorecard, _bounded_days(days), metric_id)
@@ -1910,24 +1947,21 @@ async def get_admin_metric_detail(metric_id: str, days: int = 30, x_admin_token:
 
 
 @app.get("/v1/admin/health")
-async def get_admin_instrumentation_health(days: int = 7, x_admin_token: Optional[str] = Header(None)):
-    require_admin(x_admin_token)
+async def get_admin_instrumentation_health(days: int = 7, _admin: None = Depends(admin_access)):
     window = _bounded_days(days)
     rows = await run_in_threadpool(analytics.fetch_events, window)
     return instrumentation_health(rows, window)
 
 
 @app.get("/v1/admin/status")
-async def get_admin_status(x_admin_token: Optional[str] = Header(None)):
+async def get_admin_status(_admin: None = Depends(admin_access)):
     """Which PayPal environment the server is charging against, so a switch to live is visible."""
-    require_admin(x_admin_token)
     return {"paypal": paypal_status()}
 
 
 @app.get("/v1/admin/trace/{request_id}")
-async def get_admin_trace(request_id: str, x_admin_token: Optional[str] = Header(None)):
+async def get_admin_trace(request_id: str, _admin: None = Depends(admin_access)):
     """Every event recorded for one request, oldest first. Users quote this as their Reference ID."""
-    require_admin(x_admin_token)
     try:
         rows = await run_in_threadpool(analytics.fetch_events, 30, None, MAX_FETCHED_EVENTS, request_id)
     except ValueError:
@@ -2188,6 +2222,7 @@ async def get_entitlement(
     return {
         "user_id": user_id,
         "active": is_user_active,
+        "is_admin": is_admin_user(user),
         "entitlement": record,
         "scans_remaining": record.get("bundle_queries_remaining") if record else None,
         "ends_at": record.get("ends_at") if record else None,

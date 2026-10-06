@@ -317,11 +317,9 @@ def test_ab_conversion_endpoint_requires_the_admin_token(monkeypatch):
     monkeypatch.setenv("NEXUS_ADMIN_TOKEN", "admin-secret")
     monkeypatch.setattr(cloud_app.analytics, "ab_conversion_metrics", lambda days: {"overall": {}})
 
-    with pytest.raises(HTTPException) as denied:
-        asyncio.run(cloud_app.get_ab_conversion_analytics(days=30, x_admin_token=None))
-    assert denied.value.status_code == 401
-    with pytest.raises(HTTPException):
-        asyncio.run(cloud_app.get_ab_conversion_analytics(days=30, x_admin_token="wrong"))
+    client = _client()
+    assert client.get("/v1/analytics/ab-conversion").status_code == 401
+    assert client.get("/v1/analytics/ab-conversion", headers={"X-Admin-Token": "wrong"}).status_code == 401
 
-    allowed = asyncio.run(cloud_app.get_ab_conversion_analytics(days=30, x_admin_token="admin-secret"))
-    assert allowed == {"overall": {}}
+    allowed = client.get("/v1/analytics/ab-conversion", headers={"X-Admin-Token": "admin-secret"})
+    assert allowed.status_code == 200 and allowed.json() == {"overall": {}}
