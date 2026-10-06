@@ -86,6 +86,15 @@ def test_forgot_password_flow_on_website_and_extension():
     assert "WEBSITE_URL = 'https://www.brisklightai.com/'" in auth_js
 
 
+def test_website_shows_admin_link_only_when_the_server_says_so():
+    html = (ROOT / "website/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "website/app.js").read_text(encoding="utf-8")
+
+    assert 'id="adminLink"' in html and 'id="adminLink" href="/admin" rel="noopener" hidden' in html
+    assert "byId('adminLink').hidden = !result.is_admin" in js
+    assert "${API_URL}/admin" in js
+
+
 def test_website_surfaces_exports_library_controls_and_email_only_signin():
     website = ROOT / "website"
     html = (website / "index.html").read_text(encoding="utf-8")

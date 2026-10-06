@@ -174,6 +174,7 @@
         const loggedIn = Boolean(session?.access_token);
         byId('signInOpen').hidden = loggedIn;
         byId('signOut').hidden = !loggedIn;
+        if (!loggedIn) byId('adminLink').hidden = true;
         byId('accountEmail').textContent = displayName(session?.user?.email);
         byId('workspace').hidden = !loggedIn;
         if (loggedIn) {
@@ -700,6 +701,8 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(extractErrorMessage(result, response.status) || 'Could not refresh subscription status.');
         paid = response.ok && Boolean(result.active);
+        byId('adminLink').href = `${API_URL}/admin`;
+        byId('adminLink').hidden = !result.is_admin;
         scansRemaining = result.scans_remaining === null || result.scans_remaining === undefined
             ? null : Number(result.scans_remaining);
         plan = result.plan || null;
