@@ -537,6 +537,18 @@
     // The password sign-in only reaches the dashboard once a one-time code has upgraded the session.
     let pending = null;
 
+    // Supabase returns the QR as an SVG data URI with raw markup in it, which browsers often refuse to draw.
+    function qrImageSource(dataUri) {
+        const comma = dataUri.indexOf(',');
+        let markup = comma < 0 ? dataUri : dataUri.slice(comma + 1);
+        try {
+            markup = decodeURIComponent(markup);
+        } catch (error) {
+            // Already raw markup (a literal % is not valid escaping): use it as it is.
+        }
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+    }
+
     async function beginEnrollment() {
         const enrolment = await supabase('factors', {
             accessToken: pending.accessToken,
@@ -544,7 +556,7 @@
         });
         pending.factorId = enrolment.id;
         $('mfaPrompt').textContent = 'Scan this code with an authenticator app, then enter the 6-digit code it shows.';
-        $('mfaQr').src = enrolment.totp.qr_code;
+        $('mfaQr').src = qrImageSource(enrolment.totp.qr_code);
         $('mfaQr').hidden = false;
         $('mfaSecret').textContent = `Manual key: ${enrolment.totp.secret}`;
         $('mfaSecret').hidden = false;
@@ -601,6 +613,10 @@
         event.preventDefault();
         sessionStorage.setItem(TOKEN_KEY, $('tokenInput').value.trim());
         showApp();
+    });
+    $('mfaQr').addEventListener('error', () => {
+        $('mfaQr').hidden = true;
+        $('mfaPrompt').textContent = 'The QR code could not be drawn. In your authenticator app choose "Enter a setup key" and type the manual key below, then enter the 6-digit code.';
     });
     $('useTokenBtn').addEventListener('click', () => showForm('tokenForm'));
     $('usePasswordBtn').addEventListener('click', () => showForm('loginForm'));

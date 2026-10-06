@@ -51,6 +51,7 @@ def test_page_script_never_turns_data_into_markup():
     assert 'style="' not in js and "setAttribute('style'" not in js
     assert "localStorage" not in js, "the admin token must not outlive the tab"
     assert "sessionStorage" in js and "X-Admin-Token" in js
+    assert "encodeURIComponent(markup)" in js and "setup key" in js, "QR must be re-encoded and have a manual fallback"
     assert "grant_type=password" in js and "/verify" in js and "/challenge" in js, "email sign-in with a one-time code"
 
 
